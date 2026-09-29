@@ -97,6 +97,40 @@ services:
     # running log recovery on the next start.
     stop_grace_period: 60s
 
+  schema-registry:
+    # Confluent Community License (source-available, not OSI open source);
+    # Apicurio Registry is the Apache 2.0 alternative (open question C4).
+    image: confluentinc/cp-schema-registry:8.3.2@sha256:482d3048b3f6029bae5794b5c3b5e2eea8d61ca064dacd32241315e818fd8d7c
+    profiles: [core]
+    hostname: schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      # The registry stores every schema in a compacted Kafka topic, so it
+      # keeps no state of its own: the container can be recreated freely.
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:29092
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas
+      # Default is 3, impossible with one broker (same trap as the
+      # transaction log in kafka/server.properties).
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
+      # New schema versions must be able to read data written with the
+      # previous version, so consumers can upgrade after producers.
+      SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: backward
+      SCHEMA_REGISTRY_HEAP_OPTS: -Xms256m -Xmx256m
+    ports:
+      - "127.0.0.1:8081:8081"
+    healthcheck:
+      # The image has no curl or wget; python3 is there. urlopen raises on a
+      # refused connection or any HTTP error, so this is a real request.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/subjects', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
 volumes:
   pgdata:
   kafka-data:
