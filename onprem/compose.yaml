@@ -116,8 +116,10 @@ services:
       # Default is 3, impossible with one broker (same trap as the
       # transaction log in kafka/server.properties).
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
-      # New schema versions must be able to read data written with the
-      # previous version, so consumers can upgrade after producers.
+      # A new schema version must be able to read data written with the
+      # previous one, so consumers are upgraded first, then producers.
+      # Allowed: adding an optional field with a default (a nullable column),
+      # removing a field. Rejected: adding a required field (NOT NULL column).
       SCHEMA_REGISTRY_SCHEMA_COMPATIBILITY_LEVEL: backward
       SCHEMA_REGISTRY_HEAP_OPTS: -Xms256m -Xmx256m
     ports:
