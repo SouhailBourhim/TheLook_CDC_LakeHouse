@@ -1,0 +1,38 @@
+# On-prem side of the pipeline. Services are grouped in profiles so only
+# what is needed runs:  docker compose --profile core up -d
+name: thelook
+
+services:
+  postgres:
+    # Exact minor version plus digest: the tag says what it is, the digest
+    # guarantees the same bytes on every machine even if the tag is re-pushed.
+    image: postgres:17.11-trixie@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+    profiles: [core]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-thelook}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in onprem/.env}
+    # All settings live in postgres/postgresql.conf. Only the file's location
+    # is passed here: -c flags would override ALTER SYSTEM (see that file).
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    ports:
+      # Localhost only: reachable from WSL and Windows, not from the network.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    healthcheck:
+      # Over TCP, not the Unix socket: during first-start initialisation the
+      # entrypoint runs a temporary server that listens on the socket only,
+      # so a socket check would report healthy before clients can connect.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    # The image stops Postgres with SIGINT (fast shutdown). Give it time to
+    # finish before Docker sends SIGKILL, which would force crash recovery.
+    stop_grace_period: 30s
+
+volumes:
+  pgdata:
