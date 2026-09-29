@@ -1,5 +1,8 @@
+# Modified in thelook-cdc-lakehouse (see NOTICE): --db-password defaults to
+# the DB_PASSWORD environment variable; the password is redacted in the logs.
 import argparse
 import asyncio
+import os
 import random
 import logging
 
@@ -343,7 +346,7 @@ def main():
     ## --- Database Arguments ---
     parser.add_argument("--db-host", default="localhost", help="Database host.")
     parser.add_argument("--db-user", default="db_user", help="Database user.")
-    parser.add_argument("--db-password", default="db_password", help="Database password.")
+    parser.add_argument("--db-password", default=os.environ.get("DB_PASSWORD", "db_password"), help="Database password. Defaults to the DB_PASSWORD environment variable.")
     parser.add_argument("--db-name", default="fh_dev", help="Database name.")
     parser.add_argument("--db-schema", default="demo", help="Database schema.")
     parser.add_argument("--db-batch-size", type=int, default=1000)
@@ -353,7 +356,7 @@ def main():
     # fmt: on
 
     args = parser.parse_args()
-    logging.info(args)
+    logging.info({**vars(args), "db_password": "***"})
 
     try:
         asyncio.run(run_simulation(args))

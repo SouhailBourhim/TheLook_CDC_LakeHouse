@@ -29,4 +29,6 @@ Changes made in this repository (Apache 2.0, section 4(b)):
   does not exist).
 - requirements.lock: added (generated with uv pip compile from
   requirements.txt, which is unchanged).
+- generator.py: --db-password defaults to the DB_PASSWORD environment
+  variable, and the startup log line no longer prints the password.
 - Every change is visible in the Git history of this directory.
