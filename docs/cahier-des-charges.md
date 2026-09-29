@@ -10,7 +10,7 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 1.6                                           |
+| Version      | 1.7                                           |
 | Date         | 29 September 2026                             |
 | Status       | Specification, not yet started                |
 
@@ -25,6 +25,7 @@ governed, cost-controlled analytics lakehouse
 | 1.4         | 29/09/2026 | Pre-start review based on online research: local lake dropped (dbt developed on Athena); incremental MERGE silver; replication slot safeguards; Debezium exactly-once; ODCS contracts; dbt unit tests; resilience drills; throughput objective; ADRs; version pinning; generator licence confirmed. |
 | 1.5         | 29/09/2026 | Added section 13: working rules for Claude Code as a learning partner (decisions stay with the author), with the matching CLAUDE.md file.                                                                                                                                                           |
 | 1.6         | 29/09/2026 | Section 13 revised: Claude Code may design and write everything, but must explain every decision and change so that the author understands all of it.                                                                                                                                               |
+| 1.7         | 29/09/2026 | Section 4.2 corrected after reading the generator code: it runs INSERT and UPDATE statements only, never DELETE. All source deletes come from the synthetic erasure scripts (4.3). From this version the Markdown file is the reference; the Word file stays at v1.6. |
 
 ## 1. Context and problem
 
@@ -132,8 +133,10 @@ different handling strategy (see section 8).
 
 Factor House publishes an open-source Python generator that writes live
 theLook traffic into PostgreSQL: new sign-ups, browsing sessions,
-purchases, cancellations and returns. It produces genuine INSERT, UPDATE
-and DELETE statements, which is exactly what a CDC pipeline needs.
+purchases, cancellations and returns. It produces genuine INSERT and
+UPDATE statements (order status changes, and address changes when
+enabled). It never deletes rows: every DELETE in the source comes from the
+synthetic erasure scripts described in 4.3.
 
 - Only the generator is reused. The surrounding Factor House demo uses
   their commercial monitoring tools (Kpow, Flex), which are not part of
@@ -155,7 +158,9 @@ small scripts and clearly labelled as synthetic in the documentation.
 - User address changes, to exercise the SCD2 dimension (only if the
   generator does not already update addresses).
 
-- Data-deletion requests.
+- Data-deletion requests. They are the only source of DELETE statements,
+  so they also produce the Debezium delete events and tombstones that the
+  silver MERGE must handle.
 
 - Injected schema changes and malformed records, to exercise the data
   contracts.

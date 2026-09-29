@@ -2,7 +2,7 @@
 
 This is a **learning project**. You may design and write all of the code, but Souhail must understand everything you did and why you did it. Work he can't explain in an interview doesn't count as done, even if it works.
 
-The full specification is `docs/cahier-des-charges.md` (section 13 repeats these rules; the Word version is `cahier-des-charges-v1.6.docx`). Treat it as the source of truth for scope and architecture.
+The full specification is `docs/cahier-des-charges.md` (section 13 repeats these rules; `cahier-des-charges-v1.6.docx` is a frozen Word snapshot of v1.6; later revisions exist only in the Markdown file). Treat it as the source of truth for scope and architecture.
 
 At the start of each session, read the latest entry in `docs/learning-log.md` and continue from its "Where we stopped" section.
 
