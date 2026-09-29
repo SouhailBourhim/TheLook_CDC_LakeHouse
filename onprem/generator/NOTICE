@@ -22,5 +22,11 @@ Changes made in this repository (Apache 2.0, section 4(b)):
 - src/data/world_pop.csv is stored with LF line endings instead of CRLF
   (the repository's .gitattributes normalises all text files). The
   generator reads it in text mode, which accepts both.
-- Every later change to these files is listed below and visible in the
-  Git history of this directory.
+- Dockerfile: base image pinned by version and digest; dependencies
+  installed from requirements.lock (all versions pinned, with hashes)
+  instead of the unpinned requirements.txt; runs as a non-root user;
+  ENTRYPOINT fixed to generator.py (upstream ran data_generator.py, which
+  does not exist).
+- requirements.lock: added (generated with uv pip compile from
+  requirements.txt, which is unchanged).
+- Every change is visible in the Git history of this directory.
