@@ -105,8 +105,7 @@ Timing: B1 before P1 commit 10; A4 before P2; A1–A3 before P5.
   installed in Ubuntu (HashiCorp apt key fingerprint checked:
   `D55C 0D1A C78A 8D81 26CB 631C FC9C A96A CA02 6560`, key created 2026-09-09);
   Git 2.43 in Ubuntu with name and email set.
-- Still missing in Ubuntu: **uv** (`curl -LsSf https://astral.sh/uv/install.sh | sh`,
-  then `uv python install 3.12`). Needed from commit 3.
+- uv 0.12.20 with Python 3.12.14 installed (checked in session 2).
 
 ### Where we stopped
 
@@ -122,6 +121,67 @@ Timing: B1 before P1 commit 10; A4 before P2; A1–A3 before P5.
   mention LF. What does each one control, and why keep both?
 - Next: answer the check question, make commits 1 and 2, install uv, then
   continue with commit 3.
+
+## Session 2 — 2026-09-29 — Commits 1–4
+
+### Concepts covered
+
+- **`.gitattributes` vs `.editorconfig`.** Git normalises text to LF on
+  `git add` and writes LF on checkout (the guarantee); EditorConfig tells the
+  editor what to write (prevention) and also covers indentation, final newline
+  and charset. Only `.gitattributes` protects binaries (`*.docx binary`).
+  VS Code needs the EditorConfig extension. `git ls-files --eol` shows the
+  real state per file.
+- **Vendoring a dependency.** Copy unchanged at a pinned SHA (no upstream
+  tags), then patch in separate commits: provable provenance (`diff -r` is
+  empty), each change isolated and revertable, Apache 2.0 §4(b) satisfied,
+  patches re-applicable on a fresh upstream copy. Alternatives rejected:
+  submodule (whole repo, `--recursive`), clone at build time (not reproducible).
+- **Apache 2.0 obligations.** Keep the licence text, keep notices, mark
+  modified files. Upstream has no NOTICE and a blank copyright line, so our
+  `NOTICE` names Factor House, the source, the SHA and our changes.
+- **Trust the code, not the README.** I first said the update probabilities
+  default to 0 (from the README); the argparse defaults are 0.1 / 0.4 / 0.2.
+- **No-op updates.** `INSERT ... ON CONFLICT DO UPDATE SET` every column
+  writes a new row version even when nothing changed, so Debezium emits `u`
+  events with identical values. Silver/SCD2 must ignore them.
+
+### Decisions taken
+
+- Generator vendored in `onprem/generator/` at `4f7537b` (folder unchanged
+  since `b1aa968`), `images/` not copied, `world_pop.csv` normalised to LF.
+  Licence check passed: the folder is covered by the repo's Apache 2.0 root
+  licence.
+- **A7 → spec v1.7:** the generator never deletes; all source deletes come
+  from the synthetic erasure scripts (option 1, Souhail's choice). The `.md`
+  is the reference from v1.7; the `.docx` stays a v1.6 snapshot.
+- Remote `origin` = github.com/SouhailBourhim/TheLook_CDC_LakeHouse; pushed
+  up to commit 3 after checking the commit contained no stray or secret files.
+  Never force-push.
+
+### Findings recorded in `docs/source-schema.md`
+
+UUID text keys, no FKs, `dist_centers` (not `distribution_centers`), status
+"Delivered" (not "Complete"), address updates don't bump `updated_at` (SCD2
+must use commit time/LSN), every restart re-upserts 29k products and adds
+1,000 users, meaningless transaction boundaries, float money,
+`ORDER BY RANDOM()` may bottleneck the generator, ghost sessions with fake
+purchases, container must run in UTC.
+
+### Open questions added
+
+- **A8** `src/data/*.csv` come from Looker's public BigQuery dataset; no
+  separate terms found for the original data. Non-blocking.
+- Commit 6 must pass the update probabilities explicitly, pin `TZ=UTC`, and
+  fix the Dockerfile `CMD` (`generator.py`).
+
+### Where we stopped
+
+- Commits 1–4 done (`f2789bb`, `93016d0`, `c504969`, `4b8ab0d` spec v1.7,
+  `cf912f8` source schema). Pushed up to `c504969`; the rest awaits Souhail's go.
+- Pending check questions on commit 4 (see end of session 2 chat): why SCD2
+  can't use `users.updated_at`; what a no-op upsert produces in Kafka.
+- Next: commit 5, Postgres 17 with logical decoding.
 
 ### P1 plan (agreed)
 
