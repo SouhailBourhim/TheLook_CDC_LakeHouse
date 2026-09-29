@@ -1,0 +1,14 @@
+# Secrets and local environment (never committed; .env.example documents the variables)
+.env
+*.pem
+
+# Python (uv creates .venv/)
+.venv/
+__pycache__/
+*.py[cod]
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp

@@ -1,0 +1,21 @@
+# Editor settings shared by every editor that supports EditorConfig.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.py]
+indent_size = 4
+
+# Two trailing spaces are a line break in Markdown; keep them.
+[*.md]
+trim_trailing_whitespace = false
+
+# make requires tabs for recipe lines.
+[Makefile]
+indent_style = tab

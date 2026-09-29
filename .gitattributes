@@ -1,0 +1,10 @@
+# Store every text file with LF endings and check it out with LF,
+# whatever core.autocrlf says on the machine. Shell scripts and SQL
+# files with CRLF endings break inside Linux containers.
+* text=auto eol=lf
+
+# Binary files: never convert line endings, never diff as text.
+*.docx binary
+*.png  binary
+*.jpg  binary
+*.zip  binary
