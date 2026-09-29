@@ -133,6 +133,33 @@ services:
       retries: 10
       start_period: 20s
 
+  connect:
+    # Worker image: apache/kafka 4.3.1 + Debezium Postgres + Avro converter,
+    # downloads verified by SHA-256 (connect/Dockerfile).
+    build: ./connect
+    image: thelook-connect:local
+    profiles: [core]
+    hostname: connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx768m
+    ports:
+      - "127.0.0.1:8083:8083"
+    volumes:
+      - ./connect/connect-distributed.properties:/etc/kafka-connect/connect-distributed.properties:ro
+    healthcheck:
+      # The REST API only answers once the worker has joined its group.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8083/connectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    stop_grace_period: 30s
+
 volumes:
   pgdata:
   kafka-data:
