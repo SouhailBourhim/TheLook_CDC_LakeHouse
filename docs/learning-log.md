@@ -175,13 +175,40 @@ purchases, container must run in UTC.
 - Commit 6 must pass the update probabilities explicitly, pin `TZ=UTC`, and
   fix the Dockerfile `CMD` (`generator.py`).
 
+### Commit 5 and push policy (later in session 2)
+
+- **Postgres settings priority.** Command-line `-c` flags override both
+  `postgresql.conf` and `postgresql.auto.conf` (`ALTER SYSTEM`). With `-c`
+  flags, `ALTER SYSTEM SET max_slot_wal_keep_size` + `pg_reload_conf()` did
+  nothing, while `pg_file_settings` still said `applied = t`. Settings moved
+  to a mounted `onprem/postgres/postgresql.conf`; verified that `ALTER SYSTEM`
+  now wins. `pg_settings.context`: `postmaster` = restart, `sighup` = reload.
+- **Healthcheck trap.** On first start the image's entrypoint runs a
+  temporary server with `listen_addresses=''` (socket only) for initdb and
+  init scripts. A socket `pg_isready` reports healthy too early; ours uses
+  `-h 127.0.0.1` (TCP).
+- **Logical decoding smoke test** (`test_decoding`): DDL decodes to an empty
+  BEGIN/COMMIT (DDL is not streamed); a DELETE carries only the key (default
+  REPLICA IDENTITY).
+- **Pinning an image**: tag for humans + digest for identical bytes.
+- **Invalidated slot**: past `max_slot_wal_keep_size` the slot is lost; drop
+  it and re-snapshot. A re-snapshot can't emit deletes that happened in the
+  gap, so silver may keep rows deleted meanwhile (to handle in the runbook).
+- Check answers: SCD2 validity from `source.ts_ms` (commit time, not the
+  top-level `ts_ms`) with LSN as tie-breaker; no-op updates stay in bronze and
+  are skipped in the MERGE by a hash of business columns only.
+- **Push policy (Souhail):** push after every commit, guarded by a versioned
+  pre-push hook (`.githooks/pre-push`, gitleaks v8.30.1 in Docker, pinned by
+  digest, fails closed). Tested: a planted fake token blocks the push.
+  Enable per clone with `git config core.hooksPath .githooks`.
+
 ### Where we stopped
 
-- Commits 1–4 done (`f2789bb`, `93016d0`, `c504969`, `4b8ab0d` spec v1.7,
-  `cf912f8` source schema). Pushed up to `c504969`; the rest awaits Souhail's go.
-- Pending check questions on commit 4 (see end of session 2 chat): why SCD2
-  can't use `users.updated_at`; what a no-op upsert produces in Kafka.
-- Next: commit 5, Postgres 17 with logical decoding.
+- P1 commits 1–5 done and pushed, plus the spec v1.7, source-schema and
+  gitleaks-hook commits. Postgres runs: `cd onprem && docker compose --profile core up -d`.
+- Next: commit 6, run the generator (fix Dockerfile `CMD`, own schema/role,
+  explicit probabilities, `TZ=UTC`), then measure the WAL rate to check the
+  10GB cap.
 
 ### P1 plan (agreed)
 
