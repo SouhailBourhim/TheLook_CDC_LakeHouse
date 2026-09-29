@@ -67,5 +67,36 @@ services:
       - --order-update-prob=0.4
       - --ghost-create-prob=0.2
 
+  kafka:
+    image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
+    profiles: [core]
+    hostname: kafka
+    environment:
+      # Identifies the cluster; written into the storage when it is first
+      # formatted. Generated once with `kafka-storage.sh random-uuid`
+      # (the image's built-in default is the same for every user).
+      CLUSTER_ID: uVr1QOEmT0W6ny3s2N5dyA
+      # Kafka keeps messages in the OS page cache, not the JVM heap, so a
+      # small heap is enough for one broker (the start script's default is 1 GB).
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    ports:
+      # Only the EXTERNAL listener, localhost only.
+      - "127.0.0.1:9092:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+      - ./kafka/server.properties:/mnt/shared/config/server.properties:ro
+    healthcheck:
+      # A real Kafka request, not just an open port. Tools in this container
+      # inherit KAFKA_HEAP_OPTS, so give the check its own small heap.
+      test: ["CMD-SHELL", "KAFKA_HEAP_OPTS=-Xmx64m /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:29092 > /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    # Controlled shutdown: the broker closes its logs cleanly instead of
+    # running log recovery on the next start.
+    stop_grace_period: 60s
+
 volumes:
   pgdata:
+  kafka-data:
