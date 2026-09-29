@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Scan the commits about to be pushed for secrets; block the push if any
+# are found. Enable once per clone:  git config core.hooksPath .githooks
+# Bypass (only after checking a finding is a false positive): git push --no-verify
+set -euo pipefail
+
+GITLEAKS_IMAGE="zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
+ZERO=0000000000000000000000000000000000000000
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "pre-push: docker not found, cannot run the secret scan. Push blocked." >&2
+  exit 1
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+
+# Git passes one line per ref being pushed:
+# <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue       # deleting a remote branch
+  if [ "$remote_sha" = "$ZERO" ]; then
+    range="$local_sha"                         # new branch: all its history
+  else
+    range="$remote_sha..$local_sha"            # only the new commits
+  fi
+  echo "pre-push: scanning $range for secrets"
+  docker run --rm -v "$repo_root":/repo:ro "$GITLEAKS_IMAGE" \
+    git /repo --log-opts="$range" --redact --no-banner --log-level warn
+done

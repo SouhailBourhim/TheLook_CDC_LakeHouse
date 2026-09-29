@@ -30,7 +30,18 @@ Folders are added in the commit that first needs them.
 | `contracts/` | ODCS data contracts, one per table | P4 |
 | `drills/` | Scripted failure drills | P1 onwards |
 | `scripts/` | Small helper scripts | P1 onwards |
+| `.githooks/` | Git hooks: secret scan before every push | All |
 | `docs/` | Specification, ADRs, learning log, runbook, results | All |
+
+## After cloning
+
+Enable the versioned Git hooks once per clone. The pre-push hook scans the
+commits being pushed with gitleaks (in Docker) and blocks the push if it
+finds a secret:
+
+```bash
+git config core.hooksPath .githooks
+```
 
 ## Documentation
 
