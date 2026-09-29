@@ -1,0 +1,26 @@
+theLook eCommerce data generator (vendored)
+
+This directory contains third-party code copied from:
+
+  Repository: https://github.com/factorhouse/examples
+  Path:       datagen/thelook-ecomm
+  Commit:     4f7537bb50e83fbc0134cf49b67344a39ae6bd97 (2026-04-13)
+              The folder is unchanged since b1aa968bfa5c2c699e9be782af345d977b7c4002
+              (2025-08-17).
+  Author:     Factor House
+  License:    Apache License 2.0 (see LICENSE in this directory). The folder
+              has no licence of its own; it is covered by the repository's
+              root LICENSE.
+
+The generator builds on the theLook eCommerce dataset published by Looker
+on the Google Cloud Marketplace (bigquery-public-data.thelook_ecommerce).
+The files in src/data/ come from the upstream repository unchanged.
+
+Changes made in this repository (Apache 2.0, section 4(b)):
+
+- images/ (a demo GIF) was not copied.
+- src/data/world_pop.csv is stored with LF line endings instead of CRLF
+  (the repository's .gitattributes normalises all text files). The
+  generator reads it in text mode, which accepts both.
+- Every later change to these files is listed below and visible in the
+  Git history of this directory.
