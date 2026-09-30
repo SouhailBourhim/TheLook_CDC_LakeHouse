@@ -23,3 +23,6 @@ drills/logs/
 *.tfstate.*
 crash.log
 tfplan
+
+# Terraform variable values (may contain personal data); see *.tfvars.example
+*.tfvars
