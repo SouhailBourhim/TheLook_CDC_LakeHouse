@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply
+.PHONY: register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
 
 # Create or update every connector. PUT /connectors/<name>/config is
 # idempotent: it creates the connector if missing, otherwise replaces its
@@ -55,3 +55,7 @@ tf-plan:
 # Applies exactly the plan that was reviewed (tf-plan), nothing newer.
 tf-apply:
 	terraform -chdir=$(TF_LAKE) apply tfplan
+
+# Weekly: last 7 days of spend by project tag and service (scripts/cost-report.sh).
+cost-report:
+	@scripts/cost-report.sh

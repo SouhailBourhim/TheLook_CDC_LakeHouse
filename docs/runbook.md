@@ -114,3 +114,38 @@ Changes are committed faster than Debezium processes them. Check the
 worker's CPU (`docker stats`) and the generator rate (`GENERATOR_QPS`).
 `MilliSecondsBehindSource` is measured on the last processed event; the
 heartbeat keeps it fresh when the tables are idle.
+
+## Cost
+
+### Weekly cost check (`make cost-report`)
+
+Last 7 days of spend by `project` tag and service. The project budget only
+sees resources tagged `project=thelook-cdc-lakehouse`, so read the
+`(no tag value)` lines:
+
+- **Negative amounts** are credits (account-level, never tagged): not leaks.
+- **Positive amounts for a service this project uses** (S3, Athena, Glue,
+  KMS, Config): probably a resource created without the tag. Find it (Cost
+  Explorer, group by resource where available, or Config below), tag it in
+  Terraform or delete it.
+- Other services belong to other projects in this shared account (other tag
+  values, e.g. `signal`).
+
+Each run costs $0.01 (Cost Explorer API). To be scheduled in Airflow in P3.
+
+### Budget alerts
+
+- `thelook-cdc-lakehouse-monthly` (tag-filtered, $15 = O6): $1 and $5
+  actual, $15 forecast.
+- `thelook-account-total-monthly` (whole account, $5): $1 actual, $5
+  forecast. Fires on any account spend, including other projects': check
+  `make cost-report` to see whose it is.
+- Both **exclude credits and refunds**: they measure usage, so they fire
+  even while credits pay the bill.
+
+### Config rule `thelook-s3-required-project-tag`
+
+S3 buckets without `project=thelook-cdc-lakehouse` are NON_COMPLIANT.
+Other projects' buckets are expected there; any `thelook-*` bucket must be
+COMPLIANT:
+`aws configservice get-compliance-details-by-config-rule --config-rule-name thelook-s3-required-project-tag`.

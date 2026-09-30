@@ -19,6 +19,14 @@ resource "aws_budgets_budget" "monthly" {
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
+  # Measure usage, not the bill: credits (e.g. free-plan credits) are applied
+  # untagged at account level and would net the spend to ~$0, so the budget
+  # would stay silent until the credits run out.
+  cost_types {
+    include_credit = false
+    include_refund = false
+  }
+
   cost_filter {
     name   = "TagKeyValue"
     values = ["user:project$thelook-cdc-lakehouse"]
