@@ -15,3 +15,11 @@ desktop.ini
 
 # Raw drill logs (summaries go in docs/results.md)
 drills/logs/
+
+# Terraform: provider downloads and state (state lives in S3; the bootstrap
+# state is local and must not be committed)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+tfplan

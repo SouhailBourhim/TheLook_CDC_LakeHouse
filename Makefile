@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: register-connectors connector-status
+.PHONY: register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply
 
 # Create or update every connector. PUT /connectors/<name>/config is
 # idempotent: it creates the connector if missing, otherwise replaces its
@@ -27,3 +27,31 @@ register-connectors:
 connector-status:
 	@curl -sS --fail-with-body '$(CONNECT_URL)/connectors?expand=status' | python3 -c \
 	  'import json,sys; d = json.load(sys.stdin); print("(no connectors)") if not d else [print(n, s["status"]["connector"]["state"], [t["state"] for t in s["status"]["tasks"]]) for n, s in d.items()]'
+
+# --- Terraform (AWS) ---------------------------------------------------------
+# All targets use the project's own AWS profile, never the default one.
+AWS_PROFILE ?= thelook
+export AWS_PROFILE
+# Download each provider once (it is ~190 MB) and share it between
+# bootstrap and lake instead of one copy per .terraform/ folder.
+TF_PLUGIN_CACHE_DIR ?= $(HOME)/.terraform.d/plugin-cache
+export TF_PLUGIN_CACHE_DIR
+TF_LAKE := infra/terraform/lake
+
+# One-off: create the state bucket (local state, see bootstrap/main.tf).
+tf-bootstrap:
+	@mkdir -p $(TF_PLUGIN_CACHE_DIR)
+	terraform -chdir=infra/terraform/bootstrap init
+	terraform -chdir=infra/terraform/bootstrap apply
+
+# The backend bucket name contains the account ID: computed, not committed.
+tf-init:
+	terraform -chdir=$(TF_LAKE) init \
+	  -backend-config="bucket=thelook-tfstate-$$(aws sts get-caller-identity --query Account --output text)"
+
+tf-plan:
+	terraform -chdir=$(TF_LAKE) plan -out=tfplan
+
+# Applies exactly the plan that was reviewed (tf-plan), nothing newer.
+tf-apply:
+	terraform -chdir=$(TF_LAKE) apply tfplan
