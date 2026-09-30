@@ -306,8 +306,32 @@ purchases, container must run in UTC.
   bronze tables, contracts validate (spec v1.9, ADR 006 proposed); **C1**
   lake stays deployed, `terraform destroy` kept as teardown (spec v1.9);
   AWS: a **new project profile** (`thelook`), not the `Signal` admin user.
-- Next: Souhail creates the `thelook` profile; then P2 commit 1 (Terraform
-  layout and remote state).
+- AWS profile `thelook` (IAM user `TheLook`, same account as Signal, free
+  tier kept; Identity Center avoided because it needs Organizations).
+
+### P2 so far (2026-09-30)
+
+- **Terraform layout + remote state.** `bootstrap/` (local state) creates the
+  versioned, encrypted, TLS-only state bucket; `lake/` uses it with S3-native
+  locking; the account ID is passed at init, not committed. Saved plans only
+  (`make tf-plan` / `tf-apply`). First `init` hung: registry reachable,
+  download measured at 8 MB/s, so a transient stall; retried.
+- **Budgets.** Project budget filtered on the `project` tag ($15 = O6), plus
+  a whole-account budget ($5), a weekly `make cost-report` and a Config
+  REQUIRED_TAGS rule (S3 only), added at Souhail's request. The first report
+  showed **credits hide usage** (applied untagged, budgets subtract them by
+  default): both budgets now exclude credits and refunds. Signal uses the
+  same tag key. An untagged ~$0.008/week EC2/ELB leftover (not ours) found.
+  The account already had 3 budgets, so each new one costs ~$0.60/month.
+- **Lake storage.** Bucket with SSE-KMS (`aws/s3` + Bucket Key), **no
+  versioning** (would keep erased data in old versions), abort incomplete
+  uploads, results expire after 7 days; Glue `thelook_bronze|silver|gold`;
+  Athena workgroup `thelook` (engine v3, enforced settings, 1 GiB scan
+  cutoff, KMS results). Verified with a real query: an overridden output
+  location was ignored.
+- **Open check:** Config has not yet discovered the buckets that existed
+  before the recorder (only the 2 new ones are evaluated).
+- Next: P2 commit 4, least-privilege IAM user for the Connect worker (B3).
 - Before P2: settle A4 (who creates bronze tables) and the connector
   settings deferred to P2 (`time.precision.mode`, `tombstones.on.delete`).
 
