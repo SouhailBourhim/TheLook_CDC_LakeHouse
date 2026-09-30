@@ -1,0 +1,128 @@
+# Unit tests for alerts.yml. Run:
+#   docker run --rm -v "$PWD":/w -w /w --entrypoint promtool \
+#     prom/prometheus:v3.15.0 test rules alerts_test.yml
+# (from onprem/monitoring). Series values use promtool's expanding notation:
+# '0x40' = the value 0 repeated for 41 samples, one per interval.
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Healthy slot: active, 1 MiB retained, 10 GiB left. Nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="postgres"}'
+        values: '1x40'
+      - series: 'pg_up'
+        values: '1x40'
+      - series: 'pg_replication_slots_slot_is_active{slot_name="thelook_debezium",slot_type="logical"}'
+        values: '1x40'
+      - series: 'pg_replication_slots_pg_wal_lsn_diff{database="thelook",slot_name="thelook_debezium"}'
+        values: '1048576x40'
+      - series: 'pg_replication_slots_safe_wal_size_bytes{slot_name="thelook_debezium",slot_type="logical"}'
+        values: '10737418240x40'
+      - series: 'pg_replication_slots_wal_status{slot_name="thelook_debezium",slot_type="logical",wal_status="reserved"}'
+        values: '1x40'
+    alert_rule_test:
+      - {eval_time: 40m, alertname: ReplicationSlotInactive, exp_alerts: []}
+      - {eval_time: 40m, alertname: ReplicationSlotRetainedWalHigh, exp_alerts: []}
+      - {eval_time: 40m, alertname: ReplicationSlotNearInvalidation, exp_alerts: []}
+      - {eval_time: 40m, alertname: ReplicationSlotLost, exp_alerts: []}
+      - {eval_time: 40m, alertname: ReplicationSlotMissing, exp_alerts: []}
+      - {eval_time: 40m, alertname: PostgresExporterDown, exp_alerts: []}
+
+  # Consumer stopped: fires only after 30 minutes, not before.
+  - interval: 1m
+    input_series:
+      - series: 'pg_replication_slots_slot_is_active{slot_name="thelook_debezium",slot_type="logical"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: ReplicationSlotInactive
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: ReplicationSlotInactive
+        exp_alerts:
+          - exp_labels: {severity: warning, slot_name: thelook_debezium, slot_type: logical}
+            exp_annotations:
+              summary: "Slot thelook_debezium inactive for 30 minutes"
+              description: "No consumer on the slot; Postgres keeps all WAL since its restart_lsn. See the runbook, replication slot section."
+
+  # 2 GiB retained: fires after 5 minutes above 1 GiB.
+  - interval: 1m
+    input_series:
+      - series: 'pg_replication_slots_pg_wal_lsn_diff{database="thelook",slot_name="thelook_debezium"}'
+        values: '2147483648x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ReplicationSlotRetainedWalHigh
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ReplicationSlotRetainedWalHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, database: thelook, slot_name: thelook_debezium}
+            exp_annotations:
+              summary: "Slot thelook_debezium retains 2GiB of WAL"
+              description: "Retained WAL above 1 GiB. The slot is invalidated at 10 GiB (max_slot_wal_keep_size)."
+
+  # 1 GiB left before invalidation: critical after 1 minute.
+  - interval: 1m
+    input_series:
+      - series: 'pg_replication_slots_safe_wal_size_bytes{slot_name="thelook_debezium",slot_type="logical"}'
+        values: '1073741824x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ReplicationSlotNearInvalidation
+        exp_alerts:
+          - exp_labels: {severity: critical, slot_name: thelook_debezium, slot_type: logical}
+            exp_annotations:
+              summary: "Slot thelook_debezium has 1GiB left before invalidation"
+              description: "Past the cap the slot is lost and the connector must re-snapshot."
+
+  # Slot already lost: fires at once (no "for").
+  - interval: 1m
+    input_series:
+      - series: 'pg_replication_slots_wal_status{slot_name="thelook_debezium",slot_type="logical",wal_status="lost"}'
+        values: '1x5'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: ReplicationSlotLost
+        exp_alerts:
+          - exp_labels: {severity: critical, slot_name: thelook_debezium, slot_type: logical, wal_status: lost}
+            exp_annotations:
+              summary: "Slot thelook_debezium is lost"
+              description: "WAL needed by the consumer is (or will be) removed. Follow the runbook: drop the slot, reset offsets, re-snapshot, then check for deletes missed in the gap."
+
+  # Exporter up, but no slot series at all (slot dropped).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="postgres"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ReplicationSlotMissing
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ReplicationSlotMissing
+        exp_alerts:
+          - exp_labels: {severity: critical, slot_name: thelook_debezium}
+            exp_annotations:
+              summary: "Slot thelook_debezium does not exist (or is not being measured)"
+              description: "Check PostgresExporterDown first; otherwise the slot was dropped."
+
+  # Exporter up but cannot reach Postgres (pg_up 0).
+  - interval: 1m
+    input_series:
+      - series: 'up{job="postgres"}'
+        values: '1x5'
+      - series: 'pg_up'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: PostgresExporterDown
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "Postgres metrics are not being collected"
+              description: "Slot alerts cannot fire while this lasts."

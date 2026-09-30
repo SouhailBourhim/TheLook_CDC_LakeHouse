@@ -163,6 +163,49 @@ services:
       start_period: 40s
     stop_grace_period: 30s
 
+  # --- monitoring profile ------------------------------------------------------
+  # Start with the core stack:
+  #   docker compose --profile core --profile monitoring up -d
+  # No depends_on on core services: a dependency in an inactive profile is an
+  # error, and the exporter reports pg_up=0 until Postgres is reachable.
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    profiles: [monitoring]
+    environment:
+      # Connects as the pg_monitor-only role (postgres/monitoring-setup.sql).
+      DATA_SOURCE_URI: postgres:5432/thelook?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS: ${EXPORTER_DB_PASSWORD:?set EXPORTER_DB_PASSWORD in onprem/.env}
+
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    profiles: [monitoring]
+    depends_on: [alertmanager]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # A week of history is enough to look back at a drill.
+      - --storage.tsdb.retention.time=7d
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
 volumes:
   pgdata:
   kafka-data:
+  prometheus-data:

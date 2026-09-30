@@ -1,0 +1,76 @@
+# Replication slot alerts (spec FR13). Metric names come from
+# postgres_exporter's built-in replication_slot collector.
+#
+# Thresholds are sized for this machine: max_slot_wal_keep_size is 10 GiB and
+# the generator writes ~106 MB of WAL per hour at 5 iterations/s (commit 6).
+groups:
+  - name: replication-slot
+    rules:
+      # The slot exists but nobody is reading it (Debezium stopped, crashed
+      # or cannot connect). 30 minutes filters out restarts and redeploys.
+      - alert: ReplicationSlotInactive
+        expr: pg_replication_slots_slot_is_active{slot_type="logical"} == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slot {{ $labels.slot_name }} inactive for 30 minutes"
+          description: "No consumer on the slot; Postgres keeps all WAL since its restart_lsn. See the runbook, replication slot section."
+
+      # WAL kept for the slot (current LSN - restart_lsn). 1 GiB is 10% of
+      # the cap, about 9 hours of backlog at 5 iterations/s: an early warning
+      # that the consumer is behind, even if it is connected.
+      - alert: ReplicationSlotRetainedWalHigh
+        expr: pg_replication_slots_pg_wal_lsn_diff > 1 * 1024^3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slot {{ $labels.slot_name }} retains {{ $value | humanize1024 }}B of WAL"
+          description: "Retained WAL above 1 GiB. The slot is invalidated at 10 GiB (max_slot_wal_keep_size)."
+
+      # Less than 2 GiB left before Postgres invalidates the slot: act now
+      # (restart the consumer, or raise max_slot_wal_keep_size with
+      # ALTER SYSTEM + pg_reload_conf()).
+      - alert: ReplicationSlotNearInvalidation
+        expr: pg_replication_slots_safe_wal_size_bytes < 2 * 1024^3
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Slot {{ $labels.slot_name }} has {{ $value | humanize1024 }}B left before invalidation"
+          description: "Past the cap the slot is lost and the connector must re-snapshot."
+
+      # unreserved: already past the cap, WAL may be removed at the next
+      # checkpoint. lost: the slot is invalid; re-snapshot required.
+      - alert: ReplicationSlotLost
+        expr: pg_replication_slots_wal_status{wal_status=~"unreserved|lost"} == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Slot {{ $labels.slot_name }} is {{ $labels.wal_status }}"
+          description: "WAL needed by the consumer is (or will be) removed. Follow the runbook: drop the slot, reset offsets, re-snapshot, then check for deletes missed in the gap."
+
+      # A dropped slot produces no metric at all, and a missing series never
+      # triggers the rules above. absent() turns "no data" into an alert.
+      - alert: ReplicationSlotMissing
+        expr: absent(pg_replication_slots_slot_is_active{slot_name="thelook_debezium"})
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Slot thelook_debezium does not exist (or is not being measured)"
+          description: "Check PostgresExporterDown first; otherwise the slot was dropped."
+
+  - name: monitoring
+    rules:
+      # If the exporter is down, every slot metric disappears and the slot
+      # alerts go silent. Watching the watcher.
+      - alert: PostgresExporterDown
+        expr: up{job="postgres"} == 0 or pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Postgres metrics are not being collected"
+          description: "Slot alerts cannot fire while this lasts."

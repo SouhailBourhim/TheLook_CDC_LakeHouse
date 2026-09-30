@@ -1,7 +1,7 @@
 -- CDC setup for Debezium: replication role, grants, publication.
 --
 -- Idempotent: every statement converges to the same end state, so the
--- script can be re-run after any change. Run it with cdc-setup.sh, as the
+-- script can be re-run after any change. Run it with apply-sql.sh, as the
 -- superuser, in one transaction (all or nothing), after the generator has
 -- created its tables.
 

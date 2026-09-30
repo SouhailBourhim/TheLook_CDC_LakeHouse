@@ -1,0 +1,19 @@
+# Alertmanager groups, deduplicates and routes alerts. The delivery channel
+# (email, Slack...) is chosen with the rest of the alerting work in P4; until
+# then firing alerts are visible in the UI (http://localhost:9093) and API.
+route:
+  receiver: default
+  group_by: [alertname, slot_name]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: default
+
+# When the exporter is down, the slot metrics disappear too, so
+# ReplicationSlotMissing would fire as well and point at the wrong cause.
+# While PostgresExporterDown fires, suppress it: one incident, one alert.
+inhibit_rules:
+  - source_matchers: [alertname="PostgresExporterDown"]
+    target_matchers: [alertname="ReplicationSlotMissing"]
