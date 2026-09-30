@@ -10,7 +10,7 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 1.7                                           |
+| Version      | 1.8                                           |
 | Date         | 29 September 2026                             |
 | Status       | Specification, not yet started                |
 
@@ -26,6 +26,7 @@ governed, cost-controlled analytics lakehouse
 | 1.5         | 29/09/2026 | Added section 13: working rules for Claude Code as a learning partner (decisions stay with the author), with the matching CLAUDE.md file.                                                                                                                                                           |
 | 1.6         | 29/09/2026 | Section 13 revised: Claude Code may design and write everything, but must explain every decision and change so that the author understands all of it.                                                                                                                                               |
 | 1.7         | 29/09/2026 | Section 4.2 corrected after reading the generator code: it runs INSERT and UPDATE statements only, never DELETE. All source deletes come from the synthetic erasure scripts (4.3). From this version the Markdown file is the reference; the Word file stays at v1.6. |
+| 1.8         | 30/09/2026 | O8 target set from the P1 baseline run (docs/results.md): 200 change events/s. The capture side's breaking point is found in P2, end to end (the P1 load generator is latency-bound near 266 events/s). |
 
 ## 1. Context and problem
 
@@ -72,7 +73,7 @@ become the figures used on the CV.
 | O5     | Data-deletion request handled                | User erased from every layer, including clickstream, in \< 24 hours, with an audit trail                                           |
 | O6     | Monthly AWS cost                             | \< \$15 at demo volume                                                                                                             |
 | O7     | Reproducibility                              | Whole stack deployed or destroyed with one command                                                                                 |
-| O8     | Throughput                                   | Sustain a target event rate (set after a baseline run in P1) with consumer lag \< 30 seconds; find and document the breaking point |
+| O8     | Throughput                                   | Sustain 200 change events/s (set from the P1 baseline run) with consumer lag \< 30 seconds; find and document the breaking point (in P2) |
 | O9     | Resilience                                   | Every failure drill in FR14 ends with 0 lost and 0 duplicated rows after reconciliation                                            |
 
 ## 3. Scope

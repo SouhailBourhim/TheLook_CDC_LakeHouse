@@ -283,19 +283,19 @@ purchases, container must run in UTC.
 
 ### Open questions added
 
-- **O8 target (Souhail to approve):** proposed 200 change events/s with
-  capture lag < 1 s, re-validated end to end in P2.
-- **A9:** the capture side's breaking point was not found; needs a load
-  generator that is not latency-bound (concurrent workers, or random picks
-  without full scans). Decide whether to patch the vendored generator or
-  write a separate load tool; before O8 is final.
+- **O8 target: decided** (Souhail): 200 change events/s, capture lag < 1 s
+  in P1, re-validated end to end in P2 (spec v1.8).
+- **A9: deferred to P2** (Souhail): the capture side's breaking point was
+  not found (generator latency-bound); measure it end to end once the sink
+  exists.
 - Lost-slot recovery (runbook) not yet exercised.
 
 ### Where we stopped
 
 - All 16 P1 commits done and pushed. Stack running; generator at 5/s.
-- Waiting for Souhail: review ADRs 002–005, decide the O8 target and A9,
-  answer the commit 12 check questions and the **P1 checkpoint** questions.
+- ADRs 002–005 accepted by Souhail; O8 and A9 decided. Stack stopped.
+- Waiting for Souhail: the commit 12 check questions and the **P1
+  checkpoint** questions.
 - Before P2: settle A4 (who creates bronze tables) and the connector
   settings deferred to P2 (`time.precision.mode`, `tombstones.on.delete`).
 

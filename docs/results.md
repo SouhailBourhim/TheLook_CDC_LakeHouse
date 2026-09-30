@@ -139,7 +139,7 @@ in the database at the end. Achieved = generator iterations per second.
   already stored without their free space, and UUIDs and random text
   compress poorly. Enabled anyway (cheap at these CPU levels).
 
-**O8 (to be approved by Souhail):** proposed target **200 change events/s
-(≈ 20 iterations/s) with capture lag < 1 s**, below the observed maximum
-(266/s) for margin, to be re-validated end to end in P2 with the sink's
-consumer lag < 30 s.
+**O8 (approved by Souhail, spec v1.8):** target **200 change events/s
+(≈ 20 iterations/s)**, capture lag < 1 s in P1, below the observed maximum
+(266/s) for margin; re-validated end to end in P2 with the sink's consumer
+lag < 30 s. The breaking point is searched in P2 (A9, deferred).
