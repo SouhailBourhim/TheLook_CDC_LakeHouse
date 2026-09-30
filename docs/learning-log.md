@@ -202,13 +202,64 @@ purchases, container must run in UTC.
   digest, fails closed). Tested: a planted fake token blocks the push.
   Enable per clone with `git config core.hooksPath .githooks`.
 
+### Commits 6–11 (session 2, continued on 2026-09-30)
+
+- **Commit 6, generator.** Pinned Dockerfile + hashed `requirements.lock`,
+  non-root; own role/schema (`generator`, `shop`) via a first-start init
+  script; the generator logged its DB password in clear: patched to read
+  `DB_PASSWORD` and redact it, password rotated. Measured WAL: ~106 MB/h at
+  5 iterations/s, so the 10 GB slot cap holds ~4 days (~1 day at 20/s).
+  Init scripts only run on an empty volume; later changes need idempotent
+  scripts (Souhail's answer). The generator dies after one startup
+  connection error with exit code 0, so `restart: on-failure` would not help.
+- **Commit 7, Kafka 4.3.1 KRaft.** Mounted `server.properties`. Traps:
+  image default `log.dirs=/tmp/...`; RF 3 defaults for internal topics incl.
+  the transaction log; the `advertised.listeners` trap (INTERNAL
+  `kafka:29092` / EXTERNAL `localhost:9092`); retention deletes closed
+  segments only, so `log.roll.hours=24`. Souhail added: topic-level
+  overrides beat broker defaults, and a time roll needs a new message.
+- **Commit 8, Schema Registry 8.3.2.** Schemas live in the compacted
+  `_schemas` topic (registry is stateless). BACKWARD = new schema reads old
+  data, consumers upgrade first (my first comment said the opposite; fixed).
+  Wire format seen: magic byte 0 + 4-byte schema ID + Avro payload. Adding a
+  NOT NULL column without a literal default fails registration and stops
+  the connector (A5: needs a DDL policy).
+- **Commit 9, Connect worker.** `apache/kafka:4.3.1` + Debezium 3.7.0
+  (built against Kafka 4.3.1: **B6 part 1 closed**) + Confluent Avro
+  converter 8.3.2, downloaded with `ADD --checksum` (verified: a wrong digit
+  fails the build), multi-stage. Distributed mode: state lives in
+  `_connect-*` topics. Exactly-once source = records + offsets in one
+  transaction. Dedup key in silver is (PK, LSN), never LSN alone (snapshot
+  events share one LSN).
+- **Commit 10, CDC setup.** Idempotent `cdc-setup.sql` (one transaction,
+  password via psql `\getenv`): role `debezium` (REPLICATION + SELECT,
+  heartbeat upsert), publication `thelook_cdc` pre-created (**B1**) with the
+  6 tables + heartbeat (**B2**), no TRUNCATE, REPLICA IDENTITY DEFAULT
+  (FULL would copy an erased user's PII into Kafka during the erasure).
+  WSL restarted overnight: Postgres ran crash recovery (19 MB of WAL in
+  0.07 s). No restart policy on purpose.
+- **Commit 11, Debezium source.** `postgres-source.json` + `make
+  register-connectors` (idempotent PUT, waits for RUNNING). Password via
+  EnvVarConfigProvider (allowlisted), lz4 on source producers.
+  **P1 acceptance part 1 met:** 6 topics (+ heartbeat), 16 subjects,
+  snapshot counts = Postgres counts on all 6 tables; streaming shows the
+  predicted 29,120 no-op product updates after a generator restart; slot
+  active, 238 kB behind. With EOS, end offsets include transaction markers,
+  so count records, not offsets.
+- **Debugging lessons:** inline client objects garbage-collected before
+  their reply; `tr` at the end of a pipe hiding exit codes; "stop when
+  quiet" never ends on a live topic (bounded read to frozen end offsets);
+  `pkill -f` matched and killed its own shell.
+- Deferred to P2 (decide before data reaches the lake):
+  `time.precision.mode` (timestamps are microseconds), `tombstones.on.delete`.
+
 ### Where we stopped
 
-- P1 commits 1–5 done and pushed, plus the spec v1.7, source-schema and
-  gitleaks-hook commits. Postgres runs: `cd onprem && docker compose --profile core up -d`.
-- Next: commit 6, run the generator (fix Dockerfile `CMD`, own schema/role,
-  explicit probabilities, `TZ=UTC`), then measure the WAL rate to check the
-  10GB cap.
+- P1 commits 1–11 done and pushed. After a reboot:
+  `cd onprem && docker compose --profile core up -d`, then
+  `make connector-status` from the repo root.
+- Next: commit 12, slot metrics and alerts (Prometheus, postgres_exporter,
+  Alertmanager, `monitoring` profile).
 
 ### P1 plan (agreed)
 
