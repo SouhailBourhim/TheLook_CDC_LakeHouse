@@ -10,7 +10,7 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 1.8                                           |
+| Version      | 1.9                                           |
 | Date         | 29 September 2026                             |
 | Status       | Specification, not yet started                |
 
@@ -27,6 +27,7 @@ governed, cost-controlled analytics lakehouse
 | 1.6         | 29/09/2026 | Section 13 revised: Claude Code may design and write everything, but must explain every decision and change so that the author understands all of it.                                                                                                                                               |
 | 1.7         | 29/09/2026 | Section 4.2 corrected after reading the generator code: it runs INSERT and UPDATE statements only, never DELETE. All source deletes come from the synthetic erasure scripts (4.3). From this version the Markdown file is the reference; the Word file stays at v1.6. |
 | 1.8         | 30/09/2026 | O8 target set from the P1 baseline run (docs/results.md): 200 change events/s. The capture side's breaking point is found in P2, end to end (the P1 load generator is latency-bound near 266 events/s). |
+| 1.9         | 30/09/2026 | Open questions A4 and C1 settled at the start of P2: the Iceberg sink creates and evolves the bronze tables, and the contracts validate them (Terraform creates only the Glue databases); the lake stays deployed between sessions, with `terraform destroy` kept as the one-command teardown. |
 
 ## 1. Context and problem
 
@@ -334,8 +335,11 @@ One agreed definition for each business metric, documented and tested:
 - Records that violate a contract go to a dead-letter area and raise an
   alert.
 
-- The contract files are the single source of truth: Terraform reads
-  them to create the bronze tables.
+- The contract files are the single source of truth for what each table
+  must look like. The Iceberg sink creates the bronze tables and evolves
+  them (new nullable columns); the contracts validate the resulting tables
+  and topics, so a drift between data and contract fails a check instead
+  of being hidden by a Terraform-managed schema.
 
 - The contracts also protect the pipeline against schema changes in the
   generator itself.
@@ -583,7 +587,7 @@ and raise it only for load tests.
 
 | **Risk**                                                                      | **Mitigation**                                                                                           |
 |-------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------|
-| Unexpected AWS bill                                                           | Develop locally; deploy only for work sessions; budget alarm; terraform destroy after each session       |
+| Unexpected AWS bill                                                           | Develop locally; low generator rate on AWS; budget alarm; lake kept deployed (idle cost near zero), `terraform destroy` as one-command teardown |
 | Scope creep                                                                   | Finish P1 to P3 before adding anything else                                                              |
 | Generator folder carries a different licence from the repository (Apache 2.0) | Check before reuse; otherwise write an equivalent generator on the same schema (about one week)          |
 | Generator schema changes or stops being maintained                            | Pin a specific version; data contracts detect any schema drift                                           |

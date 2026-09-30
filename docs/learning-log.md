@@ -294,8 +294,16 @@ purchases, container must run in UTC.
 
 - All 16 P1 commits done and pushed. Stack running; generator at 5/s.
 - ADRs 002–005 accepted by Souhail; O8 and A9 decided. Stack stopped.
-- Waiting for Souhail: the commit 12 check questions and the **P1
-  checkpoint** questions.
+- P1 checkpoint answered: A, 1, 3, 4, 5 correct. **Gap:** B and 2 used the
+  commit 6 WAL rate (106 MB/h) instead of the drill's ~550 MB/h, so "the slot
+  survives a day" is wrong: at 5/s a day is ~13 GB > the 10 GiB cap (lost
+  after ~18 h). Souhail to redo question 2 in two lines.
+- **P2 started.** Decided by Souhail: **A4** sink creates and evolves the
+  bronze tables, contracts validate (spec v1.9, ADR 006 proposed); **C1**
+  lake stays deployed, `terraform destroy` kept as teardown (spec v1.9);
+  AWS: a **new project profile** (`thelook`), not the `Signal` admin user.
+- Next: Souhail creates the `thelook` profile; then P2 commit 1 (Terraform
+  layout and remote state).
 - Before P2: settle A4 (who creates bronze tables) and the connector
   settings deferred to P2 (`time.precision.mode`, `tombstones.on.delete`).
 
