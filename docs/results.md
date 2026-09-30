@@ -44,3 +44,51 @@ generator stopped so both sides describe the same moment.
   measure in the baseline run.
 - **Consequence for the slot cap:** at 5 iterations/s, 10 GiB now holds
   about 18 hours of consumer downtime, not ~4 days.
+
+## Baseline throughput run — method (written before measuring, B5)
+
+**Question:** how fast can the on-prem capture path (generator → Postgres →
+Debezium → Kafka) go, and what saturates first? The answer sets O8's
+target, to be confirmed end to end in P2 when the sink consumer exists.
+
+**Scope.** O1 (freshness) and O8 (consumer lag < 30 s) are end-to-end
+objectives; in P1 there is no lake consumer yet, so this run measures the
+**capture side only**: source commit → record written in Kafka.
+
+**Load.** `GENERATOR_QPS` = 5, 10, 20, 40, 80 iterations/s, each held for
+6 minutes. Each generator restart re-seeds 1,000 users and re-upserts
+29,120 products (a burst, see `docs/source-schema.md`), so the **first
+2 minutes of each level are warm-up and not measured**; the measurement
+window is the last 4 minutes.
+
+**Metrics per level (measurement window only)**
+
+| Metric | Source | Why |
+|---|---|---|
+| Achieved iterations/s | `increase(pg_stat_user_tables_n_tup_ins{relname="orders"})` / window; each iteration inserts exactly one order | Is the generator keeping up with its target? |
+| Change events/s captured | `increase(kafka_connect_source_task_metrics_source_record_write)` / window | Records Debezium actually wrote to Kafka (not end offsets, which include transaction markers) |
+| Capture lag | `max_over_time` and `quantile_over_time(0.95, …)` of `debezium_streaming_millisecondsbehindsource` | Source commit → Debezium processing |
+| WAL rate | `pg_current_wal_lsn()` delta over the window, MB/hour | Sizes the slot cap |
+| Retained WAL trend | slot `restart_lsn` retained WAL at window start and end | A growing value means the consumer falls behind |
+| CPU | `docker stats` at the end of the window, per container | Names the bottleneck (a single-threaded process caps near 100 %) |
+
+**Counts while the generator runs (B5, O4).** Rates are computed from
+monotonic counters over a fixed window, never from `count(*)` snapshots
+taken at different moments. Exact equality checks (`verify_cdc.py`) are only
+run with the generator stopped.
+
+**A level is sustained when all hold:** achieved ≥ 90 % of target; capture
+lag max < 30 s over the window; retained WAL not growing between window
+start and end (± one WAL segment, 16 MB). The **breaking point** is the
+first level that is not sustained; the component near a full CPU core (or
+the metric that failed) is the bottleneck.
+
+**Hypothesis (to confirm or reject):** the generator saturates first. Each
+iteration runs `ORDER BY RANDOM() LIMIT 1` on `users` and on `orders`, a
+full scan of a table that grows every second; that load lands on Postgres
+CPU and on the generator's single event loop.
+
+**Side experiment, same session:** WAL volume with `wal_compression` off
+vs `lz4`, two consecutive 6-minute windows at 5 iterations/s, changed with
+`ALTER SYSTEM` + reload (no restart). Full-page images dominated the WAL in
+the slot drill; compression targets exactly them.
