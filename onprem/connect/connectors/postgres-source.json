@@ -1,0 +1,29 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "tasks.max": "1",
+
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.dbname": "thelook",
+  "database.user": "debezium",
+  "database.password": "${env:DEBEZIUM_DB_PASSWORD}",
+
+  "topic.prefix": "thelook",
+  "plugin.name": "pgoutput",
+  "slot.name": "thelook_debezium",
+  "publication.name": "thelook_cdc",
+  "publication.autocreate.mode": "disabled",
+  "table.include.list": "shop.users,shop.orders,shop.order_items,shop.events,shop.products,shop.dist_centers,shop.heartbeat",
+
+  "snapshot.mode": "initial",
+  "exactly.once.support": "required",
+
+  "heartbeat.interval.ms": "30000",
+  "heartbeat.action.query": "INSERT INTO shop.heartbeat (id, ts) VALUES (1, now()) ON CONFLICT (id) DO UPDATE SET ts = EXCLUDED.ts",
+
+  "topic.creation.default.partitions": "1",
+  "topic.creation.default.replication.factor": "1",
+  "topic.creation.default.cleanup.policy": "delete",
+  "topic.creation.default.retention.ms": "259200000",
+  "topic.creation.default.segment.ms": "86400000"
+}

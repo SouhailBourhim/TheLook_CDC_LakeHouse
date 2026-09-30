@@ -147,6 +147,9 @@ services:
         condition: service_healthy
     environment:
       KAFKA_HEAP_OPTS: -Xms512m -Xmx768m
+      # Resolved by the worker's EnvVarConfigProvider for ${env:...} placeholders
+      # in connector configs (see connect/connect-distributed.properties).
+      DEBEZIUM_DB_PASSWORD: ${DEBEZIUM_DB_PASSWORD:?set DEBEZIUM_DB_PASSWORD in onprem/.env}
     ports:
       - "127.0.0.1:8083:8083"
     volumes:
