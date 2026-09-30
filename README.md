@@ -3,7 +3,7 @@
 Real-time change data capture from an operational PostgreSQL database into a
 governed, cost-controlled Apache Iceberg lakehouse on AWS.
 
-> **Status:** phase P1 (on-prem stack) in progress. This is a learning project;
+> **Status:** phase P1 (on-prem capture) built and tested; ADR review and the P1 checkpoint pending. This is a learning project;
 > the full specification is the [cahier des charges](docs/cahier-des-charges.md).
 
 ## Architecture

@@ -253,13 +253,51 @@ purchases, container must run in UTC.
 - Deferred to P2 (decide before data reaches the lake):
   `time.precision.mode` (timestamps are microseconds), `tombstones.on.delete`.
 
+### Commits 12–16 (session 2, 2026-09-30, partly run as a /loop)
+
+- **Commit 12, slot alerts.** postgres_exporter as a `pg_monitor` role; its
+  built-in slot collector measures retained WAL from `restart_lsn` (checked
+  against SQL), so no custom query. Six rules with `promtool` unit tests
+  (a weakened rule makes them fail); `absent()` and `up == 0` so missing
+  metrics alert; an inhibit rule stops "slot missing" while the exporter is
+  down. `apply-sql.sh <file>` replaces `cdc-setup.sh`.
+- **Commit 13, slot drill (P1 acceptance part 2 met).** Connect stopped
+  60 min: alert pending at minute 1, firing at minute 31; 547 MB retained;
+  caught up in 44 s; `verify_cdc.py` (latest version per key from Kafka vs
+  Postgres, column by column) mismatched before the restart and matched
+  after on all 6 tables. **WAL rate grows with table size** (106 → 547 MB/h
+  at 5/s): full-page images after each checkpoint, confirmed with
+  `pg_stat_wal`. `docs/runbook.md` written; lost-slot recovery untested.
+- **Commit 14, Connect/Debezium metrics.** JMX exporter agent 1.6.0 (GitHub
+  release; Maven stops at 1.0.1). Five alerts with tests; the tests caught a
+  ms/s unit bug. Crash on first try: `ADD --chmod=644` also applied to the
+  directory it created (no execute bit), fixed by adding into `/opt`.
+- **Commit 15, throughput.** Method committed before measuring (B5). Capture
+  side never limited (lag ≤ 0.5 s up to 266 events/s); the generator caps
+  near 25 iterations/s by serial latency (`ORDER BY RANDOM()`, sleep before
+  work), not CPU. My 90 %-of-target criterion measured the generator's
+  pacing, so no level passed; reported, not rewritten. `wal_compression=lz4`
+  saves 19 % and is now on.
+- **Commit 16, wrap-up.** ADRs 002–005 **proposed** (Postgres config, Connect
+  image, CDC access model, monitoring); README "Run P1".
+
+### Open questions added
+
+- **O8 target (Souhail to approve):** proposed 200 change events/s with
+  capture lag < 1 s, re-validated end to end in P2.
+- **A9:** the capture side's breaking point was not found; needs a load
+  generator that is not latency-bound (concurrent workers, or random picks
+  without full scans). Decide whether to patch the vendored generator or
+  write a separate load tool; before O8 is final.
+- Lost-slot recovery (runbook) not yet exercised.
+
 ### Where we stopped
 
-- P1 commits 1–11 done and pushed. After a reboot:
-  `cd onprem && docker compose --profile core up -d`, then
-  `make connector-status` from the repo root.
-- Next: commit 12, slot metrics and alerts (Prometheus, postgres_exporter,
-  Alertmanager, `monitoring` profile).
+- All 16 P1 commits done and pushed. Stack running; generator at 5/s.
+- Waiting for Souhail: review ADRs 002–005, decide the O8 target and A9,
+  answer the commit 12 check questions and the **P1 checkpoint** questions.
+- Before P2: settle A4 (who creates bronze tables) and the connector
+  settings deferred to P2 (`time.precision.mode`, `tombstones.on.delete`).
 
 ### P1 plan (agreed)
 
