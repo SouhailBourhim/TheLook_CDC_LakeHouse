@@ -1,6 +1,6 @@
 # 002. PostgreSQL 17 source configuration
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-30
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 

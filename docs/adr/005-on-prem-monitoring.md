@@ -1,6 +1,6 @@
 # 005. On-prem monitoring and alerting
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-30
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
