@@ -80,3 +80,37 @@ dropped: follow ReplicationSlotLost from step 3.
 
 `dc --profile monitoring ps postgres-exporter` and its logs. While it lasts,
 no slot alert can fire: check the slot by hand with the query above.
+
+## Kafka Connect and Debezium
+
+Metrics come from the JMX exporter agent in the worker (`connect:9404`).
+
+### KafkaConnectDown
+
+The worker is down or its agent is not reachable. All connector alerts are
+silent meanwhile; the slot alerts still work (they come from Postgres).
+`dc --profile core ps connect` and `dc logs connect`. A JVM that fails before
+start-up (e.g. an unreadable `-javaagent` jar) exits with code 1 and prints
+the reason on the first lines of the log.
+
+### ConnectorNotRunning / ConnectorTaskFailed
+
+`make connector-status`, then the task trace:
+`curl -s localhost:8083/connectors/postgres-source/status`. A failed task
+does not restart on its own. After fixing the cause:
+`curl -X POST 'localhost:8083/connectors/postgres-source/restart?includeTasks=true&onlyFailed=true'`.
+For a schema rejected by the registry, see ReplicationSlotInactive, step 3.
+
+### DebeziumNotConnected
+
+The task runs but its replication connection is down. Check that Postgres
+is up and that the `debezium` role can log in (password in `onprem/.env`
+matches the database: re-run `onprem/postgres/apply-sql.sh
+onprem/postgres/cdc-setup.sql`).
+
+### DebeziumLagHigh
+
+Changes are committed faster than Debezium processes them. Check the
+worker's CPU (`docker stats`) and the generator rate (`GENERATOR_QPS`).
+`MilliSecondsBehindSource` is measured on the last processed event; the
+heartbeat keeps it fresh when the tables are idle.

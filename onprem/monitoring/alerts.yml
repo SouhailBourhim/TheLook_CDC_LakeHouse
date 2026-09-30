@@ -75,3 +75,62 @@ groups:
         annotations:
           summary: "Postgres metrics are not being collected"
           description: "Slot alerts cannot fire while this lasts."
+
+  # Kafka Connect and Debezium, from the JMX exporter agent in the worker.
+  - name: connect
+    rules:
+      # Worker down: all connector metrics disappear, so the rules below go
+      # silent (missing series never fire). This one covers that case.
+      - alert: KafkaConnectDown
+        expr: up{job="connect"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka Connect worker is down or not scraped"
+          description: "No change events are captured; the replication slot retains WAL. See the runbook, replication slot section."
+
+      # Any state other than running (paused, stopped, unassigned, failed)
+      # for 5 minutes. Short restarts (e.g. a config update) do not fire.
+      - alert: ConnectorNotRunning
+        expr: kafka_connect_connector_status{status!="running"} == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connector {{ $labels.connector }} is {{ $labels.status }}"
+          description: "Check with make connector-status."
+
+      # A failed task never restarts on its own: it needs a person.
+      - alert: ConnectorTaskFailed
+        expr: kafka_connect_task_status{status="failed"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Task {{ $labels.task }} of {{ $labels.connector }} failed"
+          description: "Read the trace: curl -s localhost:8083/connectors/{{ $labels.connector }}/status. A schema rejected by the registry (HTTP 409) is the usual cause; see the runbook."
+
+      # Debezium's replication connection to Postgres is down while the task
+      # is running (it retries on its own; alert if it lasts).
+      - alert: DebeziumNotConnected
+        expr: debezium_streaming_connected == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Debezium ({{ $labels.server }}) is not connected to Postgres"
+          description: "Check Postgres and the debezium role; the slot is inactive meanwhile."
+
+      # Time between a change's commit in Postgres and Debezium processing
+      # it. The heartbeat (every 30 s) keeps it updated when tables are idle.
+      # The metric is in milliseconds; divided by 1000 so $value is in
+      # seconds, the unit humanizeDuration expects.
+      - alert: DebeziumLagHigh
+        expr: debezium_streaming_millisecondsbehindsource / 1000 > 60
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Debezium ({{ $labels.server }}) is {{ $value | humanizeDuration }} behind"
+          description: "Capture is slower than the source writes. Check the worker's CPU and the generator rate."

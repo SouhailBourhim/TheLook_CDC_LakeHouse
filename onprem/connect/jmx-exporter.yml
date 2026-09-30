@@ -1,0 +1,47 @@
+# Prometheus JMX exporter rules for the Kafka Connect worker.
+#
+# The agent runs inside the Connect JVM (-javaagent in compose), reads MBeans
+# and serves them at :9404/metrics. Only the MBeans matched below are
+# exported; everything else is dropped to keep the scrape small.
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+
+rules:
+  # Debezium connector metrics, e.g.
+  # debezium.postgres<type=connector-metrics, context=streaming, server=thelook><>MilliSecondsBehindSource
+  # context = snapshot or streaming. Numeric and boolean attributes only;
+  # [A-Za-z0-9] keeps the digits of MilliSecondsBehindSourceP95 etc.
+  - pattern: 'debezium.([^:<]+)<type=connector-metrics, context=([^,]+), server=([^,>]+)(?:, [^>]+)?><>([A-Za-z0-9]+)'
+    name: debezium_$2_$4
+    labels:
+      plugin: $1
+      server: $3
+
+  # Connector and task state are strings (running, paused, failed...).
+  # Export one series per state with value 1, so alerts can match a label.
+  - pattern: 'kafka.connect<type=connector-metrics, connector=([^>]+)><>status: ([a-z-]+)'
+    name: kafka_connect_connector_status
+    value: 1
+    type: GAUGE
+    labels:
+      connector: $1
+      status: $2
+  - pattern: 'kafka.connect<type=connector-task-metrics, connector=([^,]+), task=([^>]+)><>status: ([a-z-]+)'
+    name: kafka_connect_task_status
+    value: 1
+    type: GAUGE
+    labels:
+      connector: $1
+      task: $2
+      status: $3
+
+  # Per-task counters: records polled and written, errors, retries.
+  - pattern: 'kafka.connect<type=(source-task-metrics|task-error-metrics), connector=([^,]+), task=([^>]+)><>([a-z-]+)'
+    name: kafka_connect_$1_$4
+    labels:
+      connector: $2
+      task: $3
+
+  # Worker-level counts (connectors, tasks, startup failures).
+  - pattern: 'kafka.connect<type=connect-worker-metrics><>([a-z-]+)'
+    name: kafka_connect_worker_$1

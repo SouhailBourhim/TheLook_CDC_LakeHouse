@@ -126,3 +126,97 @@ tests:
             exp_annotations:
               summary: "Postgres metrics are not being collected"
               description: "Slot alerts cannot fire while this lasts."
+
+  # --- connect group ---------------------------------------------------------
+  # Healthy worker: nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="connect"}'
+        values: '1x20'
+      - series: 'kafka_connect_connector_status{connector="postgres-source",status="running"}'
+        values: '1x20'
+      - series: 'kafka_connect_task_status{connector="postgres-source",status="running",task="0"}'
+        values: '1x20'
+      - series: 'debezium_streaming_connected{plugin="postgres",server="thelook"}'
+        values: '1x20'
+      - series: 'debezium_streaming_millisecondsbehindsource{plugin="postgres",server="thelook"}'
+        values: '200x20'
+    alert_rule_test:
+      - {eval_time: 20m, alertname: KafkaConnectDown, exp_alerts: []}
+      - {eval_time: 20m, alertname: ConnectorNotRunning, exp_alerts: []}
+      - {eval_time: 20m, alertname: ConnectorTaskFailed, exp_alerts: []}
+      - {eval_time: 20m, alertname: DebeziumNotConnected, exp_alerts: []}
+      - {eval_time: 20m, alertname: DebeziumLagHigh, exp_alerts: []}
+
+  # Worker down for 3 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="connect"}'
+        values: '0x5'
+    alert_rule_test:
+      - {eval_time: 1m, alertname: KafkaConnectDown, exp_alerts: []}
+      - eval_time: 3m
+        alertname: KafkaConnectDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: connect}
+            exp_annotations:
+              summary: "Kafka Connect worker is down or not scraped"
+              description: "No change events are captured; the replication slot retains WAL. See the runbook, replication slot section."
+
+  # Connector paused: fires after 5 minutes, not before.
+  - interval: 1m
+    input_series:
+      - series: 'kafka_connect_connector_status{connector="postgres-source",status="paused"}'
+        values: '1x10'
+    alert_rule_test:
+      - {eval_time: 4m, alertname: ConnectorNotRunning, exp_alerts: []}
+      - eval_time: 6m
+        alertname: ConnectorNotRunning
+        exp_alerts:
+          - exp_labels: {severity: warning, connector: postgres-source, status: paused}
+            exp_annotations:
+              summary: "Connector postgres-source is paused"
+              description: "Check with make connector-status."
+
+  # Task failed.
+  - interval: 1m
+    input_series:
+      - series: 'kafka_connect_task_status{connector="postgres-source",status="failed",task="0"}'
+        values: '1x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ConnectorTaskFailed
+        exp_alerts:
+          - exp_labels: {severity: critical, connector: postgres-source, status: failed, task: "0"}
+            exp_annotations:
+              summary: "Task 0 of postgres-source failed"
+              description: "Read the trace: curl -s localhost:8083/connectors/postgres-source/status. A schema rejected by the registry (HTTP 409) is the usual cause; see the runbook."
+
+  # Replication connection lost.
+  - interval: 1m
+    input_series:
+      - series: 'debezium_streaming_connected{plugin="postgres",server="thelook"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: DebeziumNotConnected
+        exp_alerts:
+          - exp_labels: {severity: critical, plugin: postgres, server: thelook}
+            exp_annotations:
+              summary: "Debezium (thelook) is not connected to Postgres"
+              description: "Check Postgres and the debezium role; the slot is inactive meanwhile."
+
+  # 2 minutes behind for more than 10 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'debezium_streaming_millisecondsbehindsource{plugin="postgres",server="thelook"}'
+        values: '120000x15'
+    alert_rule_test:
+      - {eval_time: 9m, alertname: DebeziumLagHigh, exp_alerts: []}
+      - eval_time: 11m
+        alertname: DebeziumLagHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, plugin: postgres, server: thelook}
+            exp_annotations:
+              summary: "Debezium (thelook) is 2m 0s behind"
+              description: "Capture is slower than the source writes. Check the worker's CPU and the generator rate."

@@ -18,3 +18,9 @@ scrape_configs:
   - job_name: postgres
     static_configs:
       - targets: ["postgres-exporter:9187"]
+
+  # JMX exporter agent inside the Kafka Connect worker (Connect + Debezium
+  # MBeans). Used by the connect alert group.
+  - job_name: connect
+    static_configs:
+      - targets: ["connect:9404"]

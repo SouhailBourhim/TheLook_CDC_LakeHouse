@@ -150,10 +150,15 @@ services:
       # Resolved by the worker's EnvVarConfigProvider for ${env:...} placeholders
       # in connector configs (see connect/connect-distributed.properties).
       DEBEZIUM_DB_PASSWORD: ${DEBEZIUM_DB_PASSWORD:?set DEBEZIUM_DB_PASSWORD in onprem/.env}
+      # Load the Prometheus JMX exporter agent into the worker's JVM: it serves
+      # the Connect and Debezium MBeans as metrics on :9404 (Compose network
+      # only; Prometheus scrapes it, nothing is published to the host).
+      KAFKA_OPTS: -javaagent:/opt/jmx_prometheus_javaagent.jar=9404:/etc/kafka-connect/jmx-exporter.yml
     ports:
       - "127.0.0.1:8083:8083"
     volumes:
       - ./connect/connect-distributed.properties:/etc/kafka-connect/connect-distributed.properties:ro
+      - ./connect/jmx-exporter.yml:/etc/kafka-connect/jmx-exporter.yml:ro
     healthcheck:
       # The REST API only answers once the worker has joined its group.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8083/connectors"]

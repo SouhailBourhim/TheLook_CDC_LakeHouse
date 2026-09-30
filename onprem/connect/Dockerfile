@@ -31,6 +31,17 @@ RUN mkdir -p /plugins \
 FROM ${KAFKA_IMAGE}
 COPY --from=plugins /plugins /opt/connect-plugins
 
+# Prometheus JMX exporter agent 1.6.0 (Apache 2.0). Published on GitHub
+# releases (Maven Central stops at 1.0.1); the hash matches the
+# release's .sha256 file. Enabled with -javaagent in compose (KAFKA_OPTS).
+# ADD from a URL creates the file root-owned with mode 600; the worker runs
+# as appuser, so make it readable. Added into /opt, which already exists:
+# --chmod also applies to any directory ADD creates, and a 644 directory
+# cannot be entered (no execute bit).
+ADD --chmod=644 --checksum=sha256:a95983fd96e865d2bcdf911cc500e7c82808c27ab9fd226bf96732b6c3d8c46e \
+    https://github.com/prometheus/jmx_exporter/releases/download/1.6.0/jmx_prometheus_javaagent-1.6.0.jar \
+    /opt/jmx_prometheus_javaagent.jar
+
 # The base image starts a broker; this image starts a distributed worker
 # with the configuration mounted by compose.
 ENTRYPOINT ["/opt/kafka/bin/connect-distributed.sh"]
