@@ -92,3 +92,54 @@ CPU and on the generator's single event loop.
 vs `lz4`, two consecutive 6-minute windows at 5 iterations/s, changed with
 `ALTER SYSTEM` + reload (no restart). Full-page images dominated the WAL in
 the slot drill; compression targets exactly them.
+
+## Baseline throughput run — results, 2026-09-30
+
+Method above, applied by `drills/throughput-baseline.sh`; ~100,000 orders
+in the database at the end. Achieved = generator iterations per second.
+
+| target/s | achieved/s | events/s captured | lag p95 (s) | lag max (s) | WAL MB/h | retained Δ MB | sustained (criteria as written) | CPU (generator / postgres / connect) |
+|---|---|---|---|---|---|---|---|---|
+| 5 | 4.5 | 47 | 0.4 | 0.5 | 500 | −2 | NO | 2 % / 8 % / 2 % |
+| 10 | 7.9 | 82 | 0.3 | 0.4 | 750 | 1 | NO | 6 % / 15 % / 2 % |
+| 20 | 13.3 | 140 | 0.2 | 0.2 | 1,069 | 0 | NO | 12 % / 16 % / 5 % |
+| 40 | 20.4 | 212 | 0.0 | 0.1 | 1,458 | 0 | NO | 20 % / 45 % / 2 % |
+| 80 | 25.6 | 266 | 0.0 | 0.0 | 872 | −6 | NO | 26 % / 39 % / 2 % |
+
+| wal_compression (5/s, consecutive 6-min windows) | WAL MB/h |
+|---|---|
+| off | 623 |
+| lz4 | 502 (−19 %) |
+
+**Findings**
+
+- **The capture side was never the limit.** At every level Debezium's lag
+  stayed ≤ 0.5 s, retained WAL did not grow, and Connect used < 5 % CPU,
+  up to 266 change events/s.
+- **The load generator saturates first, by latency, not CPU.** Achieved
+  rate flattens at ~25 iterations/s whatever the target; no process is near
+  a full core. Each iteration runs its database calls one after another,
+  including two `ORDER BY RANDOM() LIMIT 1` full scans (users, orders), and
+  its pacing sleeps *before* the work, so the rate is
+  `1 / (1/target + work time)`: ~39 ms of work caps it near 25/s, and the
+  cap falls as the tables grow. The hypothesis is confirmed on "generator
+  first", corrected on the mechanism.
+- **The written criterion was flawed.** "Achieved ≥ 90 % of target" measures
+  the generator's pacing, so no level passes, not even 5/s (the sanity check
+  before the run showed 88 %; the criterion was kept as committed). For the
+  capture path, the lag and retained-WAL criteria held at every level.
+- **The capture side's breaking point was not reached.** Finding it needs a
+  load generator that is not latency-bound (open question A9).
+- **WAL per 4-minute window is noisy**: it depends on where the window
+  falls in the 5-minute checkpoint cycle (full-page images follow each
+  checkpoint), hence 80/s < 40/s. Worst case measured: ~1.5 GB/hour at the
+  generator's maximum, so 10 GiB holds ~7 hours of consumer downtime there,
+  ~16–20 hours at 5/s.
+- **lz4 WAL compression saves ~19 %**, less than expected: page images are
+  already stored without their free space, and UUIDs and random text
+  compress poorly. Enabled anyway (cheap at these CPU levels).
+
+**O8 (to be approved by Souhail):** proposed target **200 change events/s
+(≈ 20 iterations/s) with capture lag < 1 s**, below the observed maximum
+(266/s) for margin, to be re-validated end to end in P2 with the sink's
+consumer lag < 30 s.
