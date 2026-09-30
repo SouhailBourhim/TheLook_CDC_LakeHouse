@@ -12,3 +12,6 @@ __pycache__/
 Thumbs.db
 desktop.ini
 *.swp
+
+# Raw drill logs (summaries go in docs/results.md)
+drills/logs/

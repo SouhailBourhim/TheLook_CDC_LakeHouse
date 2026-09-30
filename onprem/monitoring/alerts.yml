@@ -2,7 +2,8 @@
 # postgres_exporter's built-in replication_slot collector.
 #
 # Thresholds are sized for this machine: max_slot_wal_keep_size is 10 GiB and
-# the generator writes ~106 MB of WAL per hour at 5 iterations/s (commit 6).
+# the generator writes ~550 MB of WAL per hour at 5 iterations/s (slot drill,
+# docs/results.md; the rate grows with table size).
 groups:
   - name: replication-slot
     rules:
@@ -18,7 +19,7 @@ groups:
           description: "No consumer on the slot; Postgres keeps all WAL since its restart_lsn. See the runbook, replication slot section."
 
       # WAL kept for the slot (current LSN - restart_lsn). 1 GiB is 10% of
-      # the cap, about 9 hours of backlog at 5 iterations/s: an early warning
+      # the cap, about 2 hours of backlog at 5 iterations/s: an early warning
       # that the consumer is behind, even if it is connected.
       - alert: ReplicationSlotRetainedWalHigh
         expr: pg_replication_slots_pg_wal_lsn_diff > 1 * 1024^3
