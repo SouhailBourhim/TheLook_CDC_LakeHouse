@@ -67,6 +67,78 @@ services:
       - --order-update-prob=0.4
       - --ghost-create-prob=0.2
 
+  mongo:
+    # 8.0 is MongoDB's current major release line (longest support) and is in
+    # Debezium 3.x's tested range; 8.1+ are short-lived minor releases.
+    image: mongo:8.0.32@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
+    profiles: [core]
+    hostname: mongo
+    # start-mongod.sh creates the keyfile, then runs the image's entrypoint.
+    entrypoint: ["/bin/bash", "/etc/mongo/start-mongod.sh"]
+    command:
+      - mongod
+      # Replica set: Debezium reads change streams, which a standalone lacks.
+      - --replSet=rs0
+      # Members authenticate to each other with this shared secret; it also
+      # turns on access control (no user can connect without a password).
+      - --keyFile=/data/configdb/keyfile
+      # WiredTiger's default cache is 50 % of (RAM - 1 GB) of the *host*,
+      # ~7 GB here: far too much on a laptop shared with Kafka and Spark.
+      - --wiredTigerCacheSizeGB=0.5
+      # The oplog is a fixed-size log of every write (2 GiB here), used by
+      # change streams. Unlike a Postgres slot it never grows, so a stopped
+      # connector cannot fill the disk; instead, once the oldest entry it
+      # needs is overwritten, it must re-snapshot (spec FR13). Only applied
+      # when the oplog is first created; later changes need replSetResizeOplog.
+      - --oplogSize=2048
+    environment:
+      # Root user, created by the entrypoint on the first start only.
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in onprem/.env}
+    ports:
+      # Host tools must add directConnection=true (see mongo/setup.js).
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+      # Holds the generated keyfile; named so it survives `down`.
+      - mongo-config:/data/configdb
+      # The folder, not single files: a file bind mount follows the file's
+      # inode, so an editor that saves by replacing the file leaves the
+      # container (and Docker Desktop's mount cache) on the deleted copy.
+      - ./mongo:/etc/mongo:ro
+    healthcheck:
+      # Healthy means "accepts writes": the replica set is initiated (by
+      # mongo-init) and this node won its election. hello needs no login.
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    # Lets mongod flush and close its data files on `down`.
+    stop_grace_period: 30s
+
+  mongo-init:
+    # One-shot: runs mongo/setup.js (replica set, users, collections), then
+    # exits 0. Runs on every `up`; the script is idempotent.
+    image: mongo:8.0.32@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
+    profiles: [core]
+    depends_on:
+      mongo:
+        # Not service_healthy: mongo only becomes healthy after this runs.
+        condition: service_started
+    # The server may still be starting: retry for up to 60 s before failing.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - for i in $$(seq 30); do mongosh --quiet --host mongo --eval 'db.hello().ok' > /dev/null 2>&1 && exec mongosh --quiet --nodb /setup/setup.js; sleep 2; done; echo "mongo not reachable"; exit 1
+    environment:
+      # Read by setup.js with process.env, so no password is on a command line.
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in onprem/.env}
+      MONGO_GENERATOR_PASSWORD: ${MONGO_GENERATOR_PASSWORD:?set MONGO_GENERATOR_PASSWORD in onprem/.env}
+    volumes:
+      - ./mongo:/setup:ro
+
   kafka:
     image: apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
     profiles: [core]
@@ -212,5 +284,7 @@ services:
 
 volumes:
   pgdata:
+  mongo-data:
+  mongo-config:
   kafka-data:
   prometheus-data:
