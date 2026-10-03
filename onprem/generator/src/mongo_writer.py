@@ -2,7 +2,6 @@
 # to MongoDB (database "web", collection "events") instead of PostgreSQL.
 import dataclasses
 import logging
-from typing import List
 from urllib.parse import quote_plus
 
 from pymongo import MongoClient, ReplaceOne
@@ -33,7 +32,7 @@ class EventWriter:
         self.client = MongoClient(uri, tz_aware=False)
         self.collection = self.client[db_name]["events"]
 
-    def upsert(self, events: List[Event]):
+    def upsert(self, events: list[Event]):
         """Replace-or-insert by _id, like the PostgreSQL writer's
         INSERT ... ON CONFLICT: a retried batch does not fail on duplicate
         keys. A new _id is reported by change streams as an insert."""

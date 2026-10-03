@@ -170,7 +170,9 @@ class ReviewSimulator:
             except (psycopg.OperationalError, PyMongoError) as e:
                 failures += 1
                 delay = min(60, 2**failures)
-                log.warning("database error (%s), retrying in %ss: %s", failures, delay, e)
+                log.warning(
+                    "database error (%s), retrying in %ss: %s", failures, delay, e
+                )
                 time.sleep(delay)
             if time.monotonic() - last_report >= 60:
                 log.info("last minute: %s", dict(self.stats))
@@ -179,10 +181,16 @@ class ReviewSimulator:
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s"
+    )
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--rate", type=float, default=1.0, help="Average actions per second.")
-    p.add_argument("--batch", type=int, default=200, help="Delivered items fetched per refill.")
+    p.add_argument(
+        "--rate", type=float, default=1.0, help="Average actions per second."
+    )
+    p.add_argument(
+        "--batch", type=int, default=200, help="Delivered items fetched per refill."
+    )
     p.add_argument("--pg-host", default="localhost")
     p.add_argument("--pg-db", default="thelook")
     p.add_argument("--pg-user", default="reviewer")

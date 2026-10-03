@@ -17,6 +17,7 @@ up; otherwise the two sides are compared at different moments.
 
 Usage: uv run drills/verify_cdc.py        (exit code 0 = identical)
 """
+
 import datetime
 import sys
 import time
@@ -42,8 +43,14 @@ def load_env(path: Path) -> dict:
 
 
 def latest_from_topic(topic: str, deser: AvroDeserializer) -> dict:
-    c = Consumer({"bootstrap.servers": "localhost:9092", "group.id": f"verify-{time.time()}",
-                  "enable.auto.commit": False, "isolation.level": "read_committed"})
+    c = Consumer(
+        {
+            "bootstrap.servers": "localhost:9092",
+            "group.id": f"verify-{time.time()}",
+            "enable.auto.commit": False,
+            "isolation.level": "read_committed",
+        }
+    )
     end = c.get_watermark_offsets(TopicPartition(topic, 0), timeout=10)[1]
     c.assign([TopicPartition(topic, 0, 0)])
     latest = {}  # pk -> (lsn, after or None for a delete)
@@ -72,28 +79,47 @@ def main() -> int:
     env = load_env(Path(__file__).resolve().parent.parent / "onprem" / ".env")
     deser = AvroDeserializer(SchemaRegistryClient({"url": "http://localhost:8081"}))
     ok = True
-    with psycopg.connect(host="localhost", port=5432, dbname=env.get("POSTGRES_DB", "thelook"),
-                         user=env.get("POSTGRES_USER", "postgres"),
-                         password=env["POSTGRES_PASSWORD"]) as conn:
+    with psycopg.connect(
+        host="localhost",
+        port=5432,
+        dbname=env.get("POSTGRES_DB", "thelook"),
+        user=env.get("POSTGRES_USER", "postgres"),
+        password=env["POSTGRES_PASSWORD"],
+    ) as conn:
         for table in TABLES:
             kafka = latest_from_topic(f"thelook.shop.{table}", deser)
             with conn.cursor() as cur:
                 cur.execute(f"SELECT * FROM shop.{table}")
                 cols = [d.name for d in cur.description]
                 ts_cols = {d.name for d in cur.description if d.type_code == 1114}
-                pg = {r[cols.index("id")]: dict(zip(cols, r)) for r in cur.fetchall()}
+                pg = {
+                    r[cols.index("id")]: dict(zip(cols, r, strict=True))
+                    for r in cur.fetchall()
+                }
             # products/dist_centers keys are BIGINT; Kafka gives ints too.
             missing = pg.keys() - kafka.keys()
             extra = kafka.keys() - pg.keys()
-            differ = [pk for pk in pg.keys() & kafka.keys()
-                      if any(normalise(kafka[pk][c], c in ts_cols) != pg[pk][c] for c in cols)]
+            differ = [
+                pk
+                for pk in pg.keys() & kafka.keys()
+                if any(normalise(kafka[pk][c], c in ts_cols) != pg[pk][c] for c in cols)
+            ]
             status = "OK" if not (missing or extra or differ) else "MISMATCH"
             ok &= status == "OK"
-            print(f"{table:13} postgres={len(pg):>7} kafka_latest={len(kafka):>7} "
-                  f"missing={len(missing)} extra={len(extra)} differ={len(differ)}  {status}")
+            print(
+                f"{table:13} postgres={len(pg):>7} kafka_latest={len(kafka):>7} "
+                f"missing={len(missing)} extra={len(extra)} differ={len(differ)}  {status}"
+            )
             for pk in list(differ)[:3]:
-                print("   example diff", pk, {c: (kafka[pk][c], pg[pk][c]) for c in cols
-                                              if normalise(kafka[pk][c], c in ts_cols) != pg[pk][c]})
+                print(
+                    "   example diff",
+                    pk,
+                    {
+                        c: (kafka[pk][c], pg[pk][c])
+                        for c in cols
+                        if normalise(kafka[pk][c], c in ts_cols) != pg[pk][c]
+                    },
+                )
     return 0 if ok else 1
 
 

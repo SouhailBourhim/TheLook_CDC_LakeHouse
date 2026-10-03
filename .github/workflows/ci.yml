@@ -1,0 +1,69 @@
+# Continuous integration (spec FR18). Runs on every push and pull request:
+# lint, unit tests, alert-rule tests. Grows with each phase (PySpark tests in
+# P3, terraform fmt/validate and OIDC in P9).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the jobs only read the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the run still in progress.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Actions are pinned by commit SHA (the tag in the comment is for humans):
+# a tag can be moved to other code, a SHA cannot. Same idea as pinning
+# images by digest.
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.20"
+      # Rules and exclusions live in ruff.toml; the version is pinned so a new
+      # ruff release cannot change the result.
+      - run: uvx ruff@0.16.10 check --output-format github .
+      - run: uvx ruff@0.16.10 format --check .
+
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      # Each component has its own dependencies (its requirements.txt), as in
+      # its Docker image, so each is tested in its own environment.
+      matrix:
+        component: [onprem/generator, onprem/review-simulator]
+    defaults:
+      run:
+        working-directory: ${{ matrix.component }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.20"
+      # --no-project: these folders are not packages; uv builds a throwaway
+      # environment with the component's requirements plus pytest.
+      - run: >
+          uv run --no-project --python 3.12
+          --with-requirements requirements.txt --with pytest==9.1.1
+          python -m pytest -q
+
+  alert-rules:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Prometheus image the stack uses, so promtool matches the server.
+      - run: >
+          docker run --rm -v "$PWD/onprem/monitoring:/m:ro" -w /m
+          --entrypoint promtool
+          prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+          test rules alerts_test.yml

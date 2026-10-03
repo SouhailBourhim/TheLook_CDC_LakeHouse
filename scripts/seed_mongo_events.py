@@ -21,6 +21,7 @@ rewrites what is already there. Exit code 0 = Mongo holds every Postgres id.
 
 Usage: uv run scripts/seed_mongo_events.py
 """
+
 import sys
 import time
 from pathlib import Path
@@ -61,8 +62,10 @@ def main() -> int:
     events = mongo["web"]["events"]
 
     pg = psycopg.connect(
-        host="localhost", dbname=env.get("POSTGRES_DB", "thelook"),
-        user=env.get("POSTGRES_USER", "postgres"), password=env["POSTGRES_PASSWORD"],
+        host="localhost",
+        dbname=env.get("POSTGRES_DB", "thelook"),
+        user=env.get("POSTGRES_USER", "postgres"),
+        password=env["POSTGRES_PASSWORD"],
     )
     total = pg.execute("SELECT count(*) FROM shop.events").fetchone()[0]
     print(f"copying {total:,} events from PostgreSQL to MongoDB")
@@ -82,7 +85,9 @@ def main() -> int:
                 copied += len(batch)
                 batch = []
                 if copied % 100_000 == 0:
-                    print(f"  {copied:,} ({copied / (time.monotonic() - start):,.0f}/s)")
+                    print(
+                        f"  {copied:,} ({copied / (time.monotonic() - start):,.0f}/s)"
+                    )
         if batch:
             events.bulk_write(batch, ordered=False)
             copied += len(batch)

@@ -1,0 +1,30 @@
+# Lint and format settings for every Python file in the repository, so the
+# result is the same on any machine and in CI (ruff ignores user-level
+# configs when a project config exists).
+target-version = "py312"
+
+# Upstream files of the vendored generator are excluded: reformatting them
+# would bury our small, reviewable patches (onprem/generator/NOTICE) under
+# style-only changes. Our own files in that folder (mongo_writer.py, tests)
+# are still checked.
+extend-exclude = [
+  "onprem/generator/generator.py",
+  "onprem/generator/src/db_writer.py",
+  "onprem/generator/src/models.py",
+  "onprem/generator/src/utils.py",
+]
+
+[lint]
+# An explicit list, not "defaults + extras": ruff's default rule set changes
+# between versions (0.16 enables dozens more), and the version is pinned in
+# CI, so the rules in force are exactly these:
+#   F, E4, E7, E9  pyflakes and pycodestyle errors: real mistakes, not style
+#   I              import sorting
+#   UP             pyupgrade: modern syntax for the target Python (list[int])
+#   B              flake8-bugbear: likely bugs (mutable defaults, zip()...)
+# Line length is left to the formatter (black style, 88 columns).
+select = ["F", "E4", "E7", "E9", "I", "UP", "B"]
+
+[lint.isort]
+# Imports of the project's own modules count as first-party.
+known-first-party = ["src", "simulator"]
