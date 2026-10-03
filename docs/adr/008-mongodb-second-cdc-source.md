@@ -1,6 +1,6 @@
 # 008. MongoDB as a second CDC source; clickstream moves there
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-03 (decision D2, spec v2.0)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 

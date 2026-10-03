@@ -1,6 +1,6 @@
 # 007. Spark Structured Streaming writes bronze
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-03 (decision D1, spec v2.0)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 

@@ -1,6 +1,6 @@
 # 006. Bronze tables: created by their writer, validated by the contracts
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-30 (records the decision on open question A4, spec v1.9)
 - Amended: 2026-10-03, spec v2.0: the writer is now the Spark streaming
   job (ADR 007) instead of the Iceberg sink. The principle is unchanged.

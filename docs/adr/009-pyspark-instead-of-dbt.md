@@ -1,6 +1,6 @@
 # 009. PySpark builds silver and gold instead of dbt
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-03 (decision D3, spec v2.0)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 

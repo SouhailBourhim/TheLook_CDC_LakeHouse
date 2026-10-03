@@ -1,6 +1,6 @@
 # 010. Serving layer: Redis features, Neo4j graph, FastAPI
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-03 (decision D4, spec v2.0)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
