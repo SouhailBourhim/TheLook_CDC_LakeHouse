@@ -520,6 +520,26 @@ P7). **ADRs 006–010 accepted** by Souhail.
   incremental snapshots need write access to a signal table is the first
   P3 check (it affects the `debezium` role's least privilege).
 
+### P3 so far (2026-10-03)
+
+- **Commit 1, version check (ADR 011, proposed).** Spark 4.2.0 is out but
+  Iceberg 1.12.0 has runtimes only up to Spark 4.1, so **Spark 4.1.3 +
+  Iceberg 1.12.0**: the table format decides the engine version. Image:
+  Docker Official `spark:4.1.3-python3` (Java 17, **Python 3.10**), jars
+  baked in with checksums (7 jars, each verified against Maven's SHA-512
+  or SHA-1). Python 3.10 vs 3.12 elsewhere matters: PySpark fails on a
+  driver/executor Python mismatch, which constrains Airflow in P4.
+- **Incremental snapshot without new grants:** Debezium 3.7 supports
+  read-only incremental snapshots on PostgreSQL 13+ (`read.only=true`,
+  watermarks from in-flight transaction ids instead of writes to a signal
+  table), triggered through the **Kafka signal channel**. The `debezium`
+  role keeps SELECT + heartbeat only.
+- Mistake: pulled `spark:4.1.3-java17-python3`, which does not exist;
+  Java 17 is the unsuffixed default (`4.1.3-python3`, same digest as
+  `4.1.3-java17`).
+- Next: P3 commit 2, IAM user for the Spark jobs (Terraform). First AWS
+  change of P3: Souhail reviews `make tf-plan` before `make tf-apply`.
+
 ### P1 plan (agreed)
 
 | # | Commit | Content / how we verify | What Souhail learns |
