@@ -29,7 +29,7 @@ At the start of each session, read the latest entry in `docs/learning-log.md` an
 |---|---|---|
 | Architecture within the spec | Decides and explains the reasoning | Understands; can challenge any choice |
 | Changes to the cahier des charges | Proposes options with trade-offs | Approves or rejects |
-| Code, config, dbt models, DAGs, Terraform | Writes and explains | Reads, asks questions, explains it back |
+| Code, config, Spark jobs, DAGs, Terraform | Writes and explains | Reads, asks questions, explains it back |
 | ADRs and learning log | Writes | Reviews and approves |
 | Debugging | Diagnoses and fixes, showing the method | Follows the reasoning |
 | Phase checkpoints | Asks the questions | Answers without looking at the code |
