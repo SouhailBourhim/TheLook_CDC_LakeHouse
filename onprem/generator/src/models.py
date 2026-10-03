@@ -1,3 +1,6 @@
+# Modified in thelook-cdc-lakehouse (see NOTICE): synthetic additions (spec
+# 4.3) - cart events carry product_id and price; OrderItem.new accepts a
+# chosen product (basket affinity, see pick_affinity_product).
 import datetime
 import dataclasses
 import random
@@ -17,6 +20,21 @@ logging.basicConfig(
 
 
 PRODUCT_MAP = get_product_map("products.csv")
+
+# Synthetic (spec 4.3): product ids per category, for basket affinity.
+PRODUCTS_BY_CATEGORY: dict = {}
+for _pid, _product in PRODUCT_MAP.items():
+    PRODUCTS_BY_CATEGORY.setdefault(_product["category"], []).append(_pid)
+
+
+def pick_affinity_product(first_product_id: str, exclude: set) -> Optional[str]:
+    """Synthetic (spec 4.3): a product from the same category as the order's
+    first item, not already in the order. None if the category has no other
+    product. Without this, products are uniform at random and co-purchase
+    pairs almost never repeat."""
+    category = PRODUCT_MAP[str(first_product_id)]["category"]
+    candidates = [p for p in PRODUCTS_BY_CATEGORY[category] if p not in exclude]
+    return random.choice(candidates) if candidates else None
 
 
 def get_additional_ddls(schema: str):
@@ -287,8 +305,10 @@ class OrderItem(ModelMixin):
     cancelled_at: Optional[datetime.datetime]
 
     @classmethod
-    def new(cls, order: Order, fake: Faker) -> Self:
-        product_id = fake.random_element(PRODUCT_MAP.keys())
+    def new(cls, order: Order, fake: Faker, product_id: Optional[str] = None) -> Self:
+        # product_id: chosen by the caller for basket affinity; random otherwise.
+        if product_id is None:
+            product_id = fake.random_element(PRODUCT_MAP.keys())
         return cls(
             id=fake.uuid4(),
             order_id=order.id,
@@ -352,6 +372,11 @@ class Event(ModelMixin):
     uri: str
     event_type: str
     created_at: datetime.datetime
+    # Synthetic (spec 4.3): set on cart events only (the session's product and
+    # its retail price); None elsewhere, so the field is absent from the
+    # MongoDB document. Not in the PostgreSQL DDL: events no longer go there.
+    product_id: Optional[int] = None
+    price: Optional[float] = None
 
     @staticmethod
     def new(
@@ -437,6 +462,7 @@ class Event(ModelMixin):
                 event_type=event_type,
                 created_at=created_at
                 - Event._calculate_event_delay(len(event_types), idx, fake),
+                **Event._cart_fields(event_type, product_id),
             )
             for idx, event_type in enumerate(event_types)
         ]
@@ -444,6 +470,22 @@ class Event(ModelMixin):
 
     def __str__(self):
         return f"Event(id={self.id}, is_ghost={self.user_id is None}, sequence_number={self.sequence_number}, event_type={self.event_type}, created_at={self.created_at})"
+
+    @staticmethod
+    def _cart_fields(event_type: str, product_id) -> dict:
+        """Synthetic (spec 4.3): theLook cart events only have the URI /cart.
+        Cart events exist only in purchase, cancel and return sessions, which
+        are about one order item, so the product put in the cart is that
+        item's product (the one its /product/<id> event shows). PRODUCT_MAP
+        is keyed and valued by CSV strings, while an item re-read from
+        PostgreSQL (cancel/return sessions) has an int product_id, hence the
+        str/int/float conversions."""
+        if event_type != "cart":
+            return {}
+        return {
+            "product_id": int(product_id),
+            "price": float(PRODUCT_MAP[str(product_id)]["retail_price"]),
+        }
 
     @staticmethod
     def _generate_uri(event_type: str, item_id: Optional[str], product_id: int) -> str:

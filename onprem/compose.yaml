@@ -45,6 +45,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # Clickstream events go to MongoDB (ADR 008): wait until it accepts
+      # writes and its users exist. service_completed_successfully also makes
+      # `up --wait` fail when mongo/setup.js fails.
+      mongo:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
     environment:
       # Timestamps are TIMESTAMP WITHOUT TIME ZONE filled with datetime.now():
       # the container's clock zone becomes the data's zone.
@@ -53,6 +60,7 @@ services:
       # command line nor in the logs. It is still visible in `docker inspect`;
       # acceptable on a laptop (Compose secrets would hide it).
       DB_PASSWORD: ${GENERATOR_DB_PASSWORD:?set GENERATOR_DB_PASSWORD in onprem/.env}
+      MONGO_PASSWORD: ${MONGO_GENERATOR_PASSWORD:?set MONGO_GENERATOR_PASSWORD in onprem/.env}
     # Every value is explicit, even when it equals the generator's default,
     # so the workload is visible here and does not change with upstream.
     command:
@@ -66,6 +74,12 @@ services:
       - --user-update-prob=0.1
       - --order-update-prob=0.4
       - --ghost-create-prob=0.2
+      # Synthetic (spec 4.3): later items of an order come from the first
+      # item's category 60 % of the time, so co-purchase pairs repeat.
+      - --basket-affinity-prob=0.6
+      - --mongo-host=mongo
+      - --mongo-db=web
+      - --mongo-user=generator
 
   mongo:
     # 8.0 is MongoDB's current major release line (longest support) and is in

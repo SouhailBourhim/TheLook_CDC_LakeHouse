@@ -1,5 +1,7 @@
 # Modified in thelook-cdc-lakehouse (see NOTICE): --db-password defaults to
 # the DB_PASSWORD environment variable; the password is redacted in the logs.
+# Clickstream events go to MongoDB (src/mongo_writer.py) instead of
+# PostgreSQL; synthetic basket affinity (--basket-affinity-prob, spec 4.3).
 import argparse
 import asyncio
 import os
@@ -7,10 +9,20 @@ import random
 import logging
 
 from faker import Faker
+from pymongo.errors import PyMongoError
 from sqlalchemy.exc import SQLAlchemyError, OperationalError
 
 from src.db_writer import DataWriter
-from src.models import User, Order, OrderItem, Event, OrderStatus, EventCategory
+from src.mongo_writer import EventWriter
+from src.models import (
+    User,
+    Order,
+    OrderItem,
+    Event,
+    OrderStatus,
+    EventCategory,
+    pick_affinity_product,
+)
 from src.utils import generate_from_csv
 
 logging.basicConfig(
@@ -34,6 +46,9 @@ class TheLookECommSimulator:
             args.db_name,
             args.db_schema,
             args.db_batch_size,
+        )
+        self.events = EventWriter(
+            args.mongo_user, args.mongo_password, args.mongo_host, args.mongo_db
         )
         self.consecutive_db_errors = 0
         self.max_consecutive_errors = 3
@@ -123,7 +138,16 @@ class TheLookECommSimulator:
         order_items = []
         purchase_events = []
         for _ in range(order.num_of_items):
-            order_item = OrderItem.new(order=order, fake=self.fake)
+            # Synthetic basket affinity (spec 4.3): later items may come from
+            # the first item's category.
+            product_id = None
+            if order_items and random.random() < self.args.basket_affinity_prob:
+                product_id = pick_affinity_product(
+                    order_items[0].product_id, {i.product_id for i in order_items}
+                )
+            order_item = OrderItem.new(
+                order=order, fake=self.fake, product_id=product_id
+            )
             purchase_events.extend(
                 Event.new(
                     user=random_user,
@@ -145,12 +169,7 @@ class TheLookECommSimulator:
                 data=order_items,
                 conflict_keys=["id"],
             ),
-            asyncio.to_thread(
-                self.writer.upsert,
-                table="events",
-                data=purchase_events,
-                conflict_keys=["id"],
-            ),
+            asyncio.to_thread(self.events.upsert, purchase_events),
         )
 
     def _simulate_order_update(self):
@@ -209,7 +228,7 @@ class TheLookECommSimulator:
             table="order_items", data=updated_items, conflict_keys=["id"]
         )
         if random_events:
-            self.writer.upsert(table="events", data=random_events, conflict_keys=["id"])
+            self.events.upsert(random_events)
 
     async def _simulate_side_tasks(self):
         """Runs secondary simulation events based on their respective probabilities."""
@@ -246,14 +265,7 @@ class TheLookECommSimulator:
                 event_category=EventCategory.GHOST.value,
                 fake=self.fake,
             )
-            side_tasks.append(
-                asyncio.to_thread(
-                    self.writer.upsert,
-                    table="events",
-                    data=ghost_events,
-                    conflict_keys=["id"],
-                )
-            )
+            side_tasks.append(asyncio.to_thread(self.events.upsert, ghost_events))
 
         if (
             self.args.order_update_prob > 0
@@ -281,7 +293,7 @@ class TheLookECommSimulator:
 
                 await self._simulate_purchases()
                 await self._simulate_side_tasks()
-            except (SQLAlchemyError, OperationalError) as e:
+            except (SQLAlchemyError, OperationalError, PyMongoError) as e:
                 self.consecutive_db_errors += 1
                 logging.warning(
                     f"A database error occurred. Consecutive error count: {self.consecutive_db_errors}/{self.max_consecutive_errors}. "
@@ -308,6 +320,7 @@ class TheLookECommSimulator:
         logging.info("Closing database connection...")
         if self.writer.conn and not self.writer.conn.closed:
             await asyncio.to_thread(self.writer.close)
+        await asyncio.to_thread(self.events.close)
         logging.info("Database connection closed.")
 
 
@@ -343,6 +356,8 @@ def main():
     parser.add_argument("--order-update-prob", type=float, default=0.4, help="Probability of updating an order status. Default is 0.4. Set to 0 to disable.")
     ## --- Ghost Event Arguments ---
     parser.add_argument("--ghost-create-prob", type=float, default=0.2, help="Probability of generating a ghost event. Default is 0.2. Set to 0 to disable.")
+    ## --- Synthetic additions (thelook-cdc-lakehouse, spec 4.3) ---
+    parser.add_argument("--basket-affinity-prob", type=float, default=0.6, help="Probability that each item after the first comes from the first item's category. Set to 0 for upstream behaviour.")
     ## --- Database Arguments ---
     parser.add_argument("--db-host", default="localhost", help="Database host.")
     parser.add_argument("--db-user", default="db_user", help="Database user.")
@@ -350,13 +365,18 @@ def main():
     parser.add_argument("--db-name", default="fh_dev", help="Database name.")
     parser.add_argument("--db-schema", default="demo", help="Database schema.")
     parser.add_argument("--db-batch-size", type=int, default=1000)
+    ## --- MongoDB Arguments (clickstream events) ---
+    parser.add_argument("--mongo-host", default="localhost", help="MongoDB host (replica set rs0).")
+    parser.add_argument("--mongo-user", default="generator", help="MongoDB user.")
+    parser.add_argument("--mongo-password", default=os.environ.get("MONGO_PASSWORD", ""), help="MongoDB password. Defaults to the MONGO_PASSWORD environment variable.")
+    parser.add_argument("--mongo-db", default="web", help="MongoDB database holding the events collection.")
     ## --- Kafka Arguments ---
     parser.add_argument("--bootstrap-servers", type=str, default="localhost:9092", help="Bootstrap server addresses.")
     parser.add_argument("--topic-prefix", type=str, default="ecomm", help="Kafka topic prefix.")
     # fmt: on
 
     args = parser.parse_args()
-    logging.info({**vars(args), "db_password": "***"})
+    logging.info({**vars(args), "db_password": "***", "mongo_password": "***"})
 
     try:
         asyncio.run(run_simulation(args))
