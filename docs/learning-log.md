@@ -537,8 +537,23 @@ P7). **ADRs 006–010 accepted** by Souhail.
 - Mistake: pulled `spark:4.1.3-java17-python3`, which does not exist;
   Java 17 is the unsuffixed default (`4.1.3-python3`, same digest as
   `4.1.3-java17`).
-- Next: P3 commit 2, IAM user for the Spark jobs (Terraform). First AWS
-  change of P3: Souhail reviews `make tf-plan` before `make tf-apply`.
+- **ADR 011 accepted** (2026-10-04). Souhail's answers: Iceberg plugs into
+  Spark internals (DataSource V2, catalog plugin, SQL extensions), so one
+  runtime per Spark minor; baked jars give reproducibility and no Maven
+  dependency at start-up. Added: `ADD --checksum` also fails the build on a
+  tampered download (supply chain).
+- **Commit 2, IAM (`iam.tf`).** One user per job: `thelook-spark-stream`
+  writes bronze only (batch user in P4). Plan reviewed by Souhail (3 added,
+  0 changed: no drift), applied. Access key created with the CLI (secret
+  never in state), stored in `onprem/.env`. Proven with the key: bronze
+  allowed; silver, gold, bucket root, `thelook_silver`, DeleteTable, Athena
+  denied; SSE-KMS write works without KMS permissions (AWS-managed key).
+  Runbook: create, rotate (two keys, no downtime), revoke.
+- Decided: streaming checkpoints on a local Docker volume, not S3 (S3A is
+  not in the image; fewer S3 requests); the batch id in each Iceberg
+  commit is the duplicate guard if a checkpoint is lost.
+- Next: P3 commit 3, Spark image (checksummed jars) and `stream` profile,
+  smoke-tested against Kafka and the Glue catalog.
 
 ### P1 plan (agreed)
 
