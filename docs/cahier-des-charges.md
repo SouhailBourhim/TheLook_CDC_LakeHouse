@@ -793,7 +793,8 @@ and raise it only for load tests.
 | Laptop resources (16 GB for WSL; Kafka, Connect, Spark, Airflow, MongoDB, Neo4j) | Compose profiles started as needed, single-broker KRaft, explicit JVM heaps and MongoDB cache size, Airflow with LocalExecutor; RAM measured per profile |
 | Kafka Connect exactly-once has known caveats                                  | Keep LSN deduplication in silver; prove correctness with the replay drill                                |
 | Synthetic data gives meaningless business insights                            | Present the project on its engineering results (freshness, correctness, cost), not on business findings; synthetic basket affinity makes recommendations testable, and is labelled as such |
-| Debezium MongoDB connector may not support exactly-once source delivery       | Check at the start of P2; silver deduplication on (`_id`, cluster time, order) is the safety net either way |
+| Debezium MongoDB connector may not support exactly-once source delivery       | Checked in P2: supported (Debezium 3.7 lists it; the connector runs with `exactly.once.support=required`); silver deduplication stays the safety net |
+| Kafka retention (3 days) is shorter than the life of most rows, so the topics no longer hold a full snapshot of the PostgreSQL tables (found in P2) | Bronze cannot be built from Kafka alone: P3 starts with a Debezium incremental snapshot of the PostgreSQL tables (signal), so bronze begins complete; afterwards bronze, not Kafka, is the full history |
 | Local Spark reading S3 incurs data-transfer charges                           | Demo volume stays far below the 100 GB/month free allowance; warn before any bulk backfill               |
 
 ## 13. Working with Claude Code

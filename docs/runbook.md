@@ -115,6 +115,81 @@ worker's CPU (`docker stats`) and the generator rate (`GENERATOR_QPS`).
 `MilliSecondsBehindSource` is measured on the last processed event; the
 heartbeat keeps it fresh when the tables are idle.
 
+## MongoDB
+
+Single-node replica set `rs0`, oplog fixed at 2 GiB (`--oplogSize`), set up
+by the one-shot `mongo-init` service (`onprem/mongo/setup.js`) on every
+`make up`. Root shell, from the repository root:
+
+```bash
+set -a; . onprem/.env; set +a
+docker compose -f onprem/compose.yaml exec -e P="$MONGO_ROOT_PASSWORD" mongo \
+  bash -c 'mongosh "mongodb://root:$P@localhost:27017/admin?directConnection=true"'
+```
+
+```js
+rs.status().members[0].stateStr        // PRIMARY
+db.getReplicationInfo()                // usedMB, timeDiffHours = oplog window
+```
+
+### `make up` fails on mongo or mongo-init
+
+`docker compose -f onprem/compose.yaml logs mongo-init`. The script is
+idempotent: fix the cause and rerun `make up`. `mongo` stays unhealthy
+until the replica set is initiated (its healthcheck asks for a writable
+primary), so a failed `mongo-init` usually shows as an unhealthy `mongo`.
+
+### Connector fails with ChangeStreamHistoryLost (error 286) or InvalidResumeToken
+
+The oplog no longer holds the connector's resume position: it was stopped
+longer than the oplog window. Nothing is lost in MongoDB, but the changes
+in the gap cannot be streamed. Recovery (not yet exercised):
+
+1. Stop the connector: `curl -X PUT localhost:8083/connectors/mongo-source/stop`.
+2. Delete its offsets (Kafka Connect 3.6+, connector must be STOPPED):
+   `curl -X DELETE localhost:8083/connectors/mongo-source/offsets`.
+3. Resume: `curl -X PUT localhost:8083/connectors/mongo-source/resume`.
+   With no offsets, `snapshot.mode=initial` re-reads both collections.
+4. Consequences: bronze receives every document again (silver deduplicates
+   by `_id` and position); documents deleted during the gap leave no delete
+   event, so silver may keep them until a reconciliation finds them (same
+   limit as a lost Postgres slot).
+
+**Prevention:** the window is ~30 h at the demo rate (69 MiB/h with the
+generator at 5/s and reviews at 1/s, measured in P2, `docs/results.md`);
+keep connector outages shorter than that. **A bulk load eats the window:**
+copying the 1.75 M historical events used 1.16 GiB of the 2 GiB. Run bulk
+loads while the connector is caught up, and check `getReplicationInfo()`
+first. Monitoring the window with an alert is planned for P7.
+
+### Before a reconciliation (`drills/verify_cdc.py`)
+
+Stop the writers, then check both connectors have caught up:
+
+```bash
+docker compose -f onprem/compose.yaml stop generator review-simulator
+docker compose -f onprem/compose.yaml exec connect \
+  wget -qO- localhost:9404/metrics | grep -E '^debezium_streaming_(millisecondssincelastevent|millisecondsbehindsource)'
+```
+
+MongoDB: `millisecondssincelastevent` above ~10 000 means nothing new is
+arriving. PostgreSQL: its heartbeat table is captured, so "since last
+event" resets every 30 s; use `millisecondsbehindsource` (near 0) instead.
+The Connect image has `wget`, not `curl`.
+
+## Docker Compose
+
+### A config file edit does not take effect, or a container fails with "no such file or directory" on a mount
+
+A single-file bind mount (`postgresql.conf`, `server.properties`,
+`connect-distributed.properties`, Prometheus files) follows the file's
+inode. Editors that save by writing a new file and renaming it leave the
+running container on the old, deleted copy; on Docker Desktop the next
+start can fail outright. After editing such a file, recreate the service:
+`docker compose -f onprem/compose.yaml up -d --force-recreate <service>`.
+Newer services mount folders instead (`onprem/mongo/`), which are not
+affected.
+
 ## Cost
 
 ### Weekly cost check (`make cost-report`)

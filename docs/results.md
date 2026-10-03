@@ -47,7 +47,7 @@ generator stopped so both sides describe the same moment.
 
 ## Baseline throughput run — method (written before measuring, B5)
 
-> **Context note (spec v2.0, 2026-10-03).** This run and the slot drill
+> **Context note (spec v2.0, 2026-10-03), measured in P2 below:** This run and the slot drill
 > above were measured with `events` in PostgreSQL, where it made up about
 > two thirds of all change events and most of the WAL. Since P2 the events
 > live in MongoDB (ADR 008), so PostgreSQL's WAL rate and the Postgres
@@ -151,3 +151,64 @@ in the database at the end. Achieved = generator iterations per second.
 (≈ 20 iterations/s)**, capture lag < 1 s in P1, below the observed maximum
 (266/s) for margin; re-validated end to end in P2 with the sink's consumer
 lag < 30 s. The breaking point is searched in P2 (A9, deferred).
+
+## P2: MongoDB source — 2026-10-03
+
+### Reconciliation, Kafka vs both sources
+
+**Method:** `drills/verify_cdc.py` with the generator and review simulator
+stopped and both connectors caught up (runbook, "Before a
+reconciliation"). PostgreSQL: latest version per key by `source.lsn`,
+column by column. MongoDB: latest version per `_id` by Kafka order (key
+from the record key, so deletes count), compared by a hash of the
+canonical JSON.
+
+**Result: passed, all 7 sources identical, in 166 s.**
+
+| Source | Rows / documents | Missing | Extra | Different |
+|---|---|---|---|---|
+| users | 29,184 | 0 | 0 | 0 |
+| orders | 261,484 | 0 | 0 | 0 |
+| order_items | 379,126 | 0 | 0 | 0 |
+| products | 29,120 | 0 | 0 | 0 |
+| dist_centers | 10 | 0 | 0 | 0 |
+| events (MongoDB) | 1,817,027 | 0 | 0 | 0 |
+| reviews (MongoDB) | 369 | 0 | 0 | 0 |
+
+- **The check can fail:** with Connect stopped, one review's rating was
+  changed in MongoDB: `differ=1` with that review's id. After restarting
+  Connect, the connector resumed from its stored position and the check
+  passed again.
+- **Retention:** the `products` and `dist_centers` topics have lost their
+  first records (3-day retention); every row is still covered because each
+  generator start re-writes them. Rows unchanged for more than 3 days have
+  no event left in Kafka: bronze, not Kafka, must hold the full history
+  (P3 starts with an incremental snapshot; spec risk table).
+- **E1 evidence:** ordering by (`source.ts_ms`, `source.ord`) picked the
+  same latest version as Kafka order for every document. Weak evidence:
+  events have one version each, so only the reviews test it.
+
+### Initial snapshot and history copy
+
+| Step | Volume | Time |
+|---|---|---|
+| Copy of the PostgreSQL events table to MongoDB (`scripts/seed_mongo_events.py`) | 1,756,486 events | 94 s (~19,000/s) |
+| Debezium MongoDB initial snapshot | ~1.76 M documents | 79 s (~22,000/s) |
+
+The copy used 1.16 GiB of the 2 GiB oplog: a bulk load shrinks the window
+a lagging connector can rely on.
+
+### Change-log growth after the move (clean 10-minute window)
+
+Generator at 5 iterations/s, review simulator at 1 action/s, window
+started well after the generator's startup burst (a first 2-minute sample
+that included it read 586 MiB/h of WAL and was discarded).
+
+| Log | Growth | Consumer outage it can absorb |
+|---|---|---|
+| MongoDB oplog (2 GiB, fixed) | 69 MiB/h | ~30 h, then re-snapshot |
+| PostgreSQL WAL (`wal_compression=lz4`) | 242 MiB/h | ~42 h to the 10 GiB slot cap (P1: ~18 h) |
+
+PostgreSQL WAL was ~550 MiB/h in the P1 slot drill (events included, no
+compression); compression alone saved 19 % in the P1 baseline, so moving
+`events` out accounts for most of the drop.

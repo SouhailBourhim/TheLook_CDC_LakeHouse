@@ -22,7 +22,7 @@ it, so it can be re-run safely.
 | `heartbeat.action.query` | upsert into `shop.heartbeat` | Creates a real change in a published table, so the slot advances even when the business tables are idle. |
 | `topic.creation.default.*` | 1 partition, RF 1, delete, 3 days, 1-day segments | Topic-level settings override the broker's, so they are set explicitly and match `kafka/server.properties`. One partition is enough at this volume; silver deduplicates by key and LSN, so adding partitions later does not break correctness. |
 
-Left at their defaults on purpose (to revisit in P2 with the Iceberg sink):
+Left at their defaults on purpose (to decide in P3, before the Spark job writes bronze):
 `time.precision.mode=adaptive` (timestamps as microseconds, `io.debezium.time.MicroTimestamp`),
 `tombstones.on.delete=true` (a null-value record after each delete),
 `decimal.handling.mode=precise` (no numeric columns today). Changing any of

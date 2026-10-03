@@ -16,7 +16,7 @@ loop and CLI defaults), `src/db_writer.py` (how rows are written).
 | `users` | `id` TEXT (UUID) | Seed at start + sign-ups | INSERT, UPDATE (address) | Yes |
 | `orders` | `id` TEXT (UUID) | Every iteration | INSERT, UPDATE (status) | Yes |
 | `order_items` | `id` TEXT (UUID) | Every iteration | INSERT, UPDATE (status) | Yes |
-| `events` | `id` TEXT (UUID) | Every iteration | INSERT only | Yes |
+| `events` | `id` TEXT (UUID) | Until spec v2.0 only | INSERT only (frozen since P2) | No: moved to MongoDB `web.events` (ADR 008) |
 | `products` | `id` BIGINT | `products.csv` at start | INSERT (re-written on every start) | Yes |
 | `dist_centers` | `id` BIGINT | `distribution_centers.csv` at start | INSERT (re-written on every start) | Yes |
 | `heartbeat` | `id` INT | Never written by the generator | Debezium's heartbeat query only | No (publication only, see B2) |
@@ -97,7 +97,12 @@ Cancelled and Returned are terminal. A Delivered order that is not returned
 Updated together with its order: every item of the order is rewritten with
 the order's status and timestamps.
 
-### events
+### events (PostgreSQL until spec v2.0)
+
+Frozen since P2: the patched generator writes events to MongoDB (see
+"MongoDB" below); the rows here were copied there once. The description
+below still holds for the documents' fields.
+
 
 | Column | Type | Notes |
 |---|---|---|
@@ -140,6 +145,62 @@ as in spec 4.1.
 `id` INT PK, `ts` TIMESTAMP NOT NULL DEFAULT now(). Created by the
 generator but never written by it. It exists for Debezium's heartbeat
 action query (commit 11), which needs a captured table to write to (B2).
+
+## MongoDB (since spec v2.0)
+
+Database `web` on the replica set `rs0` (ADR 008). One document per record;
+`_id` is the primary key. Fields that are null are left out, so documents
+of one collection do not all have the same fields (schemaless). Dates are
+BSON dates (UTC, millisecond precision).
+
+### web.events
+
+Written by the patched generator (`src/mongo_writer.py`), upserted by
+`_id`, never updated: append-only. 1,756,486 historical rows were copied
+from PostgreSQL by `scripts/seed_mongo_events.py`.
+
+| Field | Type | Notes |
+|---|---|---|
+| _id | string | The event's UUID (was `events.id`) |
+| user_id | string | **Absent for ghost sessions** |
+| sequence_number | int | 1..n within the session |
+| session_id, ip_address, city, state, postal_code, browser, traffic_source, uri, event_type | string | As in the PostgreSQL table above; `ip_address` is PII |
+| created_at | date | Back-dated within a session, as before |
+| product_id | int | **Cart events only** (synthetic, spec 4.3): the session's product. Absent on events before the patch |
+| price | double | **Cart events only** (synthetic): that product's `retail_price` (float artifacts from `products.csv`, e.g. 34.9900016784668) |
+
+### web.reviews
+
+Written by the review simulator (synthetic, spec 4.3) for delivered order
+items. Unique index `uniq_order_item` on `order_item_id`: one review per
+item.
+
+| Field | Type | Notes |
+|---|---|---|
+| _id | string | UUID |
+| order_item_id | string | Unique; references `order_items.id` (no FK across databases) |
+| product_id | int | The item's product |
+| user_id | string | The buyer (`orders.user_id`) |
+| rating | int | 1–5, skewed positive (5: 40 %, 4: 30 %, 3: 15 %, 2: 8 %, 1: 7 %) |
+| title, text | string | Faker sentences |
+| tags | array of string | 0–3 of fit, quality, value, comfort, style, shipping, size |
+| helpful_votes | int | Starts at 0, incremented |
+| created_at, updated_at | date | `updated_at` changes on every vote and edit |
+| edited_at | date | **Only after an edit** |
+
+Operations per second (1 action/s on average): create 60 %, helpful vote
+25 %, edit 10 % (rating ±1, new text), delete 5 %. The deletes are the only
+MongoDB deletes besides erasure requests.
+
+### How documents reach Kafka
+
+Debezium MongoDB connector, topics `thelook_mongo.web.events` and
+`thelook_mongo.web.reviews`. `after` is the **whole document as a JSON
+string** (MongoDB Extended JSON, `legacy` mode: dates as
+`{"$date": <epoch ms>}`), for inserts and updates (`capture.mode =
+change_streams_update_full`); `before` is always null (no pre-images); a
+delete carries the `_id` only in the record key, followed by a tombstone.
+The log position is `source.ts_ms` plus `source.ord`; there is no LSN.
 
 ## How rows are written, and what it means for CDC
 

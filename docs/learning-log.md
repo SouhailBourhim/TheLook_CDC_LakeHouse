@@ -443,17 +443,64 @@ since P2. O8 is re-measured end to end in P3. Note added to
 - Docker Desktop stops containers with exit 255; Postgres then runs crash
   recovery (seen again today, harmless).
 
+### Session 3, continued — review, ADRs accepted, P2 finished
+
+Souhail asked for a full review; it found a broken script (`verify_cdc.py`
+still compared `events` with Postgres), stale docs, no repo lint config,
+no CI, the review simulator missing, and no oplog monitoring (deferred to
+P7). **ADRs 006–010 accepted** by Souhail.
+
+| Commit | What | Verified |
+|---|---|---|
+| `docs: accept ADRs 006 to 010` | Status lines (case normalised to `Accepted`, ADR 000) | |
+| `feat(onprem): review simulator` | Reviews for delivered items; read-only Postgres role (TABLESAMPLE), Mongo user limited to `web.reviews`, unique index on `order_item_id`; 5 tests | topic: c 83, u 41, d 10 (+10 tombstones); duplicate rejected with E11000 |
+| `ci: ruff, pytest and alert-rule tests` | GitHub Actions, pinned by SHA, read-only token; explicit ruff rules | first run green (4 jobs) |
+| `test(drills): reconcile kafka against mongodb too` | 7 sources; Mongo key from the record key, hashed docs; E1 evidence; retention-aware | all 7 identical in 166 s; planted change detected, then healed |
+| `docs: P2 wrap-up` | README (Mermaid, run, demo, decisions), source schema, runbook (MongoDB, Compose), results, spec risks | |
+
+### Concepts covered (continued)
+
+- **A unique index enforces a business rule in the database** (one review
+  per order item): the application tries, the database refuses (E11000).
+- **TABLESAMPLE SYSTEM (1)** reads ~1 % of a table's pages at random:
+  cheap sampling, versus `ORDER BY random()` which scans everything.
+- **Tool defaults move**: ruff 0.16's default rule set is far larger than
+  older versions'. Pin the version *and* list the rules explicitly.
+  Actions pinned by SHA for the same reason images are pinned by digest.
+- **Kafka is not the system of record**: with 3-day retention the topics
+  no longer hold rows unchanged for 3 days. Bronze must be the full
+  history, so **P3 starts with a Debezium incremental snapshot** of the
+  Postgres tables (spec risk table).
+- **A delete in MongoDB CDC carries the id only in the record key**
+  (`before` and `after` are null without pre-images).
+- Measured windows: oplog ~30 h (69 MiB/h), Postgres slot ~42 h (WAL
+  242 MiB/h, down from ~550 MiB/h in P1 once events left).
+
+### Debugging lessons (continued)
+
+- The verifier started at offset 0, which retention had deleted; the
+  consumer silently jumped to the end and read nothing. Start at
+  `OFFSET_BEGINNING`.
+- A wait loop that greps an empty pipe "succeeds": `curl` does not exist
+  in the Connect image (use `wget`), so `awk` saw no lines and exited 0.
+  Check that a guard can fail, like a test.
+- `pkill -f <pattern>` killed my own shell **twice** (exit 144), the P1
+  lesson again. Kill by PID.
+- A 2-minute WAL sample read 586 MiB/h because it included the
+  generator's startup burst; the clean 10-minute window read 242 MiB/h.
+  Same lesson as the affinity: check the measurement window first.
+
 ### Where we stopped
 
-- 6 P2 commits pushed (table above); core stack running, generator at 5/s
-  writing events to MongoDB, both connectors RUNNING.
-- **Next P2 commits**: review simulator (writes `web.reviews`, needs a
-  read-only Postgres role for delivered items) with tests → CI (GitHub
-  Actions: ruff + pytest) → `verify_cdc.py` reconciles Kafka with MongoDB
-  too → P2 wrap-up (README Mermaid diagram, run/demo notes, RAM per
-  profile, spec risk row: Debezium MongoDB EOS confirmed) → P2 checkpoint.
-- Pending for Souhail: review ADRs 007–010; answer the check questions
-  asked at the end of this session.
+- **P2 complete** (11 commits); stack running with core + monitoring.
+- **Next: P2 checkpoint** (questions in the session summary), then **P3**:
+  version check → IAM Terraform (Souhail reviews `tf-plan`) → Spark image
+  and `stream` profile → envelope parsing + chispa tests → streaming job
+  (incremental snapshot first) → freshness, replay drill, O8.
+- Open: E1 (P4), E2 (before P6); `json.serialization.mode`,
+  `time.precision.mode`, `tombstones.on.delete` to settle at P3 start.
+- Still unanswered: the 3 check questions from the first part of the
+  session (slot vs oplog, `after` as a string, upsert by `_id`).
 
 ### P1 plan (agreed)
 
