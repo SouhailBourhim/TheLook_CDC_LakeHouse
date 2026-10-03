@@ -81,6 +81,32 @@ services:
       - --mongo-db=web
       - --mongo-user=generator
 
+  review-simulator:
+    # Synthetic reviews in MongoDB web.reviews for delivered order items
+    # (spec 4.3, ADR 008): inserts, helpful votes, edits and a few deletes.
+    build: ./review-simulator
+    image: thelook-review-simulator:local
+    profiles: [core]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
+    environment:
+      TZ: UTC
+      # Read-only Postgres role from postgres/reviewer-setup.sql (applied with
+      # apply-sql.sh); until it exists the simulator logs errors and retries.
+      PG_PASSWORD: ${REVIEWER_DB_PASSWORD:?set REVIEWER_DB_PASSWORD in onprem/.env}
+      MONGO_PASSWORD: ${MONGO_REVIEWER_PASSWORD:?set MONGO_REVIEWER_PASSWORD in onprem/.env}
+    command:
+      # One action per second on average: ~2,200 new reviews an hour.
+      - --rate=1
+      - --pg-host=postgres
+      - --pg-db=${POSTGRES_DB:-thelook}
+      - --mongo-host=mongo
+
   mongo:
     # 8.0 is MongoDB's current major release line (longest support) and is in
     # Debezium 3.x's tested range; 8.1+ are short-lived minor releases.
@@ -151,6 +177,7 @@ services:
       MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in onprem/.env}
       MONGO_GENERATOR_PASSWORD: ${MONGO_GENERATOR_PASSWORD:?set MONGO_GENERATOR_PASSWORD in onprem/.env}
       DEBEZIUM_MONGO_PASSWORD: ${DEBEZIUM_MONGO_PASSWORD:?set DEBEZIUM_MONGO_PASSWORD in onprem/.env}
+      MONGO_REVIEWER_PASSWORD: ${MONGO_REVIEWER_PASSWORD:?set MONGO_REVIEWER_PASSWORD in onprem/.env}
     volumes:
       - ./mongo:/setup:ro
 

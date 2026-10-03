@@ -73,9 +73,20 @@ upsertUser(web, "generator", env("MONGO_GENERATOR_PASSWORD"), [{ role: "eventsWr
 // write. Any user may run the hello command, which Debezium also needs.
 upsertUser(web, "debezium", env("DEBEZIUM_MONGO_PASSWORD"), [{ role: "read", db: "web" }]);
 
+// The review simulator creates, edits and deletes reviews, and nothing else.
+upsertRole(web, "reviewsWriter", [
+  { resource: { db: "web", collection: "reviews" }, actions: ["find", "insert", "update", "remove"] },
+]);
+upsertUser(web, "reviewer", env("MONGO_REVIEWER_PASSWORD"), [{ role: "reviewsWriter", db: "web" }]);
+
 // --- 3. Collections and indexes ---------------------------------------------
 // Collections are created explicitly so they exist (and are captured) before
 // the first write. events has only the default unique index on _id.
 if (!web.getCollectionNames().includes("events")) web.createCollection("events");
+if (!web.getCollectionNames().includes("reviews")) web.createCollection("reviews");
+// One review per order item: the database enforces the business rule, so a
+// duplicate attempt fails (DuplicateKeyError) instead of creating a second
+// review. createIndex is a no-op when the same index already exists.
+web.reviews.createIndex({ order_item_id: 1 }, { unique: true, name: "uniq_order_item" });
 
 print("mongo setup done");

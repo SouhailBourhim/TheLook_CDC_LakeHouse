@@ -15,7 +15,7 @@ set +a
 # -e NAME without a value forwards this shell's variable into the container,
 # so no password is on a command line. The SQL files read them with \getenv.
 docker compose exec -T \
-  -e DEBEZIUM_DB_PASSWORD -e EXPORTER_DB_PASSWORD \
+  -e DEBEZIUM_DB_PASSWORD -e EXPORTER_DB_PASSWORD -e REVIEWER_DB_PASSWORD \
   postgres \
   sh -c 'psql -X -v ON_ERROR_STOP=1 --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f -' \
   < "$sql_file"
