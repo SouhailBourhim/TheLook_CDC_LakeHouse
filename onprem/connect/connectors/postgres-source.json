@@ -13,7 +13,7 @@
   "slot.name": "thelook_debezium",
   "publication.name": "thelook_cdc",
   "publication.autocreate.mode": "disabled",
-  "table.include.list": "shop.users,shop.orders,shop.order_items,shop.events,shop.products,shop.dist_centers,shop.heartbeat",
+  "table.include.list": "shop.users,shop.orders,shop.order_items,shop.products,shop.dist_centers,shop.heartbeat",
 
   "snapshot.mode": "initial",
   "exactly.once.support": "required",

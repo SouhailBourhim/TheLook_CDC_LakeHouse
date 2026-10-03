@@ -33,9 +33,14 @@ ALTER ROLE debezium WITH LOGIN REPLICATION
 -- table); streaming itself only reads the WAL through the slot.
 GRANT USAGE ON SCHEMA shop TO debezium;
 GRANT SELECT ON
-  shop.users, shop.orders, shop.order_items, shop.events,
+  shop.users, shop.orders, shop.order_items,
   shop.products, shop.dist_centers, shop.heartbeat
 TO debezium;
+
+-- events moved to MongoDB (spec v2.0, ADR 008); the table stays but is no
+-- longer written or captured. REVOKE converges older installs (a no-op when
+-- the privilege was never granted).
+REVOKE ALL ON shop.events FROM debezium;
 
 -- Debezium's heartbeat action query upserts one row here (commit 11).
 GRANT INSERT, UPDATE ON shop.heartbeat TO debezium;
@@ -48,7 +53,6 @@ GRANT INSERT, UPDATE ON shop.heartbeat TO debezium;
 ALTER TABLE shop.users        REPLICA IDENTITY DEFAULT;
 ALTER TABLE shop.orders       REPLICA IDENTITY DEFAULT;
 ALTER TABLE shop.order_items  REPLICA IDENTITY DEFAULT;
-ALTER TABLE shop.events       REPLICA IDENTITY DEFAULT;
 ALTER TABLE shop.products     REPLICA IDENTITY DEFAULT;
 ALTER TABLE shop.dist_centers REPLICA IDENTITY DEFAULT;
 ALTER TABLE shop.heartbeat    REPLICA IDENTITY DEFAULT;
@@ -60,13 +64,14 @@ ALTER TABLE shop.heartbeat    REPLICA IDENTITY DEFAULT;
 SELECT 'CREATE PUBLICATION thelook_cdc'
 WHERE NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'thelook_cdc') \gexec
 
--- SET TABLE replaces the list, so re-running converges to exactly these 7.
+-- SET TABLE replaces the list, so re-running converges to exactly these 6
+-- (5 business tables since events moved to MongoDB, plus heartbeat).
 -- heartbeat is included (B2): Postgres 15+ skips empty transactions, so if
 -- the heartbeat table were not published, its writes would not reach
 -- Debezium and the slot could not advance while the captured tables are idle.
 -- Its topic is not ingested into the lake.
 ALTER PUBLICATION thelook_cdc SET TABLE
-  shop.users, shop.orders, shop.order_items, shop.events,
+  shop.users, shop.orders, shop.order_items,
   shop.products, shop.dist_centers, shop.heartbeat;
 
 -- No TRUNCATE: the lake cannot apply it row by row. Policy: never TRUNCATE

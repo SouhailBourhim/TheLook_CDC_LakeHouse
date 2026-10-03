@@ -15,7 +15,7 @@ it, so it can be re-run safely.
 | `plugin.name` | `pgoutput` | Postgres' built-in logical decoding plugin; nothing to install on the server. |
 | `slot.name` | `thelook_debezium` | The slot that keeps WAL until Debezium confirms it (FR13). |
 | `publication.name` / `publication.autocreate.mode` | `thelook_cdc` / `disabled` | Use the publication created by `cdc-setup.sql` (B1); Debezium never creates or alters it. |
-| `table.include.list` | 6 tables + `shop.heartbeat` | Matches the publication. The heartbeat topic is not ingested into the lake (B2). |
+| `table.include.list` | 5 tables + `shop.heartbeat` | Matches the publication. `shop.events` left in spec v2.0: clickstream events now live in MongoDB (ADR 008). The heartbeat topic is not ingested into the lake (B2). |
 | `snapshot.mode` | `initial` | First start: read every table once (events with `op = r`), then stream from the slot's position. Later starts resume from the stored LSN. |
 | `exactly.once.support` | `required` | Refuse to start unless the worker can write records and offsets in one transaction (KIP-618). |
 | `heartbeat.interval.ms` | `30000` | Every 30 s, emit a heartbeat and commit the current offset. |
