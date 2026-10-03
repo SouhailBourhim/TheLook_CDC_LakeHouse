@@ -3,7 +3,30 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+.PHONY: up down ps register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+
+# --- On-prem stack (Docker Compose) ------------------------------------------
+# Profiles group services so a laptop runs only what a task needs (RAM per
+# profile in the README). Examples:
+#   make up                              # core: sources, Kafka, Connect
+#   make up PROFILES="core monitoring"
+#   make down                            # stops every profile, keeps volumes
+PROFILES ?= core
+COMPOSE  := docker compose -f onprem/compose.yaml
+
+# --wait returns once every started service is healthy (or, for one-shot
+# setup containers, has exited successfully), so the next command can rely
+# on the stack being ready.
+up:
+	$(COMPOSE) $(foreach p,$(PROFILES),--profile $(p)) up -d --build --wait
+
+# --profile '*' selects every profile, so nothing is left running whatever
+# was started. Volumes are kept (data survives); `down -v` would delete them.
+down:
+	$(COMPOSE) --profile '*' down
+
+ps:
+	@$(COMPOSE) --profile '*' ps --format 'table {{.Service}}\t{{.Status}}'
 
 # Create or update every connector. PUT /connectors/<name>/config is
 # idempotent: it creates the connector if missing, otherwise replaces its
