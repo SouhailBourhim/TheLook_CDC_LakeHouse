@@ -41,11 +41,14 @@ Option A, plus synthetic additions labelled per spec 4.3:
 - **Review simulator**: a separate service, not another generator patch,
   so the vendored code changes as little as possible. It reviews delivered
   order items, edits some, adds helpful votes and deletes a few.
-- **Debezium MongoDB connector**: topic prefix `thelook-mongo` (Debezium
+- **Debezium MongoDB connector**: topic prefix `thelook_mongo` (Debezium
   needs a distinct prefix per connector; the heartbeat topic name is
-  derived from it), so topics are `thelook-mongo.web.events` and
-  `thelook-mongo.web.reviews`, the same `<prefix>.<db>.<collection>`
-  shape as `thelook.shop.<table>`. Full document on update.
+  derived from it), so topics are `thelook_mongo.web.events` and
+  `thelook_mongo.web.reviews`, the same `<prefix>.<db>.<collection>`
+  shape as `thelook.shop.<table>`. Full document on update. The first
+  draft used `thelook-mongo`: Debezium also builds the Avro namespace from
+  the prefix, and Avro names cannot contain hyphens, so Schema Registry
+  rejected the schema (an underscore is valid in both).
 - `shop.events` leaves the publication and the connector's table list;
   the table stays in PostgreSQL but is no longer written.
 

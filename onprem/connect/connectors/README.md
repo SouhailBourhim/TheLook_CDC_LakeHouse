@@ -28,3 +28,24 @@ Left at their defaults on purpose (to revisit in P2 with the Iceberg sink):
 `decimal.handling.mode=precise` (no numeric columns today). Changing any of
 them later changes the Avro schemas, so it must be decided before data
 reaches the lake.
+
+## mongo-source.json (Debezium MongoDB)
+
+| Setting | Value | Why |
+|---|---|---|
+| `mongodb.connection.string` | `mongodb://mongo:27017/?replicaSet=rs0` | Replica set connection: the connector follows the primary. Credentials are separate properties, not in the string. |
+| `mongodb.user` / `mongodb.authsource` | `debezium` / `web` | Read-only user on the `web` database, created by `mongo/setup.js`. |
+| `mongodb.password` | `${env:DEBEZIUM_MONGO_PASSWORD}` | Same EnvVarConfigProvider pattern as Postgres; the variable is allowlisted in `connect-distributed.properties`. |
+| `topic.prefix` | `thelook_mongo` | Must differ from the Postgres connector's (it names the heartbeat topic and the offsets). Also the Avro namespace, so no hyphen (ADR 008). Never change it. |
+| `capture.scope` / `capture.target` | `database` / `web` | Opens one change stream on the `web` database only, so the user needs read on `web`, nothing cluster-wide. |
+| `collection.include.list` | `web.events,web.reviews` | The two captured collections. |
+| `capture.mode` | `change_streams_update_full` | Update events carry the whole document in `after` (looked up after the update), so bronze holds full versions. No pre-images (`before` stays null): silver does not need them, and they would keep erased data in the oplog. |
+| `snapshot.mode` | `initial` | First start: read both collections (`op = r`), then stream from the change stream's position. |
+| `exactly.once.support` | `required` | MongoDB is in Debezium's list of exactly-once source connectors (checked for 3.7). |
+| `heartbeat.interval.ms` | `30000` | Commits the change stream's resume position even when the captured collections are idle, so a restart does not find its position already overwritten in the oplog. |
+| `topic.creation.default.*` | as for Postgres | 1 partition, RF 1, 3 days, 1-day segments. |
+
+Event shape: `after` is a JSON string (MongoDB Extended JSON, `legacy`
+mode: dates as `{"$date": <epoch ms>}`), because schemaless documents have
+no fixed Avro schema. The log position is `source.ts_ms` plus `source.ord`
+(order within the cluster-time second); there is no LSN.

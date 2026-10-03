@@ -67,6 +67,12 @@ upsertRole(web, "eventsWriter", [
 ]);
 upsertUser(web, "generator", env("MONGO_GENERATOR_PASSWORD"), [{ role: "eventsWriter", db: "web" }]);
 
+// Debezium (connector capture.scope=database, capture.target=web): the
+// built-in read role on web covers the initial snapshot (find) and the
+// database-level change stream (changeStream). Nothing cluster-wide, no
+// write. Any user may run the hello command, which Debezium also needs.
+upsertUser(web, "debezium", env("DEBEZIUM_MONGO_PASSWORD"), [{ role: "read", db: "web" }]);
+
 // --- 3. Collections and indexes ---------------------------------------------
 // Collections are created explicitly so they exist (and are captured) before
 // the first write. events has only the default unique index on _id.

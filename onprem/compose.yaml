@@ -150,6 +150,7 @@ services:
       MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
       MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in onprem/.env}
       MONGO_GENERATOR_PASSWORD: ${MONGO_GENERATOR_PASSWORD:?set MONGO_GENERATOR_PASSWORD in onprem/.env}
+      DEBEZIUM_MONGO_PASSWORD: ${DEBEZIUM_MONGO_PASSWORD:?set DEBEZIUM_MONGO_PASSWORD in onprem/.env}
     volumes:
       - ./mongo:/setup:ro
 
@@ -236,6 +237,7 @@ services:
       # Resolved by the worker's EnvVarConfigProvider for ${env:...} placeholders
       # in connector configs (see connect/connect-distributed.properties).
       DEBEZIUM_DB_PASSWORD: ${DEBEZIUM_DB_PASSWORD:?set DEBEZIUM_DB_PASSWORD in onprem/.env}
+      DEBEZIUM_MONGO_PASSWORD: ${DEBEZIUM_MONGO_PASSWORD:?set DEBEZIUM_MONGO_PASSWORD in onprem/.env}
       # Load the Prometheus JMX exporter agent into the worker's JVM: it serves
       # the Connect and Debezium MBeans as metrics on :9404 (Compose network
       # only; Prometheus scrapes it, nothing is published to the host).

@@ -1,0 +1,26 @@
+{
+  "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+  "tasks.max": "1",
+
+  "mongodb.connection.string": "mongodb://mongo:27017/?replicaSet=rs0",
+  "mongodb.user": "debezium",
+  "mongodb.password": "${env:DEBEZIUM_MONGO_PASSWORD}",
+  "mongodb.authsource": "web",
+
+  "topic.prefix": "thelook_mongo",
+  "capture.scope": "database",
+  "capture.target": "web",
+  "collection.include.list": "web.events,web.reviews",
+  "capture.mode": "change_streams_update_full",
+
+  "snapshot.mode": "initial",
+  "exactly.once.support": "required",
+
+  "heartbeat.interval.ms": "30000",
+
+  "topic.creation.default.partitions": "1",
+  "topic.creation.default.replication.factor": "1",
+  "topic.creation.default.cleanup.policy": "delete",
+  "topic.creation.default.retention.ms": "259200000",
+  "topic.creation.default.segment.ms": "86400000"
+}
