@@ -47,6 +47,14 @@ generator stopped so both sides describe the same moment.
 
 ## Baseline throughput run — method (written before measuring, B5)
 
+> **Context note (spec v2.0, 2026-10-03).** This run and the slot drill
+> above were measured with `events` in PostgreSQL, where it made up about
+> two thirds of all change events and most of the WAL. Since P2 the events
+> live in MongoDB (ADR 008), so PostgreSQL's WAL rate and the Postgres
+> connector's load are lower at the same generator rate. The numbers stay
+> valid as P1 history; O8 is re-measured end to end, across both
+> connectors, in P3.
+
 **Question:** how fast can the on-prem capture path (generator → Postgres →
 Debezium → Kafka) go, and what saturates first? The answer sets O8's
 target, to be confirmed end to end in P2 when the sink consumer exists.

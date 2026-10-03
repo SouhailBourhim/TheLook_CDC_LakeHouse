@@ -335,6 +335,126 @@ purchases, container must run in UTC.
 - Before P2: settle A4 (who creates bronze tables) and the connector
   settings deferred to P2 (`time.precision.mode`, `tombstones.on.delete`).
 
+## Session 3 — 2026-10-03 — Spec v2.0, P2 started (MongoDB source)
+
+Souhail asked to extend the project with PySpark, NoSQL (MongoDB, Redis,
+Neo4j), Kafka streaming, CI and pytest. Audit first, then a plan with five
+decisions that change the spec; all approved as recommended.
+
+### Decisions taken (Souhail)
+
+- **D1** Spark Structured Streaming writes bronze; the Iceberg sink is
+  dropped (it was never built). **D2** `events` moves to MongoDB, plus a
+  synthetic `reviews` collection. **D3** PySpark replaces dbt for silver
+  and gold. **D4** serving layer (Redis, Neo4j, FastAPI) with synthetic
+  basket affinity. **D5** order: P2 MongoDB → P3 Spark bronze (+ IAM
+  Terraform) → P4 silver/gold + Airflow → P5 Redis/API → P6 Neo4j → P7
+  contracts → P8 GDPR/backfill/drills → P9 hardening; minimal CI in P2.
+  **P2–P4 are the must-have** (job application deadline); each phase must
+  be demo-able on its own.
+- Kept: Iceberg (not Delta: Athena writes Iceberg, only reads Delta; Glue
+  catalog makes Spark commits visible at once), ruff only (lint + format),
+  datacontract-cli for quality; ADR 006 amended (writer = Spark job).
+- Souhail's additions: cart events get `product_id` and `price` in the same
+  generator patch as D2 (synthetic, 4.3); Kafka must also be reconciled
+  against MongoDB.
+- Spec v2.0 written; ADRs 007–010 **proposed** (to review).
+
+### P2 commits so far
+
+| Commit | What | Verified |
+|---|---|---|
+| `chore: make up, down and ps` | `make up PROFILES="core monitoring"`, `make down` (all profiles, volumes kept) | stack up in 43 s |
+| `feat(onprem): mongodb 8 single-node replica set` | `mongo` + one-shot `mongo-init` running idempotent `mongo/setup.js` | generator user can insert events, cannot delete, drop or touch reviews; keyfile 400; oplog 2048 MiB; cache 512 MiB; anonymous refused |
+| `feat(connect): debezium mongodb plugin` | 3.7.0.Final, checksummed | both connector classes listed |
+| `feat(generator): events to mongodb, cart product and price, basket affinity` | vendored patch + 6 unit tests | 62.2 % of new 2-item orders share a category (expected ~61.5 %) |
+| `feat: copy event history to mongodb, stop capturing shop.events` | one-off seed, publication/grants/connector without events | 1,756,486 copied in 94 s, 0 missing |
+| `feat(connect): debezium mongodb source` | `mongo-source.json`, read-only `debezium` user | snapshot 1.76 M docs in 79 s, streaming |
+
+### Concepts covered
+
+- **Why a replica set for one node**: change streams (what Debezium reads)
+  only exist on replica sets. With access control, members must
+  authenticate each other, so even one node needs a **keyfile**; it is a
+  secret, generated in the volume, mode 400.
+- **Oplog vs replication slot**: the oplog is fixed-size (2 GiB here). A
+  stopped connector cannot fill the disk (slot problem), but once its
+  resume point is overwritten it must re-snapshot (`ChangeStreamHistoryLost`).
+  Opposite trade-off: availability of the source vs completeness of CDC.
+  **A bulk load eats the window**: the seed used 1.16 GiB of the 2 GiB.
+- **The member host name is like `advertised.listeners`**: clients are told
+  to reconnect to `mongo:27017`; host tools need `directConnection=true`.
+- **Image entrypoints hide traps**: the mongo image's first-start init runs
+  without `--replSet`, `--keyFile` and `--auth`, bound to 127.0.0.1, so the
+  replica set can only be initiated after the real start (one-shot service).
+- **Defaults sized for the host, not the container**: WiredTiger's cache
+  defaults to 50 % of (host RAM − 1 GB), ~7 GB here; capped at 0.5 GB.
+- **Debezium MongoDB envelope**: `after` is a JSON string (schemaless
+  documents have no fixed Avro schema; dates as `{"$date": ms}`), log
+  position = `source.ts_ms` + `source.ord`, `before` null without
+  pre-images. Nullable Avro fields arrive as unions (`{"string": "c"}`).
+- **Avro names** allow letters, digits and `_` only; Debezium builds the
+  namespace from `topic.prefix`, so `thelook-mongo` failed at Schema
+  Registry → `thelook_mongo`.
+
+### Debugging lessons
+
+- `mongosh` throws server errors that the old shell returned as `ok: 0`
+  (replica set "not initiated" arrives as an exception with a `codeName`).
+- **A single-file bind mount follows the inode**: an editor that saves by
+  replacing the file leaves the container on the deleted copy (on Docker
+  Desktop the next start fails with "no such file or directory"). New
+  services mount folders. Existing file mounts (`postgresql.conf`, Kafka,
+  Connect, Prometheus) only bite if edited while running: recreate the
+  container after editing them.
+- `up --wait` does not fail when a one-shot container exits 1 unless a
+  service depends on it with `service_completed_successfully`.
+- **Check the measurement before the code**: the affinity first measured
+  53 % (anchor item picked by random UUID) and 13.5 % (window included the
+  old generator); restricted to 2-item orders since the restart: 62.2 %.
+- A test only proves something if it fails without the fix: removing the
+  `str()` key fix makes the regression test fail with `KeyError: 27395`.
+- A `docker pull` hung silently after a DNS blip; killed and retried.
+
+### P1 note (Souhail's request)
+
+The P1 throughput baseline and slot drill were measured with `events` in
+PostgreSQL (about two thirds of change events and most of the WAL). They
+stay valid as P1 history; WAL rate and Postgres connector load are lower
+since P2. O8 is re-measured end to end in P3. Note added to
+`docs/results.md`.
+
+### Open questions
+
+- **E1 (P4)**: MongoDB ordering key for silver dedup. `source.ts_ms`
+  appeared equal to `wallTime` (ms) while `ord` counts within the
+  cluster-time second; check whether (`ts_ms`, `ord`) is a safe total order
+  per `_id`, or whether the Kafka offset (single partition, keyed) must be
+  the tie-breaker.
+- **E2 (decide before P6)**: co-purchase weights will all be 1. At 5 it/s
+  ~5,600 multi-item orders/h, a product anchors one every ~5 h (29,120
+  products), and its affinity partner is drawn from ~1,000 same-category
+  products, so a given pair repeats about once per 4,000 h. Options: (a)
+  per-product companion sets (e.g. 5 fixed partners) plus a popularity skew
+  on the first item (spec 4.3 change); (b) measure P6 by the share of
+  same-category recommendations instead of weights. Recommendation: (a).
+- `json.serialization.mode` left at `legacy`; it only changes the content
+  of the `after` string, not the Avro schema, so it can be decided in P3.
+- Docker Desktop stops containers with exit 255; Postgres then runs crash
+  recovery (seen again today, harmless).
+
+### Where we stopped
+
+- 6 P2 commits pushed (table above); core stack running, generator at 5/s
+  writing events to MongoDB, both connectors RUNNING.
+- **Next P2 commits**: review simulator (writes `web.reviews`, needs a
+  read-only Postgres role for delivered items) with tests → CI (GitHub
+  Actions: ruff + pytest) → `verify_cdc.py` reconciles Kafka with MongoDB
+  too → P2 wrap-up (README Mermaid diagram, run/demo notes, RAM per
+  profile, spec risk row: Debezium MongoDB EOS confirmed) → P2 checkpoint.
+- Pending for Souhail: review ADRs 007–010; answer the check questions
+  asked at the end of this session.
+
 ### P1 plan (agreed)
 
 | # | Commit | Content / how we verify | What Souhail learns |
