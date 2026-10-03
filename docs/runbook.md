@@ -190,6 +190,40 @@ start can fail outright. After editing such a file, recreate the service:
 Newer services mount folders instead (`onprem/mongo/`), which are not
 affected.
 
+## Spark AWS credentials
+
+The streaming job authenticates as IAM user `thelook-spark-stream`
+(`infra/terraform/lake/iam.tf`): read/write `s3://thelook-lake-<account>/bronze/`
+and the Glue database `thelook_bronze`, nothing else (verified in P3: silver,
+gold, bucket root, other Glue databases, DeleteTable and Athena are denied).
+Terraform creates the user and policy; the access key is created with the
+CLI so the secret never enters the Terraform state. Keys live in
+`onprem/.env` (`SPARK_STREAM_AWS_ACCESS_KEY_ID`, `..._SECRET_ACCESS_KEY`).
+
+**Create** (first time, or after deleting the old key), with the
+operator profile:
+
+```bash
+aws --profile thelook iam create-access-key --user-name thelook-spark-stream
+# copy AccessKeyId and SecretAccessKey into onprem/.env
+```
+
+**Rotate** (every 90 days, or at once if the key may have leaked). A user
+can hold two keys, so rotation has no downtime:
+
+1. Create a second key (above) and put it in `onprem/.env`.
+2. Recreate the Spark containers so they read the new key.
+3. Check the job commits again, then disable the old key:
+   `aws --profile thelook iam update-access-key --user-name thelook-spark-stream --access-key-id <old> --status Inactive`
+4. After a day without errors, delete it:
+   `aws --profile thelook iam delete-access-key --user-name thelook-spark-stream --access-key-id <old>`
+
+**Revoke now** (leak): step 3 with the leaked key, then rotate. The policy
+limits a leaked key to bronze; a leaked key could still overwrite or delete
+bronze files, which are rebuildable from a Debezium snapshot.
+
+Last used: `aws --profile thelook iam get-access-key-last-used --access-key-id <id>`.
+
 ## Cost
 
 ### Weekly cost check (`make cost-report`)
