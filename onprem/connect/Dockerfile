@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Kafka Connect worker: the same Apache Kafka image as the broker, plus two
+# Kafka Connect worker: the same Apache Kafka image as the broker, plus
 # plugins. Debezium 3.7.0 is built against Kafka 4.3.1, the version used here.
 
 ARG KAFKA_IMAGE=apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837
@@ -14,6 +14,12 @@ ADD --checksum=sha256:660673cbabd2f269da21409208ebd0f0d9977bd92e824fc9daa272f240
     https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.7.0.Final/debezium-connector-postgres-3.7.0.Final-plugin.tar.gz \
     /tmp/debezium-postgres.tar.gz
 
+# Debezium MongoDB connector, same release as the PostgreSQL one (they share
+# debezium-core). Hash cross-checked against Maven Central's SHA-512.
+ADD --checksum=sha256:81273790cae0df8072ccef4d96c143231b917345c075cc78735cbb0cd3f8bf11 \
+    https://repo1.maven.org/maven2/io/debezium/debezium-connector-mongodb/3.7.0.Final/debezium-connector-mongodb-3.7.0.Final-plugin.tar.gz \
+    /tmp/debezium-mongodb.tar.gz
+
 # Confluent's Avro converter with all its dependencies (Schema Registry
 # client, Avro, Jackson...). Confluent Community License.
 ADD --checksum=sha256:f849f49ae500d1c02f94a50d1dd4b3e63d26433843007ac114a7f8e9fb3d6be8 \
@@ -24,6 +30,7 @@ ADD --checksum=sha256:f849f49ae500d1c02f94a50d1dd4b3e63d26433843007ac114a7f8e9fb
 # the plugins' dependencies (Jackson, Guava...) cannot clash with each other.
 RUN mkdir -p /plugins \
  && tar -xzf /tmp/debezium-postgres.tar.gz -C /plugins \
+ && tar -xzf /tmp/debezium-mongodb.tar.gz -C /plugins \
  && unzip -q /tmp/avro-converter.zip -d /tmp/avro \
  && mv /tmp/avro/confluentinc-kafka-connect-avro-converter-8.3.2/lib /plugins/kafka-connect-avro-converter
 
