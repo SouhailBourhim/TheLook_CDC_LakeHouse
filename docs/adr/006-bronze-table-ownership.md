@@ -1,7 +1,9 @@
-# 006. Bronze tables: created by the sink, validated by the contracts
+# 006. Bronze tables: created by their writer, validated by the contracts
 
 - Status: Proposed
 - Date: 2026-09-30 (records the decision on open question A4, spec v1.9)
+- Amended: 2026-10-03, spec v2.0: the writer is now the Spark streaming
+  job (ADR 007) instead of the Iceberg sink. The principle is unchanged.
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -23,8 +25,13 @@ Contracts only arrive in P4, after bronze exists (P2).
 
 ## Decision
 
-Option 2. The Iceberg sink runs with table auto-creation and schema
-evolution enabled. Bronze tables have no Terraform resource. From P4 the
+Option 2. The bronze writer creates and evolves the tables. Bronze tables
+have no Terraform resource.
+
+Since v2.0 the writer is the Spark streaming job (ADR 007): it creates a
+missing bronze table on its first batch and appends with schema merging,
+so a new nullable column becomes a new table column. (Originally: the
+Iceberg sink with auto-creation and schema evolution enabled.) From P4 the
 ODCS contracts are checked against the Iceberg tables and Kafka topics by
 datacontract-cli; a mismatch fails a check and alerts.
 
@@ -34,15 +41,16 @@ datacontract-cli; a mismatch fails a check and alerts.
   schema evolution).
 - ✅ No drift between Terraform state and the real table schema.
 - ✅ P2 does not depend on P4.
-- ❌ Table properties the sink does not set (partitioning, sort order,
-  file format options) must be set another way: sink configuration where
-  possible, otherwise a one-off `ALTER TABLE` recorded in the repository.
+- ✅ With Spark as the writer, partitioning and table properties are set
+  in the job's `CREATE TABLE` (in the repository), not by hand.
 - ❌ A bad column can land in bronze before a contract check notices it;
   bronze is append-only, so it is caught downstream, not prevented.
-- ❌ `terraform destroy` does not remove the tables' metadata by itself
-  (the sink created it); teardown must empty the Glue database too.
+- ❌ Terraform did not create the tables, but destroying a Glue database
+  removes its tables' metadata, and the bucket's `force_destroy` removes
+  the data.
 
 ## References
 
-- Apache Iceberg docs: Kafka Connect sink (auto-create, schema evolution)
-- Cahier des charges v1.9: FR7, NFR schema evolution
+- Apache Iceberg docs: Spark writes (schema merge), Kafka Connect sink
+  (auto-create, schema evolution)
+- Cahier des charges v1.9 and v2.0: FR2, FR7, NFR schema evolution
