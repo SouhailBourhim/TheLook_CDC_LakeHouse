@@ -506,7 +506,13 @@ P7). **ADRs 006–010 accepted** by Souhail.
   (~550 MB/h, slot lost after ~18 h) instead of the P2 measurement
   (242 MiB/h, ~42 h), and left MongoDB as "if" when its window was
   measured (~30 h, so two days does lose the resume point). Same pattern
-  as the P1 checkpoint: reuse the latest measurement. Redo pending.
+  as the P1 checkpoint: reuse the latest measurement. **Closed:** Souhail
+  redid it with the P2 numbers: MongoDB loses its resume point first (~30 h
+  oplog window), Postgres its slot at ~42 h (10 GiB / 242 MiB/h) while
+  still accepting writes; alerts in order: SlotInactive ~31 min,
+  RetainedWalHigh ~4.3 h, NearInvalidation ~34 h (~8.5 h left to act).
+  Added: MongoDB loses first yet has no countdown alert (P7).
+  **P2 checkpoint passed; phase P2 closed on 2026-10-03.**
 - Depth added in review: a replace of an *existing* document is reported
   as an update, not an insert; compacted topics would keep the latest
   version per key (no re-snapshot needed) but keep PII indefinitely, which
