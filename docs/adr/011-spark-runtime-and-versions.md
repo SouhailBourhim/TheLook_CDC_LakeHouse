@@ -1,6 +1,6 @@
 # 011. Spark runtime and versions for the lake jobs
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-03 (P3, first commit; spec 5.3 asks to pin versions after a compatibility check)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
