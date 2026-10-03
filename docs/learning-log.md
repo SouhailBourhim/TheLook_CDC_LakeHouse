@@ -499,8 +499,20 @@ P7). **ADRs 006–010 accepted** by Souhail.
   (incremental snapshot first) → freshness, replay drill, O8.
 - Open: E1 (P4), E2 (before P6); `json.serialization.mode`,
   `time.precision.mode`, `tombstones.on.delete` to settle at P3 start.
-- Still unanswered: the 3 check questions from the first part of the
-  session (slot vs oplog, `after` as a string, upsert by `_id`).
+- **P2 checkpoint answered (2026-10-03):** questions 2–5 correct
+  (schemaless `after` and the key for deletes; idempotent upsert, op `c`;
+  seed before the snapshot and its oplog cost; why P3 re-snapshots and
+  bronze becomes the history). **Gap on question 1:** used the P1 WAL rate
+  (~550 MB/h, slot lost after ~18 h) instead of the P2 measurement
+  (242 MiB/h, ~42 h), and left MongoDB as "if" when its window was
+  measured (~30 h, so two days does lose the resume point). Same pattern
+  as the P1 checkpoint: reuse the latest measurement. Redo pending.
+- Depth added in review: a replace of an *existing* document is reported
+  as an update, not an insert; compacted topics would keep the latest
+  version per key (no re-snapshot needed) but keep PII indefinitely, which
+  conflicts with retention as the erasure bound (FR9); whether Postgres
+  incremental snapshots need write access to a signal table is the first
+  P3 check (it affects the `debezium` role's least privilege).
 
 ### P1 plan (agreed)
 
