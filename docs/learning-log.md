@@ -617,10 +617,35 @@ P7). **ADRs 006–010 accepted** by Souhail.
   correct. Added: Avro schema resolution exists but needs the writer
   schema too, and Spark's from_avro does not resolve; unionByName works
   because BACKWARD only allows changes like added nullable fields.
-- Next: P3 commit 5, the streaming job: read-only incremental snapshot of
-  the Postgres tables via the Kafka signal channel, then bronze appends
-  with checkpoint + batch id in the Iceberg snapshot. First data written
-  to AWS (cost ~$0.01/h while running).
+- **Commit 5, the streaming job (bronze is live).** 7 topics -> 7 Iceberg
+  tables, 60 s trigger, 200k records/batch max, `failOnDataLoss=true`,
+  query id + batch id in each Iceberg snapshot (replay guard). Backlog of
+  ~3.3 M records in 17 batches (~22 min, ~2,500 records/s: each batch makes
+  7 sequential commits with S3/Glue round trips from the laptop, ~4 s
+  each); steady batches ~30 s. Athena works: first query scanned 359 bytes
+  (answered from Iceberg metadata/statistics).
+- **Debezium bug (the big lesson of the day).** The read-only incremental
+  snapshot killed the Postgres task under live traffic:
+  ConcurrentModificationException in `sendWindowEvents` (a streamed change
+  closes the window while the window's rows are emitted, and emitting them
+  deduplicates the same map: re-entrancy). Read the trace, then the 3.7.0
+  source; no newer release. Recovery: the stored offset had no snapshot
+  state because **the failed exactly-once transaction was aborted**; deleted
+  and recreated the signal topic so the signal could not replay; restarted
+  the task; switched to a **blocking snapshot** (same code path as the
+  initial snapshot, no new grant): 964,802 rows in 24 s, then reconciled
+  **exactly** in Athena (rows = distinct ids = distinct offsets = Debezium's
+  exported counts, all 5 tables).
+- S3 after the run: 759 objects, 279 MB; metadata files outnumber data
+  files ~3:1 (metadata.json + manifest list + manifest per commit): the
+  small-files problem is already visible; expiry/compaction come with the
+  maintenance DAG.
+- Debugging lessons: two wait loops "succeeded" without checking (an old
+  log window that already contained the expected words; `awk match()` with
+  an array is gawk-only, Ubuntu has mawk). Guards must be able to fail.
+- Next: P3 step 6, the proofs: O1 freshness measured (source commit ->
+  queryable in Athena), the kill-and-restart drill (no duplicates), O8
+  re-measured end to end. Then the P3 checkpoint.
 
 ### P1 plan (agreed)
 
