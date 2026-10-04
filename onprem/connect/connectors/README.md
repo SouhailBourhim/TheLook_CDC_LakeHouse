@@ -22,12 +22,17 @@ it, so it can be re-run safely.
 | `heartbeat.action.query` | upsert into `shop.heartbeat` | Creates a real change in a published table, so the slot advances even when the business tables are idle. |
 | `topic.creation.default.*` | 1 partition, RF 1, delete, 3 days, 1-day segments | Topic-level settings override the broker's, so they are set explicitly and match `kafka/server.properties`. One partition is enough at this volume; silver deduplicates by key and LSN, so adding partitions later does not break correctness. |
 
-Left at their defaults on purpose (to decide in P3, before the Spark job writes bronze):
-`time.precision.mode=adaptive` (timestamps as microseconds, `io.debezium.time.MicroTimestamp`),
-`tombstones.on.delete=true` (a null-value record after each delete),
-`decimal.handling.mode=precise` (no numeric columns today). Changing any of
-them later changes the Avro schemas, so it must be decided before data
-reaches the lake.
+Decided in P3 (2026-10-04), before the Spark job writes bronze: **all three
+stay at their defaults.**
+
+| Setting | Value | Why not change it |
+|---|---|---|
+| `time.precision.mode` | `adaptive`: `TIMESTAMP` as `io.debezium.time.MicroTimestamp` (`long`, microseconds) | `connect` would switch the same Avro `long` from microseconds to milliseconds: Schema Registry accepts it as compatible, so the meaning would change silently mid-topic. Spark converts with `timestamp_micros()`. |
+| `tombstones.on.delete` | `true` (a null-value record after each delete) | Tombstones only matter for compacted topics, rejected (retention bounds erasure, FR9). Turning them off would not simplify consumers: the topics already hold tombstones, so every reader skips null values anyway. |
+| `decimal.handling.mode` | `precise` | No numeric columns in the source today. |
+
+The MongoDB connector's `json.serialization.mode` also stays `legacy`
+(see below).
 
 ## mongo-source.json (Debezium MongoDB)
 
@@ -47,5 +52,8 @@ reaches the lake.
 
 Event shape: `after` is a JSON string (MongoDB Extended JSON, `legacy`
 mode: dates as `{"$date": <epoch ms>}`), because schemaless documents have
-no fixed Avro schema. The log position is `source.ts_ms` plus `source.ord`
+no fixed Avro schema. `legacy` is kept (decided in P3): the topics already hold
+1.8 M records in it, and a switch would change only the content of the
+`after` string, invisible to Schema Registry, leaving two formats in one
+topic for silver to parse forever. The log position is `source.ts_ms` plus `source.ord`
 (order within the cluster-time second); there is no LSN.

@@ -576,6 +576,18 @@ P7). **ADRs 006–010 accepted** by Souhail.
   `COPY --chmod=644` created `/opt/spark/conf` without an execute bit and
   Spark silently skipped the file (same trap as the Connect image in P1).
   `lake_session()` now fails fast when the catalog is not configured.
+- Check answers (Spark step): per-application credentials (not on the
+  shared worker, not on the command line; remaining risk: a shell on the
+  worker can read the executor's environment) and `defaultCores=1` vs an
+  explicit `spark.cores.max` sized to the input: both correct. Added: the
+  access key *id* is not redacted (`access_key` with an underscore does not
+  match `access[.]key`); 7 topics x 1 partition = 7 input partitions per
+  micro-batch, run 2 at a time with `cores.max=2`.
+- **Deferred Debezium settings decided: all stay at their defaults**
+  (`time.precision.mode=adaptive`, `tombstones.on.delete=true`,
+  `json.serialization.mode=legacy`). Lesson: a unit change inside the same
+  Avro type, or the content of a JSON string, changes meaning while the
+  schema looks compatible; Schema Registry cannot catch it (contracts, P7).
 - Next: P3 commit 4, Debezium envelope parsing as pure functions with
   chispa tests (pyspark 4.1.3, Python 3.10, Java 17) and a CI job.
 
