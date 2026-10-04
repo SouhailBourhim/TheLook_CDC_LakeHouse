@@ -90,3 +90,65 @@ def test_bronze_rows_routes_each_topic_to_its_parser(kafka_df, captured, schemas
     assert "doc_id" in mongo.columns and "lsn" not in mongo.columns
     assert pg.count() == 1
     assert sorted(r.op for r in mongo.collect()) == ["c", "d"]  # tombstone dropped
+
+
+# --- retries (seen in P3: a Glue blip stopped the stream) ----------------------
+
+GLUE_BLIP = Exception(
+    "software.amazon.awssdk.core.exception.SdkClientException: Unable to execute "
+    "HTTP request: Connect to https://glue.us-east-1.amazonaws.com:443 failed: "
+    "Connection refused (SDK Attempt Count: 3)"
+)
+
+
+def test_network_errors_are_transient_and_permissions_are_not():
+    assert bronze.is_transient(GLUE_BLIP)
+    assert not bronze.is_transient(Exception("AccessDeniedException: not authorized"))
+    assert not bronze.is_transient(Exception("Cannot write incompatible data"))
+
+
+def test_with_retries_recovers_from_a_blip():
+    calls, waits = [], []
+
+    def step():
+        calls.append(1)
+        if len(calls) < 3:
+            raise GLUE_BLIP
+        return True
+
+    assert bronze.with_retries(step, sleep=waits.append) is True
+    assert len(calls) == 3
+    assert waits == [5.0, 10.0]  # doubling delays
+
+
+def test_with_retries_gives_up_after_the_last_attempt():
+    waits = []
+
+    def step():
+        raise GLUE_BLIP
+
+    with pytest.raises(Exception, match="Connection refused"):
+        bronze.with_retries(step, attempts=3, sleep=waits.append)
+    assert waits == [5.0, 10.0]
+
+
+def test_with_retries_does_not_retry_permanent_errors():
+    waits = []
+
+    def step():
+        raise Exception("AccessDeniedException")
+
+    with pytest.raises(Exception, match="AccessDenied"):
+        bronze.with_retries(step, sleep=waits.append)
+    assert waits == []
+
+
+def test_append_once_skips_a_batch_already_in_the_table(monkeypatch):
+    # e.g. a retry after a commit that reached Glue but whose reply was lost.
+    writes = []
+    monkeypatch.setattr(bronze, "snapshot_summaries", lambda spark, t: [snap("q1", 7)])
+    monkeypatch.setattr(bronze, "write_bronze", lambda *args: writes.append(args))
+
+    assert bronze.append_once(None, None, "t", "q1", 7) is False
+    assert bronze.append_once(None, None, "t", "q1", 8) is True
+    assert len(writes) == 1

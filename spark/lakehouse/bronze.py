@@ -15,7 +15,10 @@ Kafka coordinates make visible).
 """
 
 import json
+import logging
+import time
 import urllib.request
+from collections.abc import Callable
 
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -33,6 +36,23 @@ DATABASE = "lake.thelook_bronze"
 
 QUERY_ID = "thelook.query-id"
 BATCH_ID = "thelook.batch-id"
+
+log = logging.getLogger("bronze")
+
+# Signs of a network or service blip on the way to S3 or Glue, as they
+# appear in the Java exception text that py4j hands to Python. Seen in P3:
+# "Unable to execute HTTP request: Connect to https://glue... failed:
+# Connection refused" after the AWS SDK's own 3 attempts.
+TRANSIENT_MARKERS = (
+    "Unable to execute HTTP request",
+    "Connection refused",
+    "Connection reset",
+    "Read timed out",
+    "SdkClientException",
+    "ThrottlingException",
+    "SlowDown",
+    "ServiceUnavailable",
+)
 
 
 def table_for(topic: str) -> str:
@@ -113,3 +133,58 @@ def write_bronze(
         )
         return
     rows.writeTo(table).options(**marks).option("mergeSchema", "true").append()
+
+
+def is_transient(error: Exception) -> bool:
+    """True for errors worth retrying (network, throttling), False for
+    errors a retry cannot fix (permissions, bad data, schema conflicts)."""
+    text = str(error)
+    return "AccessDenied" not in text and any(m in text for m in TRANSIENT_MARKERS)
+
+
+def with_retries(
+    step: Callable[[], bool],
+    attempts: int = 5,
+    first_delay: float = 5.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bool:
+    """Run step(), retrying transient errors with doubling delays
+    (5, 10, 20, 40 s by default). Other errors, and the last attempt's
+    error, are raised: the micro-batch fails and Spark stops the query."""
+    delay = first_delay
+    for attempt in range(1, attempts + 1):
+        try:
+            return step()
+        except Exception as error:
+            if attempt == attempts or not is_transient(error):
+                raise
+            log.warning(
+                "transient error (attempt %s/%s), retry in %.0f s: %s",
+                attempt,
+                attempts,
+                delay,
+                str(error).splitlines()[0][:200],
+            )
+            sleep(delay)
+            delay *= 2
+    raise AssertionError("unreachable")
+
+
+def append_once(
+    spark: SparkSession,
+    rows: DataFrame,
+    table: str,
+    query_id: str,
+    batch_id: int,
+) -> bool:
+    """Append this batch's rows to the table unless a snapshot already holds
+    this query's batch id. Returns False when skipped.
+
+    The check runs again on every retry: if a commit reached Glue but its
+    reply was lost (an ambiguous failure), the retry finds the batch mark in
+    the table's snapshots and does not append a second time.
+    """
+    if already_committed(snapshot_summaries(spark, table), query_id, batch_id):
+        return False
+    write_bronze(spark, rows, table, query_id, batch_id)
+    return True

@@ -380,6 +380,13 @@ services:
       - spark-checkpoints:/opt/checkpoints
     # Lets the current micro-batch finish its commits on `docker compose stop`.
     stop_grace_period: 60s
+    # Unlike the core services (no restart policy, so failures are noticed),
+    # the stream restarts itself after a crash: it resumes from its
+    # checkpoint and the replay guard prevents duplicates. Short S3/Glue
+    # blips are retried inside the batch; this covers the rest (driver
+    # crash, retries exhausted). After 3 failed restarts it stays down,
+    # visible in `make ps` (alerting: P7).
+    restart: on-failure:3
 
   # --- jobs profile: one-off Spark drivers (make spark-run) ----------------------
   # Never started by `make up`; `docker compose run` creates a throwaway

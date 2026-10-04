@@ -212,3 +212,87 @@ that included it read 586 MiB/h of WAL and was discarded).
 PostgreSQL WAL was ~550 MiB/h in the P1 slot drill (events included, no
 compression); compression alone saved 19 % in the P1 baseline, so moving
 `events` out accounts for most of the drop.
+
+## P3: bronze on AWS with Spark Structured Streaming — 2026-10-04
+
+### Acceptance 1, freshness (O1: source commit -> queryable in Athena, < 5 min)
+
+**Method:** `drills/freshness.py` (written before measuring): take the
+newest order (PostgreSQL, generator) or review (MongoDB, simulator), poll
+Athena every 5 s until bronze returns it; latency = end of the first
+successful query - the row's `source_ts` (Debezium commit time). Upper
+bound by up to ~5 s + Athena query time. Generator at 5/s, simulator 1/s,
+60 s trigger.
+
+**Result: passed.** n = 6, min 26.0 s, median 75.3 s, **max 87.5 s**.
+
+| Source | Samples (s) |
+|---|---|
+| PostgreSQL order | 26.0, 46.4, 46.4 |
+| MongoDB review | 78.5, 75.3, 87.5 |
+
+Reviews are consistently ~30-40 s later: a batch commits its tables one
+after the other in topic-name order, and `thelook_mongo.web.reviews` is
+last (7 commits x ~4 s of S3/Glue round trips from the laptop). Committing
+tables in parallel would remove that gap (throughput work, O8).
+
+### Acceptance 2, a killed and restarted job appends no duplicates
+
+**Method:** wait until a micro-batch has committed two of its tables, then
+`kill -9` the driver (SparkSubmit) inside the container: a crash, so
+Docker's `restart: on-failure:3` applies. Then count, per bronze table,
+rows vs distinct Kafka offsets (one partition per topic, so an offset
+identifies a record).
+
+**Result: passed.**
+
+- Killed at 05:45:16 during batch 35, after `shop_order_items` and
+  `shop_orders` had committed. Docker restarted the container (restart
+  count 1); the job resumed with the same query id at 05:45:30 and
+  replayed batch 35: `shop_order_items=skipped(replay)`,
+  `shop_orders=skipped(replay)`, the 3 other tables written.
+- An unplanned failure came first: at 05:20:21 AWS Glue was unreachable
+  for a few seconds ("Connection refused" after the SDK's 3 attempts); the
+  batch failed, the query stopped, and with no restart policy the stream
+  stayed down for 21 minutes (found by the freshness drill timing out).
+  Fixed: transient S3/Glue errors are retried inside the batch (5 attempts,
+  5-40 s backoff, the replay check re-run before each attempt), plus the
+  restart policy. On restart the job replayed batch 32 with the record
+  ranges stored in the checkpoint, then caught up ~42,000 records.
+- After both failures, all 7 tables: **0 duplicates** (4,178,308 rows =
+  4,178,308 distinct offsets).
+
+| Table | Rows | Distinct offsets |
+|---|---|---|
+| shop_order_items | 782,700 | 782,700 |
+| shop_orders | 539,839 | 539,839 |
+| shop_users | 60,266 | 60,266 |
+| shop_products | 174,720 | 174,720 |
+| shop_dist_centers | 60 | 60 |
+| web_events | 2,594,904 | 2,594,904 |
+| web_reviews | 25,819 | 25,819 |
+
+### Initial load and snapshot
+
+| Step | Volume | Time |
+|---|---|---|
+| Backlog still in Kafka (P1-P2 changes within retention, MongoDB from its initial snapshot) | ~3.3 M records, 17 batches of up to 200k | ~22 min (~2,500 records/s) |
+| Blocking snapshot of the 5 PostgreSQL tables (Debezium) | 964,802 rows | 24 s |
+| The same rows into bronze | 5 batches | ~5 min |
+| Steady state | ~2,000-3,000 records/batch | ~30 s per batch |
+
+Snapshot reconciliation, Athena vs Debezium's exported counts, rows `op='r'`
+after the snapshot start: identical for all 5 tables (users 36,575, orders
+366,935, order_items 532,162, products 29,120, dist_centers 10), with rows =
+distinct ids = distinct offsets.
+
+Debezium 3.7.0's read-only incremental snapshot crashed the PostgreSQL
+task under live traffic (`ConcurrentModificationException`, runbook);
+recovered from the exactly-once offset, then used a blocking snapshot.
+
+### Storage after the run
+
+759 objects, 279 MB in `s3://<lake>/bronze/` (before the restart); metadata
+files outnumber data files ~3:1 (one metadata.json, manifest list and
+manifest per commit), the small-files cost of a 60 s trigger: expiry and
+compaction come with the maintenance DAG. Cost so far: under $0.05.

@@ -26,11 +26,10 @@ from pyspark.sql import functions as F
 from lakehouse.bronze import (
     TOPICS,
     SchemaRegistry,
-    already_committed,
+    append_once,
     bronze_rows,
-    snapshot_summaries,
     table_for,
-    write_bronze,
+    with_retries,
 )
 from lakehouse.cdc import bad_frames
 from lakehouse.session import lake_session
@@ -75,14 +74,20 @@ def process_batch(batch: DataFrame, batch_id: int) -> None:
         done = []
         for topic in sorted(per_topic):
             table = table_for(topic)
-            if already_committed(snapshot_summaries(spark, table), qid, batch_id):
-                done.append(f"{table}=skipped(replay)")
-                continue
             rows = bronze_rows(batch, topic, registry, F.current_timestamp())
             if rows.isEmpty():  # e.g. only tombstones
                 continue
-            write_bronze(spark, rows, table, qid, batch_id)
-            done.append(f"{table.rsplit('.', 1)[1]}={per_topic[topic]}")
+            # Transient S3/Glue errors are retried inside the batch; the
+            # replay check runs again on each attempt (lakehouse.bronze).
+            written = with_retries(
+                lambda rows=rows, table=table: append_once(
+                    spark, rows, table, qid, batch_id
+                )
+            )
+            name = table.rsplit(".", 1)[1]
+            done.append(
+                f"{name}={per_topic[topic]}" if written else f"{name}=skipped(replay)"
+            )
         log.info(
             "batch %s: %s in %.1f s",
             batch_id,
