@@ -672,12 +672,57 @@ P7). **ADRs 006–010 accepted** by Souhail.
   - **O1: 26-88 s** (median 75 s) source commit -> Athena. Reviews are
     ~30-40 s later because tables commit sequentially in topic order and
     reviews come last.
-- **Open (decide before P9, Souhail):** O8 says "200 events/s with consumer
-  lag < 30 s". With a 60 s trigger and ~30-45 s batches, bronze lags
-  30-90 s by design, so O8 cannot pass as written. Options: shorter
-  trigger + parallel table commits (more files and S3 requests), or a lag
-  target that fits a micro-batch lake writer (e.g. < 2 min, like O1).
-- Next: P3 checkpoint, then P4 (silver/gold + Airflow).
+- **O8: pending, Souhail's decision.** As written ("200 events/s with
+  consumer lag < 30 s") it cannot pass: a 60 s trigger plus ~30-45 s
+  batches means bronze lags 30-90 s by design. Souhail **leans B**: a lag
+  target of < 2 min (p95, source to bronze), consistent with O1, measured
+  in P9, with A (shorter trigger + parallel table commits) only as an
+  optimisation. **The spec is not changed until he decides.**
+- **P3 checkpoint answered (2026-10-04): all 5 correct.**
+  1. Bronze append-only: the only full history (Kafka keeps 3 days),
+     silver rebuildable from it, SCD2 needs every version, appends are
+     cheap and idempotent. Added: the one exception is GDPR erasure (A3,
+     P8), which deletes from bronze too.
+  2. Crash after 2 of 7 tables: offsets logged before the batch, replay
+     with the same batch id, (query id, batch id) as a per-table
+     idempotency key; lost checkpoint -> new query id, so the guard no
+     longer matches. Added: we chose `startingOffsets=earliest`
+     deliberately, i.e. duplicates over gaps (at-least-once over
+     at-most-once): duplicates are detectable by Kafka coordinates and
+     removed in silver, a gap is silent; and "earliest" re-reads only what
+     retention still holds, not necessarily 3 days.
+  3. Confluent framing (magic byte + schema id) + one fixed schema in
+     from_avro: strip, look up, decode per id, align.
+  4. Trigger trade-off: shorter = more files, snapshots, metadata, S3/Glue
+     calls, compaction; longer = staler data, bigger batches, longer
+     replays. Added: the trigger also sets the floor of O1 and O8 lag;
+     when a batch takes longer than the trigger, batches run back to back
+     (seen during the backlog).
+  5. Ambiguous commit: Glue may have applied it although the client saw an
+     error, so re-check before retrying. Added: Iceberg itself raises
+     `CommitStateUnknownException` in that case and deliberately does not
+     delete the written files.
+  **P3 checkpoint passed; phase P3 closed on 2026-10-04.**
+
+### Where we stopped (2026-10-04)
+
+- P3 closed: bronze live on AWS (7 Iceberg tables, Athena), O1 26-88 s,
+  kill drill 0 duplicates, everything committed and pushed, CI green.
+- **Running:** core + stream profiles (generator 5/s, review simulator
+  1/s, both connectors, Spark master/worker, `bronze-stream`), about
+  $0.01/h on AWS. Stop the stream with
+  `docker compose -f onprem/compose.yaml stop bronze-stream`, or
+  everything with `make down` (volumes kept).
+- **Caution when stopping for days:** if the stream is down longer than
+  Kafka retention (3 days), it stops on `failOnDataLoss` at restart.
+  Recovery is in the runbook ("Bronze stream"): re-snapshot, fresh
+  checkpoint, duplicates removed in silver.
+- **Next session: P4** (PySpark silver with MERGE and SCD2, gold star
+  schema and marts, Airflow), only when Souhail says so.
+- Open: **O8** (pending, leaning B), **E1** (MongoDB ordering key, before
+  P4: (`source_ts_ms`, `ord`) matched Kafka order on every document so
+  far), **E2** (co-purchase weights, before P6). P4 dedup order agreed:
+  highest LSN, then streamed before `r`, then Kafka offset.
 
 ### P1 plan (agreed)
 
