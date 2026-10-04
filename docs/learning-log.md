@@ -821,6 +821,17 @@ include table maintenance (snapshot expiry, compaction) in P4.
     the silver job rode out others with its retries. During the silver
     backfill, stream batches slowed to 200-280 s (shared network and
     cores).
+- Check answers (step 4): (1) no empty batches, so measure position
+  (`maxOffsetsBehindLatest` in the query progress; a remainder of 1 per
+  partition from transaction markers): correct. **Error:** "the heartbeat
+  keeps the stream non-empty / a heartbeat row in bronze": the heartbeat
+  topic is not ingested (B2, `test_heartbeat_topic_is_not_ingested`), and
+  step 4 itself showed no batch at all once the writers stopped. Idea kept
+  for P7: ingest the heartbeat into a tiny bronze table as an end-to-end
+  liveness signal. (2) Incremental read of the new bronze snapshots only:
+  correct. Refinement: the MERGE *writes* only affected rows but *reads*
+  the key column of the whole target (random UUIDs defeat min/max file
+  skipping); only events prunes by date partition.
 - Next: step 5, ADR 015 + gold dimensions (incl. `dim_user` SCD2) + tests.
 
 ### P1 plan (agreed)
