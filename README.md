@@ -57,6 +57,7 @@ flowchart LR
 | S3 bucket, Glue databases, Athena workgroup, budgets | P2 (Terraform) | `infra/terraform/lake` |
 | Monitoring: slot, connector and Debezium lag alerts | P1 | Prometheus, Alertmanager |
 | CI: ruff, pytest, alert-rule tests | P2 | `.github/workflows/ci.yml` |
+| Bronze: Spark Structured Streaming -> 7 Iceberg tables (S3 + Glue), queryable in Athena | P3 | `lake.thelook_bronze.<database>_<table>` |
 
 ## Repository layout
 
@@ -96,6 +97,8 @@ onprem/postgres/apply-sql.sh onprem/postgres/reviewer-setup.sql    # review simu
 make register-connectors               # Debezium Postgres + MongoDB, then status
 make up PROFILES="core stream"         # adds the Spark cluster (UI http://localhost:8080)
 make spark-run JOB=jobs/smoke_test.py  # Kafka, Avro and Glue catalog checks on the cluster
+make snapshot-postgres                 # P3: blocking re-snapshot so bronze starts complete
+# bronze-stream (stream profile) appends every CDC topic to lake.thelook_bronze.* every 60 s
 make ps                                # what is running
 make down                              # stop everything, keep the data
 ```

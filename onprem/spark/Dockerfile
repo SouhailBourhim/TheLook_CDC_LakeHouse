@@ -41,4 +41,8 @@ ADD --chmod=644 --checksum=sha256:83f848dae53cfe511d61d81026c1b08321390b77868455
 USER root
 RUN mkdir -p /opt/spark/conf
 COPY --chmod=644 spark-defaults.conf /opt/spark/conf/spark-defaults.conf
+# Streaming checkpoints (a named volume). An empty named volume copies the
+# owner of the image's folder, so the spark user (uid 185) can write it;
+# otherwise the volume would be root-owned.
+RUN mkdir -p /opt/checkpoints && chown spark:spark /opt/checkpoints
 USER spark

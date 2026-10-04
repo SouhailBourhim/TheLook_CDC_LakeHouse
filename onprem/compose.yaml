@@ -347,6 +347,40 @@ services:
       retries: 12
       start_period: 20s
 
+  bronze-stream:
+    # The streaming bronze writer (spark/jobs/bronze_stream.py, ADR 007): a
+    # long-running driver in client mode; its executors run on the worker.
+    image: thelook-spark:local
+    profiles: [stream]
+    init: true
+    depends_on:
+      spark-worker:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /opt/lakehouse
+      LAKE_BUCKET: ${LAKE_BUCKET:?set LAKE_BUCKET in onprem/.env}
+      AWS_REGION: us-east-1
+      # The bronze writer's IAM user (iam.tf), passed to its executors by
+      # lakehouse.session.
+      AWS_ACCESS_KEY_ID: ${SPARK_STREAM_AWS_ACCESS_KEY_ID:?set SPARK_STREAM_AWS_ACCESS_KEY_ID in onprem/.env}
+      AWS_SECRET_ACCESS_KEY: ${SPARK_STREAM_AWS_SECRET_ACCESS_KEY:?set SPARK_STREAM_AWS_SECRET_ACCESS_KEY in onprem/.env}
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - /opt/lakehouse/jobs/bronze_stream.py
+    ports:
+      # Driver UI: Structured Streaming tab (batch durations, input rates).
+      - "127.0.0.1:4040:4040"
+    volumes:
+      - ../spark:/opt/lakehouse:ro
+      # The checkpoint (Kafka offsets of each batch, query id) must outlive
+      # the container: a lost checkpoint means a new query from the
+      # earliest offsets (duplicates in bronze, removed in silver).
+      - spark-checkpoints:/opt/checkpoints
+    # Lets the current micro-batch finish its commits on `docker compose stop`.
+    stop_grace_period: 60s
+
   # --- jobs profile: one-off Spark drivers (make spark-run) ----------------------
   # Never started by `make up`; `docker compose run` creates a throwaway
   # driver container that submits to the cluster in client mode.
@@ -409,6 +443,7 @@ services:
 
 volumes:
   pgdata:
+  spark-checkpoints:
   mongo-data:
   mongo-config:
   kafka-data:

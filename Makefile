@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: up down ps spark-run test-spark register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+.PHONY: up down ps spark-run test-spark signal-topic snapshot-postgres register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
 
 # --- On-prem stack (Docker Compose) ------------------------------------------
 # Profiles group services so a laptop runs only what a task needs (RAM per
@@ -44,7 +44,7 @@ test-spark:
 # still print Connect's error message. PUT returns once the config is stored,
 # before the worker has (re)started the connector, so wait up to 30 s for its
 # state to become RUNNING before printing the status.
-register-connectors:
+register-connectors: signal-topic
 	@for f in $(CONNECTORS); do \
 	  name=$$(basename $$f .json); \
 	  echo "==> $$name"; \
@@ -55,6 +55,28 @@ register-connectors:
 	  done; \
 	done
 	@$(MAKE) --no-print-directory connector-status
+
+# Debezium signal topic (connector signal.kafka.topic). Broker auto-creation
+# is off, and the connector's signal consumer needs it at start. One
+# partition: signals must stay in order. Kept 7 days.
+SIGNAL_TOPIC := thelook.signals
+KAFKA_EXEC := $(COMPOSE) exec -T kafka env KAFKA_HEAP_OPTS=-Xmx128m /opt/kafka/bin
+signal-topic:
+	@$(KAFKA_EXEC)/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists \
+	  --topic $(SIGNAL_TOPIC) --partitions 1 --replication-factor 1 --config retention.ms=604800000
+
+# Blocking snapshot of the 5 PostgreSQL tables (P3): the connector pauses
+# streaming, re-reads the tables like its initial snapshot (op=r), then
+# resumes streaming where it paused. Bronze must start complete, and Kafka
+# keeps only 3 days. Not INCREMENTAL: Debezium 3.7.0's read-only incremental
+# snapshot crashes the task under live traffic (ConcurrentModificationException,
+# see docs/runbook.md). The key must equal the connector's topic.prefix.
+SNAPSHOT_TABLES := "shop.users","shop.orders","shop.order_items","shop.products","shop.dist_centers"
+snapshot-postgres: signal-topic
+	@echo 'thelook|{"type":"execute-snapshot","data":{"data-collections":[$(SNAPSHOT_TABLES)],"type":"BLOCKING"}}' | \
+	  $(KAFKA_EXEC)/kafka-console-producer.sh --bootstrap-server kafka:29092 --topic $(SIGNAL_TOPIC) \
+	  --property parse.key=true --property key.separator='|'
+	@echo "signal sent; progress: docker compose -f onprem/compose.yaml logs -f connect | grep -i snapshot"
 
 # Connector and task states (RUNNING, PAUSED, FAILED + error trace).
 connector-status:

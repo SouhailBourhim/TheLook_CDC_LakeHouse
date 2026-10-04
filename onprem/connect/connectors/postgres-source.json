@@ -18,6 +18,12 @@
   "snapshot.mode": "initial",
   "exactly.once.support": "required",
 
+  "read.only": "true",
+  "signal.enabled.channels": "kafka",
+  "signal.kafka.topic": "thelook.signals",
+  "signal.kafka.bootstrap.servers": "kafka:29092",
+  "signal.kafka.groupId": "thelook-postgres-signals",
+
   "heartbeat.interval.ms": "30000",
   "heartbeat.action.query": "INSERT INTO shop.heartbeat (id, ts) VALUES (1, now()) ON CONFLICT (id) DO UPDATE SET ts = EXCLUDED.ts",
 

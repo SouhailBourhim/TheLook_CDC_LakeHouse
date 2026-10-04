@@ -190,6 +190,78 @@ start can fail outright. After editing such a file, recreate the service:
 Newer services mount folders instead (`onprem/mongo/`), which are not
 affected.
 
+## Bronze stream (Spark)
+
+`bronze-stream` (profile `stream`) reads the 7 CDC topics and appends to
+`lake.thelook_bronze.*` every 60 s (`spark/jobs/bronze_stream.py`).
+
+```bash
+make up PROFILES="core stream"
+docker compose -f onprem/compose.yaml logs -f bronze-stream | grep 'batch '
+```
+
+Driver UI `http://localhost:4040` (Structured Streaming tab: input rate,
+processing rate, batch duration); cluster UI `http://localhost:8080`.
+
+### The stream stopped with `failOnDataLoss` / "Some data may have been lost"
+
+The checkpoint points at offsets that Kafka has already deleted: the job
+was down longer than topic retention (3 days). Those changes are gone
+from Kafka. Recovery: trigger a new snapshot (`make snapshot-postgres`;
+for MongoDB, the "ChangeStreamHistoryLost" procedure above re-snapshots),
+then restart the stream with a fresh checkpoint (stop `bronze-stream`,
+`docker volume rm thelook_spark-checkpoints`, `make up`). Bronze then holds
+duplicates of what it had already; silver deduplicates by log position.
+Intermediate versions and deletes from the gap are lost (as for a lost
+slot).
+
+### Restarting, and what a replay does
+
+`docker compose -f onprem/compose.yaml restart bronze-stream` resumes from
+the checkpoint. A batch that was interrupted is replayed with the same
+batch id: tables it had already committed are skipped (their Iceberg
+snapshot carries the query id and batch id, `thelook.query-id` /
+`thelook.batch-id`); the others are written. Check a table's commits:
+
+```sql
+SELECT committed_at, summary['thelook.batch-id'], summary['added-records']
+FROM thelook_bronze."shop_orders$snapshots" ORDER BY committed_at DESC LIMIT 5
+```
+
+### Re-snapshot the PostgreSQL tables
+
+`make snapshot-postgres` sends a **blocking** snapshot signal on
+`thelook.signals`: the connector pauses streaming, re-reads the 5 tables
+like its initial snapshot (`op=r`), then resumes streaming where it
+paused. Measured in P3: 964,802 rows in 24 s. Progress:
+`docker compose -f onprem/compose.yaml logs connect | grep -E "Snapshot step|Finished exporting|Snapshot ended"`.
+
+**Do not send an INCREMENTAL snapshot.** In Debezium 3.7.0 the read-only
+incremental snapshot (`read.only=true`) kills the task under live traffic:
+`ConcurrentModificationException` in
+`AbstractIncrementalSnapshotChangeEventSource.sendWindowEvents`, called from
+`PostgresReadOnlyIncrementalSnapshotChangeEventSource.processMessage`
+(a streamed change closes the window while the window's rows are being
+emitted, and emitting them deduplicates the same map). No later release
+exists yet (checked 2026-10-04). The non-read-only variant would need a
+signal table and an INSERT grant (ADR 004), so blocking snapshots are used.
+
+**If the task fails after a snapshot signal** (seen once in P3):
+
+1. `make connector-status`, then read the trace:
+   `curl -s localhost:8083/connectors/postgres-source/status`.
+2. Check the stored offset: `curl -s localhost:8083/connectors/postgres-source/offsets`.
+   With exactly-once, the failed transaction was aborted, so the offset is
+   still from before the signal (no `incremental_snapshot_*` fields) and the
+   aborted records are invisible to `read_committed` readers.
+3. Remove the signal so a restart does not replay it: delete the topic
+   (`kafka-topics.sh --delete --topic thelook.signals`), then `make signal-topic`.
+4. `curl -X POST "localhost:8083/connectors/postgres-source/restart?includeTasks=true&onlyFailed=true"`.
+   The slot kept the WAL meanwhile; streaming resumes from the offset.
+5. If the offset *does* hold `incremental_snapshot_*` fields: stop the
+   connector (`PUT .../stop`), write the offset back without them
+   (`PATCH .../offsets`, Kafka Connect 3.6+), then resume.
+
 ## Spark AWS credentials
 
 The streaming job authenticates as IAM user `thelook-spark-stream`
