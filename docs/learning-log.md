@@ -588,8 +588,32 @@ P7). **ADRs 006–010 accepted** by Souhail.
   `json.serialization.mode=legacy`). Lesson: a unit change inside the same
   Avro type, or the content of a JSON string, changes meaning while the
   schema looks compatible; Schema Registry cannot catch it (contracts, P7).
-- Next: P3 commit 4, Debezium envelope parsing as pure functions with
-  chispa tests (pyspark 4.1.3, Python 3.10, Java 17) and a CI job.
+- **Commit 4, parsing (ADR 012 proposed: bronze table design).** Tables
+  `<database>_<table>` (`shop_users`, `web_reviews`...), common columns
+  (op, source_ts_ms/source_ts, ts_ms, snapshot, Kafka coordinates,
+  schema_id, ingested_at), Postgres adds lsn/tx_id/typed before/after,
+  MongoDB adds doc_id (from the key)/ord/after JSON/update_description;
+  partitioned by `days(source_ts)`; Debezium encodings kept as sent.
+  `lakehouse/cdc.py`: split wire format -> decode per schema id -> flatten.
+  9 tests on real captured records + 2 fastavro-encoded (Postgres delete,
+  newer schema version); an off-by-one in the frame split fails 7.
+- Facts confirmed from real data: a Postgres update's `before` is NULL
+  (REPLICA IDENTITY DEFAULT), only deletes carry the key there; timestamps
+  in `after` are microseconds.
+- Debugging: (1) `datetime.UTC` does not exist in Python 3.10 (the image's
+  version): `spark/ruff.toml` targets py310 so lint never suggests 3.11+
+  syntax there. (2) `F.lit()` at module level needs a running session.
+  (3) pytest collected `jobs/smoke_test.py` (`*_test.py` pattern):
+  `pytest.ini` limits discovery to `tests/`. (4) **PySpark collects
+  timestamps in the Python process's local time zone**, ignoring the
+  session time zone (+1 h on this laptop): tests run with TZ=UTC.
+  (5) gitleaks blocked the push: base64 Kafka keys under a field named
+  "key" looked like API keys; decoded (row UUIDs), then ignored by exact
+  fingerprint in `.gitleaksignore`, not by path.
+- Next: P3 commit 5, the streaming job: read-only incremental snapshot of
+  the Postgres tables via the Kafka signal channel, then bronze appends
+  with checkpoint + batch id in the Iceberg snapshot. First data written
+  to AWS (cost ~$0.01/h while running).
 
 ### P1 plan (agreed)
 
