@@ -643,9 +643,41 @@ P7). **ADRs 006–010 accepted** by Souhail.
 - Debugging lessons: two wait loops "succeeded" without checking (an old
   log window that already contained the expected words; `awk match()` with
   an array is gawk-only, Ubuntu has mawk). Guards must be able to fail.
-- Next: P3 step 6, the proofs: O1 freshness measured (source commit ->
-  queryable in Athena), the kill-and-restart drill (no duplicates), O8
-  re-measured end to end. Then the P3 checkpoint.
+- Check answers (streaming step): (1) records and offsets in one Kafka
+  transaction, aborted by the crash; `read_committed` skips aborted data
+  (worker `exactly.once.source.support` + connector `exactly.once.support`
+  + reader isolation level): correct. Added: Debezium confirms an LSN to
+  Postgres only after the offsets commit, so the slot kept the WAL of the
+  aborted batch. (2) Blocking snapshot safe for silver: **verified in
+  Athena** that all 366,935 `r` rows of `shop_orders` carry one LSN, the
+  pause position (11639792696), and that the first event streamed after
+  the resume has **the same LSN**: a real tie (same values: it committed
+  before the snapshot read). P4 dedup order: highest LSN, then streamed
+  before `r`, then Kafka offset; the tie-break keeps reruns deterministic
+  (FR3).
+- **Step 6, the proofs (P3 acceptance met).**
+  - The first freshness run **timed out**: the stream had died 21 min
+    earlier on a few seconds of "Connection refused" from Glue (SDK's 3
+    attempts exhausted -> batch failed -> query stopped -> no restart
+    policy). A drill found a real outage. Fix: transient S3/Glue errors
+    retried inside the batch (5 attempts, 5-40 s), each attempt re-running
+    the replay check (`append_once`), so an ambiguous commit (applied, reply
+    lost) is not appended twice; plus `restart: on-failure:3` (a deliberate
+    exception to "no restart policy": a stream consumer self-heals, but
+    stops after 3 failures so a persistent fault stays visible).
+  - **Kill drill:** `kill -9` of the driver after 2 of 5 tables committed
+    in batch 35; Docker restarted it; replay logged
+    `shop_order_items=skipped(replay)`, `shop_orders=skipped(replay)`;
+    **0 duplicates in 4.18 M rows** (rows = distinct offsets, all tables).
+  - **O1: 26-88 s** (median 75 s) source commit -> Athena. Reviews are
+    ~30-40 s later because tables commit sequentially in topic order and
+    reviews come last.
+- **Open (decide before P9, Souhail):** O8 says "200 events/s with consumer
+  lag < 30 s". With a 60 s trigger and ~30-45 s batches, bronze lags
+  30-90 s by design, so O8 cannot pass as written. Options: shorter
+  trigger + parallel table commits (more files and S3 requests), or a lag
+  target that fits a micro-batch lake writer (e.g. < 2 min, like O1).
+- Next: P3 checkpoint, then P4 (silver/gold + Airflow).
 
 ### P1 plan (agreed)
 
