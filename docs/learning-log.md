@@ -832,7 +832,20 @@ include table maintenance (snapshot expiry, compaction) in P4.
   correct. Refinement: the MERGE *writes* only affected rows but *reads*
   the key column of the whole target (random UUIDs defeat min/max file
   skipping); only events prunes by date partition.
-- Next: step 5, ADR 015 + gold dimensions (incl. `dim_user` SCD2) + tests.
+- **Step 5 done: gold dimensions (ADR 015 proposed).** `dim_user` SCD2
+  rebuilt from bronze each run: 48,146 versions of 40,458 users, keys
+  unique, one current row per user, 0 gaps/overlaps (checked in Athena).
+  Changed while coding: `user_sk` = xxhash64(user_id, **lsn** of the
+  version's first event), not (user_id, valid_from): two changes in the
+  same millisecond would collide; an LSN is unique and stable.
+- An unexplained number, investigated before trusting the table: 15,301
+  bronze updates but 7,688 later versions. Answer: 7,683 updates are the
+  *first* bronze event of users created before bronze began (they become
+  version 1), 7,718 are real address changes (the ~30 extra arrived after
+  the build); 18,656 snapshot rows repeating the state were collapsed.
+- Again `datetime.UTC` in code for Python 3.10: ruff's py310 target stops
+  ruff *suggesting* it, not me writing it; the 3.10 test run caught it.
+- Next: step 6, gold facts (incremental) + tests.
 
 ### P1 plan (agreed)
 
