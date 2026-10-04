@@ -1,6 +1,6 @@
 # 014. Silver: incremental MERGE of the latest version per key
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-04 (P4; spec FR3, ADR 009, ADR 012; settles open question E1)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 

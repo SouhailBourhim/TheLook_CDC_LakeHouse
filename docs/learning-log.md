@@ -786,8 +786,17 @@ include table maintenance (snapshot expiry, compaction) in P4.
 
 - Steps 0-3 committed and pushed, CI green (39 Spark tests). Stream
   running (core + stream profiles).
-- **Pending for Souhail:** review ADR 014; answer the check questions
-  (batch vs shared user; silver step).
+- **ADR 014 accepted.** Check answers, all correct: (1) bronze is the one
+  layer that cannot be regenerated, so the batch key cannot touch it; a
+  shared user = union of rights, no independent rotation, no attribution.
+  (2) A -> B -> A: skipping the no-op at LSN 300 leaves LSN 100 stored, and
+  a redelivered LSN 200 (B) then wins; Souhail withdrew his earlier
+  "update only when the hash differs". Added: in Iceberg merge-on-read,
+  updating only `_position` rewrites the row anyway (delete file + new
+  row), so "update everything" costs the same. (3) at-least-once + an
+  idempotent write = exactly-once result; the order matters (saving the
+  position first would skip data on a crash). Added: a replayed delete is
+  harmless (the row is gone and `WHEN NOT MATCHED` never inserts a `d`).
 - **Next: step 4**, `spark/jobs/silver.py` run as the batch user (first run
   backfills from all of bronze) and `drills/verify_silver.py` (silver =
   sources, writers stopped).
