@@ -1,8 +1,11 @@
 """Shared fixtures for the PySpark tests.
 
 Runs on the image's versions (ADR 011): pyspark 4.1.3, Python 3.10, Java 17.
-pyspark from PyPI does not ship spark-avro, so its jar is downloaded once
-into a cache and verified with the same SHA-256 as onprem/spark/Dockerfile.
+pyspark from PyPI ships neither spark-avro nor Iceberg, so their jars are
+downloaded once into a cache and verified with the same SHA-256 as
+onprem/spark/Dockerfile. Iceberg tests use a local Hadoop catalog named
+"local" (files in a temporary folder): same MERGE and incremental reads as
+on Glue, no AWS.
 """
 
 import base64
@@ -10,8 +13,10 @@ import datetime
 import hashlib
 import json
 import os
+import tempfile
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 import pytest
@@ -26,11 +31,18 @@ time.tzset()
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-AVRO_JAR_URL = (
-    "https://repo1.maven.org/maven2/org/apache/spark/spark-avro_2.13/4.1.3/"
-    "spark-avro_2.13-4.1.3.jar"
-)
-AVRO_JAR_SHA256 = "83f848dae53cfe511d61d81026c1b08321390b778684552f3ddaa44c02a77b9c"
+MAVEN = "https://repo1.maven.org/maven2"
+JARS = {
+    # file name: (Maven path, SHA-256 as in onprem/spark/Dockerfile)
+    "spark-avro_2.13-4.1.3.jar": (
+        "org/apache/spark/spark-avro_2.13/4.1.3",
+        "83f848dae53cfe511d61d81026c1b08321390b778684552f3ddaa44c02a77b9c",
+    ),
+    "iceberg-spark-runtime-4.1_2.13-1.12.0.jar": (
+        "org/apache/iceberg/iceberg-spark-runtime-4.1_2.13/1.12.0",
+        "3123c3798af642dd537230923548e013ef41cc28b6626e5225808cf5670a0f82",
+    ),
+}
 
 # Schema ids as registered on the local stack when the fixtures were captured.
 SCHEMA_FILES = {
@@ -46,18 +58,19 @@ KAFKA_SCHEMA = (
 )
 
 
-def avro_jar() -> str:
+def cached_jar(name: str) -> str:
+    path, sha256 = JARS[name]
     cache = Path(
         os.environ.get("THELOOK_JAR_CACHE", Path.home() / ".cache" / "thelook-jars")
     )
-    jar = cache / "spark-avro_2.13-4.1.3.jar"
+    jar = cache / name
     if not jar.exists():
         cache.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(AVRO_JAR_URL, jar)
+        urllib.request.urlretrieve(f"{MAVEN}/{path}/{name}", jar)
     digest = hashlib.sha256(jar.read_bytes()).hexdigest()
-    if digest != AVRO_JAR_SHA256:
+    if digest != sha256:
         jar.unlink()
-        raise RuntimeError(f"spark-avro jar checksum mismatch: {digest}")
+        raise RuntimeError(f"{name} checksum mismatch: {digest}")
     return str(jar)
 
 
@@ -66,7 +79,16 @@ def spark():
     session = (
         SparkSession.builder.master("local[2]")
         .appName("lakehouse-tests")
-        .config("spark.jars", avro_jar())
+        .config("spark.jars", ",".join(cached_jar(n) for n in JARS))
+        .config(
+            "spark.sql.extensions",
+            "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+        )
+        .config("spark.sql.catalog.local", "org.apache.iceberg.spark.SparkCatalog")
+        .config("spark.sql.catalog.local.type", "hadoop")
+        .config(
+            "spark.sql.catalog.local.warehouse", tempfile.mkdtemp(prefix="iceberg-")
+        )
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.driver.extraJavaOptions", "-Duser.timezone=UTC")
         .config("spark.sql.shuffle.partitions", "2")
@@ -114,3 +136,13 @@ def kafka_df(spark):
         return spark.createDataFrame([kafka_row(r) for r in records], KAFKA_SCHEMA)
 
     return build
+
+
+@pytest.fixture
+def lake(spark):
+    """Fresh bronze and silver namespaces in the local Iceberg catalog."""
+    run = uuid.uuid4().hex[:8]
+    bronze, silver = f"local.bronze_{run}", f"local.silver_{run}"
+    spark.sql(f"CREATE NAMESPACE {bronze}")
+    spark.sql(f"CREATE NAMESPACE {silver}")
+    return bronze, silver
