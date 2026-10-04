@@ -58,6 +58,7 @@ flowchart LR
 | Monitoring: slot, connector and Debezium lag alerts | P1 | Prometheus, Alertmanager |
 | CI: ruff, pytest, alert-rule tests | P2 | `.github/workflows/ci.yml` |
 | Bronze: Spark Structured Streaming -> 7 Iceberg tables (S3 + Glue), queryable in Athena | P3 | `lake.thelook_bronze.<database>_<table>` |
+| Silver: incremental MERGE, latest version per key (batch IAM user) | P4 | `lake.thelook_silver.<table>`, `make spark-run JOB=jobs/silver.py` |
 
 ## Repository layout
 

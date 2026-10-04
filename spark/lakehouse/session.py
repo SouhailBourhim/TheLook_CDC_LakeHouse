@@ -10,12 +10,15 @@ from pyspark.sql import SparkSession
 AWS_VARIABLES = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION")
 
 
-def lake_session(app_name: str, cores_max: int | None = None) -> SparkSession:
+def lake_session(
+    app_name: str, cores_max: int | None = None, conf: dict | None = None
+) -> SparkSession:
     """A session with the Iceberg catalog "lake" (Glue) configured.
 
     cores_max caps the cores this application takes from the shared
     standalone cluster, so a long-running streaming job leaves room for the
-    batch jobs (by default an application takes every free core).
+    batch jobs (by default an application takes every free core). conf adds
+    job-specific settings (e.g. executor memory).
     """
     builder = SparkSession.builder.appName(app_name).config(
         # The bucket name contains the account id, so it comes from
@@ -31,6 +34,8 @@ def lake_session(app_name: str, cores_max: int | None = None) -> SparkSession:
             builder = builder.config(f"spark.executorEnv.{name}", os.environ[name])
     if cores_max:
         builder = builder.config("spark.cores.max", str(cores_max))
+    for key, value in (conf or {}).items():
+        builder = builder.config(key, value)
     spark = builder.getOrCreate()
     # Spark silently skips an unreadable spark-defaults.conf; fail loudly
     # instead of later with a confusing "nested databases" error.

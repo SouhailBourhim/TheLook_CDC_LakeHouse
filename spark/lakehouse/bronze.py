@@ -143,11 +143,11 @@ def is_transient(error: Exception) -> bool:
 
 
 def with_retries(
-    step: Callable[[], bool],
+    step: Callable[[], object],
     attempts: int = 5,
     first_delay: float = 5.0,
     sleep: Callable[[float], None] = time.sleep,
-) -> bool:
+) -> object:
     """Run step(), retrying transient errors with doubling delays
     (5, 10, 20, 40 s by default). Other errors, and the last attempt's
     error, are raised: the micro-batch fails and Spark stops the query."""

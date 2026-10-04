@@ -399,9 +399,10 @@ services:
       PYTHONPATH: /opt/lakehouse
       LAKE_BUCKET: ${LAKE_BUCKET:?set LAKE_BUCKET in onprem/.env}
       AWS_REGION: us-east-1
-      # The bronze writer's identity (iam.tf); P4 adds the batch user.
-      AWS_ACCESS_KEY_ID: ${SPARK_STREAM_AWS_ACCESS_KEY_ID:?set SPARK_STREAM_AWS_ACCESS_KEY_ID in onprem/.env}
-      AWS_SECRET_ACCESS_KEY: ${SPARK_STREAM_AWS_SECRET_ACCESS_KEY:?set SPARK_STREAM_AWS_SECRET_ACCESS_KEY in onprem/.env}
+      # One-off jobs run as the batch user (iam.tf): read bronze, write
+      # silver and gold. The stream's key belongs to bronze-stream only.
+      AWS_ACCESS_KEY_ID: ${SPARK_BATCH_AWS_ACCESS_KEY_ID:?set SPARK_BATCH_AWS_ACCESS_KEY_ID in onprem/.env}
+      AWS_SECRET_ACCESS_KEY: ${SPARK_BATCH_AWS_SECRET_ACCESS_KEY:?set SPARK_BATCH_AWS_SECRET_ACCESS_KEY in onprem/.env}
     volumes:
       - ../spark:/opt/lakehouse:ro
     entrypoint: ["/opt/spark/bin/spark-submit", "--master", "spark://spark-master:7077"]

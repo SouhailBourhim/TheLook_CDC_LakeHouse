@@ -296,3 +296,48 @@ recovered from the exactly-once offset, then used a blocking snapshot.
 files outnumber data files ~3:1 (one metadata.json, manifest list and
 manifest per commit), the small-files cost of a 60 s trigger: expiry and
 compaction come with the maintenance DAG. Cost so far: under $0.05.
+
+## P4: silver — 2026-10-04
+
+### Silver reconciles with the sources (acceptance, part 1)
+
+**Method:** `drills/verify_silver.py` (written before running it): read
+each silver table with PyIceberg (delete files applied), digest every
+row's canonical values, compare with every PostgreSQL row / MongoDB
+document through the same canonical form (UTC timestamps; money rounded
+half-up to 2 decimals as silver does). Writers stopped; bronze caught up
+(no micro-batch after the last records: Structured Streaming skips
+triggers without new data); silver run once more.
+
+**Result: passed, all 7 tables identical, every column.**
+
+| Table | Rows | Missing | Extra | Different |
+|---|---|---|---|---|
+| users | 39,111 | 0 | 0 | 0 |
+| orders | 396,842 | 0 | 0 | 0 |
+| order_items | 575,377 | 0 | 0 | 0 |
+| products | 29,120 | 0 | 0 | 0 |
+| dist_centers | 10 | 0 | 0 | 0 |
+| events | 2,757,709 | 0 | 0 | 0 |
+| reviews | 13,240 | 0 | 0 | 0 |
+
+- **The check can fail:** one review's rating changed in MongoDB ->
+  `differ=1` with that review's id. Then the change flowed through CDC ->
+  bronze (batch 117, 1 record) -> silver (1 key merged) and the check
+  passed again: the full path, end to end.
+
+### Silver run times (2 cores, laptop -> S3 over the internet)
+
+| Run | Time | Notes |
+|---|---|---|
+| First run (full read of bronze) | ~27 min | orders 327 s, order_items 447 s (incl. DNS retries), events the longest |
+| Incremental (~1 h of changes) | 195 s for all 7 tables | `full_read: False`; products and dist_centers "up to date" |
+| Incremental, sources quiet | ~2 min | only the last records |
+
+During the backfill the bronze stream slowed down (batches of 200-280 s
+instead of ~30 s: both jobs share the laptop's network and the 4 cores).
+A ~3-minute DNS outage (18:39-18:42, "Temporary failure in name
+resolution") exhausted the stream's in-batch retries; Docker restarted it
+and the replay guard skipped the 3 tables already committed: recovered
+without intervention. The silver job rode out its own DNS failures with
+its retries (4 attempts on order_items).
