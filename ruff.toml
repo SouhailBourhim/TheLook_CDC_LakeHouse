@@ -27,4 +27,4 @@ select = ["F", "E4", "E7", "E9", "I", "UP", "B"]
 
 [lint.isort]
 # Imports of the project's own modules count as first-party.
-known-first-party = ["src", "simulator"]
+known-first-party = ["src", "simulator", "lakehouse"]

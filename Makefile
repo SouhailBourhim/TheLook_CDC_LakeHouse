@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: up down ps register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+.PHONY: up down ps spark-run register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
 
 # --- On-prem stack (Docker Compose) ------------------------------------------
 # Profiles group services so a laptop runs only what a task needs (RAM per
@@ -27,6 +27,12 @@ down:
 
 ps:
 	@$(COMPOSE) --profile '*' ps --format 'table {{.Service}}\t{{.Status}}'
+
+# Run a PySpark job from spark/ on the cluster (needs the stream profile up):
+#   make spark-run JOB=jobs/smoke_test.py
+JOB ?= jobs/smoke_test.py
+spark-run:
+	$(COMPOSE) --profile jobs run --rm spark-job /opt/lakehouse/$(JOB)
 
 # Create or update every connector. PUT /connectors/<name>/config is
 # idempotent: it creates the connector if missing, otherwise replaces its
