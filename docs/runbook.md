@@ -219,8 +219,14 @@ can hold two keys, so rotation has no downtime:
    `aws --profile thelook iam delete-access-key --user-name thelook-spark-stream --access-key-id <old>`
 
 **Revoke now** (leak): step 3 with the leaked key, then rotate. The policy
-limits a leaked key to bronze; a leaked key could still overwrite or delete
-bronze files, which are rebuildable from a Debezium snapshot.
+limits a leaked key to bronze, but within bronze it can read everything
+(raw change events, PII included), overwrite or delete data and metadata
+files, and repoint or create tables in `thelook_bronze` (bogus Iceberg
+commits). A Debezium snapshot restores the **current state** only: the
+history (intermediate versions, deletes) that bronze alone holds would be
+lost. Accepted for a laptop project (no S3 versioning, on purpose: GDPR);
+a production design would add S3 Object Lock or a replicated backup of
+bronze, and keep long-lived keys off workloads (IAM Roles Anywhere).
 
 Last used: `aws --profile thelook iam get-access-key-last-used --access-key-id <id>`.
 

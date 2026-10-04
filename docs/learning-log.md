@@ -552,6 +552,15 @@ P7). **ADRs 006–010 accepted** by Souhail.
 - Decided: streaming checkpoints on a local Docker volume, not S3 (S3A is
   not in the image; fewer S3 requests); the batch id in each Iceberg
   commit is the duplicate guard if a checkpoint is lost.
+- IAM check answers: blast radius, independent rotation, CloudTrail
+  attribution (good); state readable by anyone with the state bucket, CI
+  role or `terraform state pull`, and old versions keep old secrets
+  (good). **Gap:** assumed the streaming key reads bronze and writes
+  silver; the verified policy is bronze only (read/write/delete objects,
+  get/create/update tables in `thelook_bronze`). Reuse verified facts, not
+  guesses. It also exposed my own runbook overstatement ("bronze is
+  rebuildable from a snapshot": only the current state is; the history is
+  not), corrected.
 - Next: P3 commit 3, Spark image (checksummed jars) and `stream` profile,
   smoke-tested against Kafka and the Glue catalog.
 
