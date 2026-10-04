@@ -341,3 +341,21 @@ resolution") exhausted the stream's in-batch retries; Docker restarted it
 and the replay guard skipped the 3 tables already committed: recovered
 without intervention. The silver job rode out its own DNS failures with
 its retries (4 attempts on order_items).
+
+## P4: gold dimensions — 2026-10-04
+
+`make spark-run JOB="jobs/gold.py dims"`: 78 s. dim_date 4,018 days,
+dim_product 29,120, dim_distribution_center 10, **dim_user 48,146 versions
+of 40,458 users**.
+
+dim_user integrity (Athena): user_sk unique (48,146 distinct); exactly one
+current version per user (40,458); **0 gaps or overlaps** (every closed
+version ends where the next begins). Where the versions come from (bronze
+`shop_users`):
+
+| Bronze events | Count | In dim_user |
+|---|---|---|
+| `c` or `r`, the user's first event | 32,783 | version 1 |
+| `u`, the user's first event (user created before bronze began) | 7,683 | version 1, starting at `created_at` |
+| `u`, address changed | 7,718 | a new version (7,688 at build time; the rest arrived after) |
+| `r`, same state as the previous event | 18,656 | nothing (snapshot repeats are collapsed) |
