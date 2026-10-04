@@ -797,9 +797,31 @@ include table maintenance (snapshot expiry, compaction) in P4.
   idempotent write = exactly-once result; the order matters (saving the
   position first would skip data on a crash). Added: a replayed delete is
   harmless (the row is gone and `WHEN NOT MATCHED` never inserts a `d`).
-- **Next: step 4**, `spark/jobs/silver.py` run as the batch user (first run
-  backfills from all of bronze) and `drills/verify_silver.py` (silver =
-  sources, writers stopped).
+- **Step 4 done: silver is live and proven.** First run (full read) ~27
+  min; incremental runs ~2-3 min (`full_read: False`, untouched tables "up
+  to date"). With writers stopped: **all 7 silver tables identical to the
+  sources, every column (3.8 M rows)**; a changed review was detected
+  (`differ=1`), then healed once it flowed through CDC -> bronze -> silver.
+  One-off jobs now run as the batch user.
+- Lessons (step 4):
+  - **Structured Streaming skips triggers with no new data**: "no batch
+    since the writers stopped" is the caught-up signal; a loop waiting for
+    an "empty batch" line waits forever.
+  - `docker logs --since <time without zone>` is read as local time (UTC+1
+    here): use relative durations (`--since 2m`).
+  - Iceberg table properties live in the metadata file on S3, not in
+    Glue's table parameters, and Athena shows only its own properties;
+    the watermark was proven by behaviour (the next run was incremental).
+  - `--rm` containers take their logs with them: tee long jobs to a file.
+  - The tool's 30-minute limit stopped my *watcher*, not the job: killing
+    `docker compose run`'s client left the container running.
+  - **DNS outages are this setup's main reliability issue** (Docker's
+    127.0.0.11 -> WSL/Windows resolver): one lasted ~3 min and restarted the
+    stream (recovered on its own via the restart policy and replay guard);
+    the silver job rode out others with its retries. During the silver
+    backfill, stream batches slowed to 200-280 s (shared network and
+    cores).
+- Next: step 5, ADR 015 + gold dimensions (incl. `dim_user` SCD2) + tests.
 
 ### P1 plan (agreed)
 
