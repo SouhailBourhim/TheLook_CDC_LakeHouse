@@ -561,8 +561,23 @@ P7). **ADRs 006–010 accepted** by Souhail.
   guesses. It also exposed my own runbook overstatement ("bronze is
   rebuildable from a snapshot": only the current state is; the history is
   not), corrected.
-- Next: P3 commit 3, Spark image (checksummed jars) and `stream` profile,
-  smoke-tested against Kafka and the Glue catalog.
+- **Commit 3, Spark image and cluster.** Image 2.39 GB; `stream` profile
+  (master + 1 worker, 4 cores / 3 GB, ~0.5 GB idle); `jobs` profile for
+  throwaway drivers (`make spark-run`). Credentials are per application
+  (`spark.executorEnv.*` set from the driver's environment inside the job,
+  not on the command line), so the worker holds no key. Smoke test passed:
+  Kafka `read_committed` on the worker (offsets step by 2: transaction
+  markers take offsets), Avro round trip, `SHOW TABLES` in Glue as the
+  bronze writer.
+- Debugging: (1) master unhealthy: it binds and advertises its container
+  IP, not localhost; `SPARK_MASTER_HOST=spark-master` (advertised-address
+  trap, third time after Kafka and MongoDB). (2) "Nested databases are not
+  supported by v1 session catalog": the Iceberg catalog was missing because
+  `COPY --chmod=644` created `/opt/spark/conf` without an execute bit and
+  Spark silently skipped the file (same trap as the Connect image in P1).
+  `lake_session()` now fails fast when the catalog is not configured.
+- Next: P3 commit 4, Debezium envelope parsing as pure functions with
+  chispa tests (pyspark 4.1.3, Python 3.10, Java 17) and a CI job.
 
 ### P1 plan (agreed)
 
