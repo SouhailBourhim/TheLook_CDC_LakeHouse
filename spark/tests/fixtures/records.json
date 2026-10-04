@@ -1,0 +1,60 @@
+{
+  "thelook.shop.users": [
+    {
+      "op": "c",
+      "topic": "thelook.shop.users",
+      "partition": 0,
+      "offset": 101108,
+      "timestamp_ms": 1791082151910,
+      "key": "AAAAAAJINTljODUzODMtNDNmYi00ZmJhLThiZTItYTY3NGUwMGY1ZGZk",
+      "value": "AAAAAAMAAkg1OWM4NTM4My00M2ZiLTRmYmEtOGJlMi1hNjc0ZTAwZjVkZmQCEkVsaXphYmV0aAIOUmFtaXJlegI6ZWxpemFiZXRoLnJhbWlyZXpAZXhhbXBsZS5uZXQCcgICRgIyNTA1IEFuZHJldyBNaWxscyBBcHQuIDEyOAIKMTkwNjcCDllhcmRsZXkCGFBlbm5zeWx2YW5pYQIaVW5pdGVkIFN0YXRlcwKtMlNa/xhEQALcLajz0bNSwAIMU2VhcmNoAtrT7vXZvq4GAuLT7vXZvq4GFjMuNy4wLkZpbmFsFHBvc3RncmVzcWwOdGhlbG9va8Txhc2gaAAKZmFsc2UOdGhlbG9vawI6WyIxMTE2ODc3MDMyOCIsIjExMTY4NzcwMzI4Il0Cior/9dm+rgYCkN7m6MHumdsxCHNob3AKdXNlcnMC3LR7ArCkr5tTAAAAAAJjAp74hc2gaALYsLP22b6uBgKItLSBxe6Z2zE="
+    },
+    {
+      "op": "u",
+      "topic": "thelook.shop.users",
+      "partition": 0,
+      "offset": 101110,
+      "timestamp_ms": 1791082153427,
+      "key": "AAAAAAJINzhmOWQwYmQtOTkwYS00MDJhLWExMjMtZDk5NjAxZmRmODE0",
+      "value": "AAAAAAMAAkg3OGY5ZDBiZC05OTBhLTQwMmEtYTEyMy1kOTk2MDFmZGY4MTQCCExpc2ECCkJyb3duAixsaXNhLmJyb3duQGV4YW1wbGUubmV0AmICAkYCMDExMSBOaWNvbGUgVmlldyBBcHQuIDgwMAIKODQwODECFldlc3QgSm9yZGFuAghVdGFoAhpVbml0ZWQgU3RhdGVzAqQ1Bp0QTURAAnW64pibAlzAAgxTZWFyY2gCopTSmOaqrgYCppTSmOaqrgYWMy43LjAuRmluYWwUcG9zdGdyZXNxbA50aGVsb29r4IqGzaBoAApmYWxzZQ50aGVsb29rAjpbIjExMTY4ODI5NTc2IiwiMTExNjg4MzU2OTYiXQKahcT32b6uBgKQ08jrze6Z2zEIc2hvcAp1c2VycwLstHsC4KG3m1MAAAAAAnUC/o+GzaBoAvjw7PfZvq4GAtC30qrQ7pnbMQ=="
+    }
+  ],
+  "thelook_mongo.web.reviews": [
+    {
+      "op": "c",
+      "topic": "thelook_mongo.web.reviews",
+      "partition": 0,
+      "offset": 36757,
+      "timestamp_ms": 1791084249354,
+      "key": "AAAAABRMIjc3NDMzOGE5LTk4NWQtNDkwZS1hNmI4LTdmNDM5ZWJkZDJmZCI=",
+      "value": "AAAAABUAAuYGeyJfaWQiOiAiNzc0MzM4YTktOTg1ZC00OTBlLWE2YjgtN2Y0MzllYmRkMmZkIiwib3JkZXJfaXRlbV9pZCI6ICI4Yjc3OWMxZS00YzkzLTRmZWMtYjRhNS00YzZiNjFkMjNmNGEiLCJwcm9kdWN0X2lkIjogMTY2MzAsInVzZXJfaWQiOiAiZDdmZDUzNWEtY2VjNi00MDc4LTg4YmItZjg3ZTIwZjY4MTJmIiwicmF0aW5nIjogMSwidGl0bGUiOiAiV29tYW4gZXhpc3Qgc29uZyBjYXVzZSIsInRleHQiOiAiTGFzdCBtb3ZlbWVudCBiZWdpbiBhdm9pZC4gUHJvZHVjdGlvbiBkZWVwIGNvbmNlcm4gZ3JlZW4ganVzdCBjb2xvciB3ZS4iLCJ0YWdzIjogWyJmaXQiLCJxdWFsaXR5Iiwic2hpcHBpbmciXSwiaGVscGZ1bF92b3RlcyI6IDAsImNyZWF0ZWRfYXQiOiB7IiRkYXRlIjogMTc5MTA4NDI0ODk1NH0sInVwZGF0ZWRfYXQiOiB7IiRkYXRlIjogMTc5MTA4NDI0ODk1NH19ABYzLjcuMC5GaW5hbA5tb25nb2RiGnRoZWxvb2tfbW9uZ2/2/YXPoGgACmZhbHNlBndlYgAC8OHfxum+rgYCgNOU3NDomtsxAg5yZXZpZXdzNAAAAvb9hc+gaAICYwLC/oXPoGgA"
+    },
+    {
+      "op": "u",
+      "topic": "thelook_mongo.web.reviews",
+      "partition": 0,
+      "offset": 36762,
+      "timestamp_ms": 1791084252879,
+      "key": "AAAAABRMIjQ3NGIxNWFjLWJmMTQtNDczOS05NjNmLTNiNGVlZTg1MjYzZiI=",
+      "value": "AAAAABUAArQHeyJfaWQiOiAiNDc0YjE1YWMtYmYxNC00NzM5LTk2M2YtM2I0ZWVlODUyNjNmIiwib3JkZXJfaXRlbV9pZCI6ICI3NTRhNjZmNi03ZGVlLTRkYmEtYmUzNC0yYTVhZjZkYTM0OTAiLCJwcm9kdWN0X2lkIjogMTk2NjIsInVzZXJfaWQiOiAiZTgwN2U4ZTQtOTEyOC00NzljLWIwYTAtMmUxNjU5ZTM1ZGQ4IiwicmF0aW5nIjogNSwidGl0bGUiOiAiS2luZCBnaXJsIG91dCBwb2xpY2UgZGVlcCIsInRleHQiOiAiQ2F0Y2ggc2hvdWxkZXIga2luZCBob3cuIEEgbWlsbGlvbiBmdXR1cmUgYWJsZSByZWFsaXplIGNlbnRyYWwuIEltYWdlIGRlc3BpdGUgYXBwbHkgZ2VuZXJhdGlvbi4iLCJ0YWdzIjogW10sImhlbHBmdWxfdm90ZXMiOiAwLCJjcmVhdGVkX2F0IjogeyIkZGF0ZSI6IDE3OTEwODAyNjE4ODJ9LCJ1cGRhdGVkX2F0IjogeyIkZGF0ZSI6IDE3OTEwODQyNTI0ODh9LCJlZGl0ZWRfYXQiOiB7IiRkYXRlIjogMTc5MTA4NDI1MjQ4OH19AgACqAN7InRleHQiOiAiQ2F0Y2ggc2hvdWxkZXIga2luZCBob3cuIEEgbWlsbGlvbiBmdXR1cmUgYWJsZSByZWFsaXplIGNlbnRyYWwuIEltYWdlIGRlc3BpdGUgYXBwbHkgZ2VuZXJhdGlvbi4iLCAidXBkYXRlZF9hdCI6IHsiJGRhdGUiOiAiMjAyNi0xMC0wNFQwMzoyNDoxMi40ODhaIn0sICJlZGl0ZWRfYXQiOiB7IiRkYXRlIjogIjIwMjYtMTAtMDRUMDM6MjQ6MTIuNDg4WiJ9fQAWMy43LjAuRmluYWwObW9uZ29kYhp0aGVsb29rX21vbmdvlLWGz6BoAApmYWxzZQZ3ZWIAAqCkj8rpvq4GAoCas4fr6JrbMQIOcmV2aWV3cwwAAAKUtYbPoGgCAnUCuLiGz6BoAA=="
+    },
+    {
+      "op": "d",
+      "topic": "thelook_mongo.web.reviews",
+      "partition": 0,
+      "offset": 36777,
+      "timestamp_ms": 1791084263966,
+      "key": "AAAAABRMIjdiYjM3ZmYyLTA0OWMtNDE4Yi1hNmMyLWM4ZjZhNWViZjBmMyI=",
+      "value": "AAAAABUAAAAWMy43LjAuRmluYWwObW9uZ29kYhp0aGVsb29rX21vbmdvrOSHz6BoAApmYWxzZQZ3ZWIAAuD359Tpvq4GAoDG/8u+6ZrbMQIOcmV2aWV3cyIAAAKs5IfPoGgCAmQCjOaHz6BoAA=="
+    },
+    {
+      "op": "tombstone",
+      "topic": "thelook_mongo.web.reviews",
+      "partition": 0,
+      "offset": 36778,
+      "timestamp_ms": 1791084263966,
+      "key": "AAAAABRMIjdiYjM3ZmYyLTA0OWMtNDE4Yi1hNmMyLWM4ZjZhNWViZjBmMyI=",
+      "value": null
+    }
+  ]
+}

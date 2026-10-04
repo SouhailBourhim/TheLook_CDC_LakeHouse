@@ -1,0 +1,249 @@
+{
+  "type": "record",
+  "name": "Envelope",
+  "namespace": "thelook_mongo.web.reviews",
+  "fields": [
+    {
+      "name": "before",
+      "type": [
+        "null",
+        {
+          "type": "string",
+          "connect.version": 1,
+          "connect.name": "io.debezium.data.Json"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "after",
+      "type": [
+        "null",
+        {
+          "type": "string",
+          "connect.version": 1,
+          "connect.name": "io.debezium.data.Json"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "updateDescription",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "updatedescription",
+          "namespace": "io.debezium.connector.mongodb.changestream",
+          "fields": [
+            {
+              "name": "removedFields",
+              "type": [
+                "null",
+                {
+                  "type": "array",
+                  "items": "string"
+                }
+              ],
+              "default": null
+            },
+            {
+              "name": "updatedFields",
+              "type": [
+                "null",
+                {
+                  "type": "string",
+                  "connect.version": 1,
+                  "connect.name": "io.debezium.data.Json"
+                }
+              ],
+              "default": null
+            },
+            {
+              "name": "truncatedArrays",
+              "type": [
+                "null",
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "record",
+                    "name": "truncatedarray",
+                    "fields": [
+                      {
+                        "name": "field",
+                        "type": "string"
+                      },
+                      {
+                        "name": "size",
+                        "type": "int"
+                      }
+                    ],
+                    "connect.version": 1,
+                    "connect.name": "io.debezium.connector.mongodb.changestream.truncatedarray"
+                  }
+                }
+              ],
+              "default": null
+            }
+          ],
+          "connect.version": 1,
+          "connect.name": "io.debezium.connector.mongodb.changestream.updatedescription"
+        }
+      ],
+      "default": null
+    },
+    {
+      "name": "source",
+      "type": {
+        "type": "record",
+        "name": "Source",
+        "namespace": "io.debezium.connector.mongo",
+        "fields": [
+          {
+            "name": "version",
+            "type": "string"
+          },
+          {
+            "name": "connector",
+            "type": "string"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "ts_ms",
+            "type": "long"
+          },
+          {
+            "name": "snapshot",
+            "type": [
+              {
+                "type": "string",
+                "connect.version": 1,
+                "connect.parameters": {
+                  "allowed": "true,first,first_in_data_collection,last_in_data_collection,last,false,incremental"
+                },
+                "connect.default": "false",
+                "connect.name": "io.debezium.data.Enum"
+              },
+              "null"
+            ],
+            "default": "false"
+          },
+          {
+            "name": "db",
+            "type": "string"
+          },
+          {
+            "name": "sequence",
+            "type": [
+              "null",
+              "string"
+            ],
+            "default": null
+          },
+          {
+            "name": "ts_us",
+            "type": [
+              "null",
+              "long"
+            ],
+            "default": null
+          },
+          {
+            "name": "ts_ns",
+            "type": [
+              "null",
+              "long"
+            ],
+            "default": null
+          },
+          {
+            "name": "collection",
+            "type": [
+              "null",
+              "string"
+            ],
+            "default": null
+          },
+          {
+            "name": "ord",
+            "type": "int"
+          },
+          {
+            "name": "lsid",
+            "type": [
+              "null",
+              "string"
+            ],
+            "default": null
+          },
+          {
+            "name": "txnNumber",
+            "type": [
+              "null",
+              "long"
+            ],
+            "default": null
+          },
+          {
+            "name": "wallTime",
+            "type": [
+              "null",
+              "long"
+            ],
+            "default": null
+          }
+        ],
+        "connect.version": 1,
+        "connect.name": "io.debezium.connector.mongo.Source"
+      }
+    },
+    {
+      "name": "op",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "ts_ms",
+      "type": [
+        "null",
+        "long"
+      ],
+      "default": null
+    },
+    {
+      "name": "transaction",
+      "type": [
+        "null",
+        {
+          "type": "record",
+          "name": "block",
+          "namespace": "event",
+          "fields": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "total_order",
+              "type": "long"
+            },
+            {
+              "name": "data_collection_order",
+              "type": "long"
+            }
+          ],
+          "connect.version": 1,
+          "connect.name": "event.block"
+        }
+      ],
+      "default": null
+    }
+  ],
+  "connect.name": "thelook_mongo.web.reviews.Envelope"
+}

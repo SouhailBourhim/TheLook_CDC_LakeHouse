@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "Key",
+  "namespace": "thelook_mongo.web.reviews",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string"
+    }
+  ],
+  "connect.name": "thelook_mongo.web.reviews.Key"
+}

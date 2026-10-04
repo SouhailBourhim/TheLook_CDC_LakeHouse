@@ -1,6 +1,6 @@
 # Continuous integration (spec FR18). Runs on every push and pull request:
-# lint, unit tests, alert-rule tests. Grows with each phase (PySpark tests in
-# P3, terraform fmt/validate and OIDC in P9).
+# lint, unit tests (components and PySpark), alert-rule tests. Grows with
+# each phase (terraform fmt/validate and OIDC in P9).
 name: ci
 
 on:
@@ -55,6 +55,29 @@ jobs:
       - run: >
           uv run --no-project --python 3.12
           --with-requirements requirements.txt --with pytest==9.1.1
+          python -m pytest -q
+
+  spark:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: spark
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Spark image's versions (ADR 011): Java 17, Python 3.10, pyspark
+      # 4.1.3. A different Python minor would test other behaviour than
+      # production runs.
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.20"
+      # conftest.py downloads spark-avro once and checks its SHA-256.
+      - run: >
+          uv run --no-project --python 3.10
+          --with-requirements requirements-test.txt
           python -m pytest -q
 
   alert-rules:

@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: up down ps spark-run register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+.PHONY: up down ps spark-run test-spark register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
 
 # --- On-prem stack (Docker Compose) ------------------------------------------
 # Profiles group services so a laptop runs only what a task needs (RAM per
@@ -33,6 +33,10 @@ ps:
 JOB ?= jobs/smoke_test.py
 spark-run:
 	$(COMPOSE) --profile jobs run --rm spark-job /opt/lakehouse/$(JOB)
+
+# PySpark unit tests on the image's versions (Java 17 must be installed).
+test-spark:
+	cd spark && uv run --no-project --python 3.10 --with-requirements requirements-test.txt python -m pytest -q
 
 # Create or update every connector. PUT /connectors/<name>/config is
 # idempotent: it creates the connector if missing, otherwise replaces its
