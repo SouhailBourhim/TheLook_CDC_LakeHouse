@@ -1,6 +1,6 @@
 # 013. Airflow runtime: on the Spark image, spark-submit in client mode
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-04 (P4, first commit; spec FR12, ADR 011)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
@@ -52,6 +52,22 @@ Option D.
   is Spark's UI), scheduler, dag-processor, a one-shot init (database
   migration), in a new `airflow` Compose profile (~2-2.5 GB plus ~1 GB per
   running Spark driver).
+
+### Additions at acceptance (Souhail, 2026-10-04)
+
+1. **Base image pinned beyond the tag.** `thelook-spark:local` is a local
+   tag that any rebuild can move. The Airflow image is therefore a second
+   stage of `onprem/spark/Dockerfile` (`FROM <spark stage>`), whose own
+   base is pinned by digest: Airflow gets the exact Spark bytes of the
+   cluster by construction. The constraints file is downloaded with
+   `ADD --checksum`.
+2. **Only the batch key in Airflow's environment.** Airflow containers get
+   `SPARK_BATCH_*` (and, from step 9, the maintenance user's key), never
+   `SPARK_STREAM_*`.
+3. **Bounded resources.** A memory limit on the scheduler container (it
+   hosts the Spark drivers under LocalExecutor) and `max_active_runs=1` on
+   the DAGs, so overlapping runs cannot stack drivers or contend for the
+   cluster's 2 batch cores.
 
 ## Consequences
 

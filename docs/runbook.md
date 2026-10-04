@@ -302,6 +302,16 @@ bronze, and keep long-lived keys off workloads (IAM Roles Anywhere).
 
 Last used: `aws --profile thelook iam get-access-key-last-used --access-key-id <id>`.
 
+**Batch jobs** (silver, gold; P4) use IAM user `thelook-spark-batch`, keys
+`SPARK_BATCH_AWS_ACCESS_KEY_ID` / `..._SECRET_ACCESS_KEY` in `onprem/.env`:
+read bronze; read/write/delete objects in silver and gold; Glue get on
+`thelook_bronze`, get/create/update tables in `thelook_silver` and
+`thelook_gold`. Verified in P4: writing or deleting in bronze, creating a
+bronze table, DeleteTable, DeleteDatabase, IAM and Athena are denied.
+Create, rotate and revoke exactly as above, with
+`--user-name thelook-spark-batch`. Only this key (never the stream key) goes
+into Airflow's environment (ADR 013).
+
 ## Cost
 
 ### Weekly cost check (`make cost-report`)
