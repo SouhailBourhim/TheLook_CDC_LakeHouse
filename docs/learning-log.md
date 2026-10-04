@@ -724,6 +724,74 @@ P7). **ADRs 006–010 accepted** by Souhail.
   far), **E2** (co-purchase weights, before P6). P4 dedup order agreed:
   highest LSN, then streamed before `r`, then Kafka offset.
 
+## Session 4 — 2026-10-04 (evening) — P4 started
+
+P4 plan approved (silver, gold, Airflow; 11 steps). Souhail chose to
+include table maintenance (snapshot expiry, compaction) in P4.
+
+### Decisions taken
+
+- **ADR 013 accepted** (Airflow 3.3.2 on the Spark image, Python 3.10,
+  SparkSubmitOperator client mode; one override of Airflow's constraints:
+  `pyspark-client` 4.1.3 instead of 4.2.0) with Souhail's three additions:
+  Airflow image as a stage of the digest-pinned Spark Dockerfile (a local
+  tag can move); only the batch key in Airflow's environment, never the
+  stream key; a scheduler memory limit and `max_active_runs=1`.
+- **Batch IAM user** `thelook-spark-batch` applied after Souhail's review:
+  read bronze; read/write/delete objects in silver and gold; Glue get on
+  bronze, get/create/update tables in silver/gold; no DeleteTable,
+  DeleteDatabase or IAM. Proven with real calls (8 denials, 7 allowed).
+- **Maintenance identity (proposed, decided at step 9):** a separate
+  `thelook-maintenance` user, not the stream's identity (the always-on key
+  must not gain silver/gold rights or move into Airflow); expiry keeps the
+  recent snapshots the stream's replay guard needs.
+- **ADR 014 proposed (silver).** E1 settled: MongoDB order
+  (`source_ts_ms`, `ord`, streamed before `r`, `kafka_offset`). Correction
+  of the plan found while designing: **every newer event updates, no-ops
+  included**; skipping no-ops would leave an old `_position` and let a
+  replayed older event overwrite the true state. FR3's "ignore no-ops"
+  moves to gold's SCD2 (versions whose `_row_hash` did not change).
+  Watermark = a silver table property, not atomic with the MERGE, and it
+  does not need to be: the MERGE is idempotent.
+
+### Steps done
+
+| Step | Result |
+|---|---|
+| 0 restart stream | same query id (checkpoint volume survived `make down`); caught up in one batch, including the generator's 29,120 no-op product updates |
+| 1 ADR 013 | accepted with additions |
+| 2 batch IAM user | applied, verified |
+| 3 silver logic | `lakehouse/silver.py` + 14 tests on a local Iceberg catalog; removing the position guard fails the stale-replay test |
+
+### Concepts covered
+
+- **Idempotency replaces atomicity**: two steps that cannot commit
+  together are safe if replaying the first gives the same result.
+- **Merge-on-read vs copy-on-write**: random order updates touch files
+  everywhere; copy-on-write would rewrite (and download) most of a table
+  per run; merge-on-read writes delete files, paid back by compaction.
+- **Data transfer out costs money**: local Spark reading S3 is free up to
+  100 GB/month; the design is incremental to stay under it.
+
+### Debugging lessons
+
+- Iceberg on Spark 4 **rejects the `snapshot-id` read option** ("use
+  `versionAsOf`"): caught by testing MERGE on a real local Iceberg catalog
+  rather than mocks. Older docs still show `snapshot-id`.
+- A "DENIED" for a bronze read was my test, not the policy: `aws s3 cp` to
+  `/dev/null` exits non-zero after a successful download; and `--dryrun`
+  never calls AWS, so it proves nothing.
+
+### Where we stopped
+
+- Steps 0-3 committed and pushed, CI green (39 Spark tests). Stream
+  running (core + stream profiles).
+- **Pending for Souhail:** review ADR 014; answer the check questions
+  (batch vs shared user; silver step).
+- **Next: step 4**, `spark/jobs/silver.py` run as the batch user (first run
+  backfills from all of bronze) and `drills/verify_silver.py` (silver =
+  sources, writers stopped).
+
 ### P1 plan (agreed)
 
 | # | Commit | Content / how we verify | What Souhail learns |
