@@ -1,6 +1,6 @@
 # 012. Bronze table design
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-04 (P3, before the parsing code; spec FR2)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 

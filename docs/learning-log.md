@@ -610,6 +610,13 @@ P7). **ADRs 006–010 accepted** by Souhail.
   (5) gitleaks blocked the push: base64 Kafka keys under a field named
   "key" looked like API keys; decoded (row UUIDs), then ignored by exact
   fingerprint in `.gitleaksignore`, not by path.
+- **ADR 012 accepted.** Check answers: per-schema-id decoding (Avro binary
+  is not self-describing; the wrong schema can give wrong values with no
+  error) and doc_id from the key (a delete has no `after`; a null key
+  would make the MERGE drop the delete silently and break erasure): both
+  correct. Added: Avro schema resolution exists but needs the writer
+  schema too, and Spark's from_avro does not resolve; unionByName works
+  because BACKWARD only allows changes like added nullable fields.
 - Next: P3 commit 5, the streaming job: read-only incremental snapshot of
   the Postgres tables via the Kafka signal channel, then bronze appends
   with checkpoint + batch id in the Iceberg snapshot. First data written
