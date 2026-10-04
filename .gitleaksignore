@@ -1,0 +1,11 @@
+# Confirmed false positives, one line per finding (gitleaks fingerprint:
+# commit:file:rule:line). Anything else in these files is still scanned.
+#
+# spark/tests/fixtures/records.json: "key" holds base64 Kafka record keys,
+# i.e. magic byte + schema id + an Avro-encoded row UUID (decoded and
+# checked in P3), not credentials. The generic-api-key rule fires on the
+# field name "key" plus a high-entropy value.
+aa65341380f43b576f9e4625f5af9096aef9e356:spark/tests/fixtures/records.json:generic-api-key:29
+aa65341380f43b576f9e4625f5af9096aef9e356:spark/tests/fixtures/records.json:generic-api-key:38
+aa65341380f43b576f9e4625f5af9096aef9e356:spark/tests/fixtures/records.json:generic-api-key:47
+aa65341380f43b576f9e4625f5af9096aef9e356:spark/tests/fixtures/records.json:generic-api-key:56
