@@ -54,7 +54,7 @@ stream commits one batch at a time, each table in one commit, so a row
 committed later has a later `ingested_at`, as long as the driver's clock
 never goes backwards (ADR 014 amendment).
 
-**Bronze (in the stream):**
+**Bronze (in the stream, in a background thread of its driver):**
 
 - hourly: expire snapshots older than 1 hour, keeping at least the last 5
   (bronze is an append-only log: its history is in the rows, so time travel
@@ -62,8 +62,20 @@ never goes backwards (ADR 014 amendment).
   ledger (one tiny file per batch);
 - at every commit: Iceberg deletes `metadata.json` files beyond the last 20
   (`write.metadata.delete-after-commit.enabled`);
-- daily: compact the small data files of past days' partitions; remove
-  orphan files older than 3 days.
+- in each hourly run, at most one heavier task on one table: compact the
+  partitions before today of the table compacted longest ago, if more than
+  a day ago; otherwise remove the orphan files (older than 3 days) of the
+  table cleaned longest ago, if more than 7 days ago. When each table last
+  had each task is a table property (`thelook.compacted-at`,
+  `thelook.orphans-removed-at`), so restarts do not reset it.
+- The thread runs alongside the micro-batches: compaction costs about 0.8 s
+  per small file over the internet (230 files: ~3.5 min), and a stream
+  running all day makes 1,440 files per table, so blocking compaction could
+  not keep O1 (5 minutes). The session uses Spark's FAIR scheduler with a
+  "maintenance" pool, so its jobs share the stream's 2 cores instead of
+  queueing ahead of the batches. Concurrent commits on one table are safe:
+  Iceberg retries the one that loses the race, and compaction never changes
+  which rows a table holds.
 
 **Silver and gold (Airflow `maintenance` DAG, daily, batch user):** expire
 snapshots older than 1 day, compact data and position-delete files, remove
@@ -83,6 +95,10 @@ orphan files older than 3 days.
   referenced) takes **36 s** for all 8 tables. The stream uses the Java API.
 - After the first expiry: `metadata.json` 487 KB -> 46 KB per busy table,
   batches ~110 s -> 34-45 s, stream driver download 9.2 -> 3.2 MB/min.
+- Measured with the thread: an hourly run that also compacted 230 files of
+  `shop_orders` took 101 s, during which batches kept completing (~44 s).
+  A network failure during compaction ("Connection refused" to S3) was
+  logged and left the table due for the next run; the stream was unaffected.
 - Bronze time travel is limited to about an hour; "bronze as of T" is still
   a filter on `ingested_at`.
 - Orphan removal waits 3 days so that files of a write still in progress are

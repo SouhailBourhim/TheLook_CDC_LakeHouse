@@ -299,8 +299,94 @@ def maintain_bronze(
 def compact(spark: SparkSession, table: str) -> int:
     """Rewrite small data files into larger ones; returns how many files
     were rewritten (Iceberg's default: groups of at least 5 small files)."""
-    catalog, name = table.split(".", 1)
+    # The full name: given "db.table", Iceberg first tries "db" as a catalog
+    # and logs a warning with a stack trace.
+    catalog = table.split(".", 1)[0]
     result = spark.sql(
-        f"CALL {catalog}.system.rewrite_data_files(table => '{name}')"
+        f"CALL {catalog}.system.rewrite_data_files(table => '{table}')"
     ).first()
     return result.rewritten_data_files_count
+
+
+# Heavier upkeep, at most one table per hourly run so that a pause stays well
+# under O1's 5 minutes (ADR 017). When a table last had each task is a table
+# property, so a restart of the stream does not reset it.
+COMPACTED_AT = "thelook.compacted-at"
+ORPHANS_REMOVED_AT = "thelook.orphans-removed-at"
+COMPACT_EVERY = datetime.timedelta(days=1)
+REMOVE_ORPHANS_EVERY = datetime.timedelta(days=7)
+# Files younger than this are never orphans: a write may still be using them.
+ORPHAN_MIN_AGE = datetime.timedelta(days=3)
+
+
+def _last_run(spark: SparkSession, table: str, key: str) -> datetime.datetime | None:
+    props = {r.key: r.value for r in spark.sql(f"SHOW TBLPROPERTIES {table}").collect()}
+    return datetime.datetime.fromisoformat(props[key]) if key in props else None
+
+
+def _due(
+    spark: SparkSession,
+    tables: list[str],
+    key: str,
+    every: datetime.timedelta,
+    now: datetime.datetime,
+) -> str | None:
+    """The table whose task `key` ran longest ago (never: first; ties by
+    name), if that was at least `every` ago."""
+    due = []
+    for table in tables:
+        if not spark.catalog.tableExists(table):
+            continue
+        last = _last_run(spark, table, key)
+        if last is None or now - last >= every:
+            due.append((last is not None, last, table))
+    return min(due)[2] if due else None
+
+
+def compact_past_days(spark: SparkSession, table: str, now: datetime.datetime) -> int:
+    """Compact the partitions before today (the stream only adds to today's);
+    returns how many files were rewritten. The small files it replaces are
+    deleted by a later expiry."""
+    catalog = table.split(".", 1)[0]
+    today = now.strftime("%Y-%m-%d")
+    return spark.sql(
+        f"CALL {catalog}.system.rewrite_data_files(table => '{table}', "
+        f"where => \"source_ts < TIMESTAMP '{today} 00:00:00'\")"
+    ).first()["rewritten_data_files_count"]
+
+
+def remove_orphans(spark: SparkSession, table: str, now: datetime.datetime) -> int:
+    """Delete files under the table's folder that no snapshot references
+    (left by failed writes, or old metadata files), if older than
+    ORPHAN_MIN_AGE; returns how many."""
+    catalog = table.split(".", 1)[0]
+    older_than = (now - ORPHAN_MIN_AGE).strftime("%Y-%m-%d %H:%M:%S")
+    return len(
+        spark.sql(
+            f"CALL {catalog}.system.remove_orphan_files(table => '{table}', "
+            f"older_than => TIMESTAMP '{older_than}')"
+        ).collect()
+    )
+
+
+def heavy_upkeep(
+    spark: SparkSession, tables: list[str], now: datetime.datetime
+) -> str | None:
+    """One task on one table: compaction if one is due (daily), otherwise
+    orphan removal if one is due (weekly). Returns what was done, if anything."""
+    stamp = now.isoformat()
+    table = _due(spark, tables, COMPACTED_AT, COMPACT_EVERY, now)
+    if table is not None:
+        files = compact_past_days(spark, table, now)
+        spark.sql(
+            f"ALTER TABLE {table} SET TBLPROPERTIES ('{COMPACTED_AT}' = '{stamp}')"
+        )
+        return f"compacted {table.rsplit('.', 1)[1]}: {files} files rewritten"
+    table = _due(spark, tables, ORPHANS_REMOVED_AT, REMOVE_ORPHANS_EVERY, now)
+    if table is not None:
+        files = remove_orphans(spark, table, now)
+        spark.sql(
+            f"ALTER TABLE {table} SET TBLPROPERTIES ('{ORPHANS_REMOVED_AT}' = '{stamp}')"
+        )
+        return f"orphans of {table.rsplit('.', 1)[1]}: {files} files deleted"
+    return None

@@ -4,6 +4,8 @@ and routing each topic to the right parser."""
 import datetime
 import io
 import json
+import os
+import time
 
 import pytest
 from pyspark.sql import functions as F
@@ -214,3 +216,73 @@ def test_ledger_compaction_merges_its_small_files(spark, lake):
     assert bronze.compact(spark, ledger) == 6
     assert spark.table(f"{ledger}.files").count() == 1
     assert spark.table(ledger).count() == 6
+
+
+TODAY = datetime.datetime(2026, 10, 5, 12, 0, tzinfo=datetime.timezone.utc)
+YESTERDAY = datetime.datetime(2026, 10, 4, 12, 0)
+
+
+def day_table(spark, table, batches):
+    """A bronze-like table partitioned by day: one file per (batch, day)."""
+    from pyspark.sql.functions import partitioning
+
+    for i, when in enumerate(batches):
+        df = spark.createDataFrame([(i, when)], "id int, source_ts timestamp")
+        if i == 0:
+            df.writeTo(table).using("iceberg").partitionedBy(
+                partitioning.days("source_ts")
+            ).create()
+        else:
+            df.writeTo(table).append()
+
+
+def files_per_day(spark, table):
+    rows = spark.sql(f"SELECT partition.source_ts_day AS day FROM {table}.files")
+    return {day.isoformat(): n for day, n in rows.groupBy("day").count().collect()}
+
+
+def test_compaction_rewrites_past_days_one_table_per_run(spark, lake):
+    bronze_db, _ = lake
+    first, second = f"{bronze_db}.shop_users", f"{bronze_db}.shop_orders"
+    for table in (first, second):
+        # Six files on each day: enough for Iceberg to compact (groups of 5+),
+        # so only the "before today" filter keeps today's files untouched.
+        day_table(spark, table, [YESTERDAY] * 6 + [TODAY.replace(tzinfo=None)] * 6)
+
+    done = bronze.heavy_upkeep(spark, [first, second], TODAY)
+
+    # Neither was ever compacted: ties go by name.
+    assert done.startswith("compacted shop_orders")
+    assert files_per_day(spark, second) == {"2026-10-04": 1, "2026-10-05": 6}
+    assert files_per_day(spark, first) == {"2026-10-04": 6, "2026-10-05": 6}
+    assert spark.table(second).count() == 12
+    # The next run takes the other table, then nothing is due for a day.
+    assert bronze.heavy_upkeep(spark, [first, second], TODAY).startswith(
+        "compacted shop_users"
+    )
+    assert not bronze.heavy_upkeep(spark, [first, second], TODAY).startswith(
+        "compacted"
+    )
+
+
+def test_orphan_removal_deletes_only_old_unreferenced_files(spark, lake):
+    bronze_db, _ = lake
+    table = f"{bronze_db}.shop_users"
+    day_table(spark, table, [YESTERDAY] * 2)
+    data_file = spark.sql(f"SELECT file_path FROM {table}.files").first()[0]
+    folder = data_file.removeprefix("file:").rsplit("/", 1)[0]
+    old, young = (
+        f"{folder}/failed-write-old.parquet",
+        f"{folder}/failed-write-new.parquet",
+    )
+    for path in (old, young):
+        with open(path, "wb") as f:
+            f.write(b"not referenced by any snapshot")
+    five_days_ago = time.time() - 5 * 86400
+    os.utime(old, (five_days_ago, five_days_ago))
+
+    # Only the file older than ORPHAN_MIN_AGE goes; the young one may belong
+    # to a write in progress. (Iceberg refuses a cutoff under 24 hours.)
+    assert bronze.remove_orphans(spark, table, datetime.datetime.now()) == 1
+    assert not os.path.exists(old) and os.path.exists(young)
+    assert spark.table(table).count() == 2

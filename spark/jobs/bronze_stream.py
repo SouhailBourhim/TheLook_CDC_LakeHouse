@@ -18,6 +18,7 @@ import datetime
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from lakehouse.bronze import (
     append_once,
     bronze_rows,
     compact,
+    heavy_upkeep,
     maintain_bronze,
     record_batch,
     table_for,
@@ -49,41 +51,61 @@ MAX_OFFSETS = os.environ.get("BRONZE_MAX_OFFSETS", "200000")
 CHECKPOINT = os.environ.get("BRONZE_CHECKPOINT", "/opt/checkpoints/bronze")
 
 # 2 of the worker's 4 cores: the stream runs forever, the rest is for the
-# batch jobs (P4).
-spark = lake_session("bronze-stream", cores_max=2)
+# batch jobs (P4). FAIR scheduling: the maintenance thread's jobs (own pool)
+# share the cores with the micro-batches instead of queueing ahead of them.
+spark = lake_session(
+    "bronze-stream", cores_max=2, conf={"spark.scheduler.mode": "FAIR"}
+)
 registry = SchemaRegistry("http://schema-registry:8081")
 
 
-# Bronze upkeep (ADR 017): at the first batch after a start, then hourly.
+# Bronze upkeep (ADR 017): at the first batch after a start, then hourly,
+# in a background thread so that micro-batches keep running meanwhile
+# (compacting a table's day of small files takes minutes; O1 is 5 minutes).
+# Concurrent commits on one table are safe: Iceberg retries the one that
+# loses the race, and a compaction never changes which rows a table holds.
 MAINTAIN_EVERY = 3600  # seconds
 last_maintained = None
+maintenance_running = threading.Lock()
+
+
+def maybe_maintain() -> None:
+    """Start the upkeep thread if an hour has passed and none is running."""
+    global last_maintained
+    due = (
+        last_maintained is None or time.monotonic() - last_maintained >= MAINTAIN_EVERY
+    )
+    if due and not maintenance_running.locked():
+        last_maintained = time.monotonic()
+        threading.Thread(
+            target=maintain, name="bronze-maintenance", daemon=True
+        ).start()
 
 
 def maintain() -> None:
-    """Expire bronze snapshots and compact the ledger. Best effort: a failure
+    """Expire bronze snapshots, compact the ledger, and do at most one heavier
+    task on one table (compaction or orphan removal). Best effort: a failure
     is logged and retried an hour later, never allowed to stop the stream."""
-    global last_maintained
-    if (
-        last_maintained is not None
-        and time.monotonic() - last_maintained < MAINTAIN_EVERY
-    ):
-        return
     start = time.monotonic()
-    try:
-        tables = [table_for(t) for t in TOPICS] + [LEDGER]
-        expired = maintain_bronze(
-            spark, tables, datetime.datetime.now(datetime.timezone.utc)
-        )
-        compacted = compact(spark, LEDGER)
-        log.info(
-            "maintenance: expired snapshots %s, ledger files compacted %s, in %.1f s",
-            expired,
-            compacted,
-            time.monotonic() - start,
-        )
-    except Exception:
-        log.exception("maintenance failed; next attempt in an hour")
-    last_maintained = time.monotonic()
+    with maintenance_running:
+        # Jobs started from this thread go to the "maintenance" pool.
+        spark.sparkContext.setLocalProperty("spark.scheduler.pool", "maintenance")
+        try:
+            data_tables = [table_for(t) for t in TOPICS]
+            now = datetime.datetime.now(datetime.timezone.utc)
+            expired = maintain_bronze(spark, data_tables + [LEDGER], now)
+            compacted = compact(spark, LEDGER)
+            heavy = heavy_upkeep(spark, data_tables, now)
+            log.info(
+                "maintenance: expired snapshots %s, ledger files compacted %s, "
+                "%s, in %.1f s",
+                expired,
+                compacted,
+                heavy or "no heavy task due",
+                time.monotonic() - start,
+            )
+        except Exception:
+            log.exception("maintenance failed; next attempt in an hour")
 
 
 def query_id() -> str:
@@ -136,7 +158,7 @@ def process_batch(batch: DataFrame, batch_id: int) -> None:
             ", ".join(done) or "empty",
             time.monotonic() - start,
         )
-        maintain()
+        maybe_maintain()
     finally:
         batch.unpersist()
 
