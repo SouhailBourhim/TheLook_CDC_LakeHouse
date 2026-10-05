@@ -856,6 +856,32 @@ include table maintenance (snapshot expiry, compaction) in P4.
   first captured address is an approximation.
 - Next: step 6, gold facts (incremental) + tests.
 
+### Session 5 — 2026-10-05 (night) — P4 step 6
+
+- Started by restarting the stream (it had been down ~3 h with the core
+  profile up; caught up from its checkpoint).
+- **Step 6 done: gold facts.** fct_order_items, fct_orders (FR6 amount
+  rules), fct_sessions, incremental by silver's `_merged_at` (Iceberg's
+  per-file min/max statistics skip older files), rows without a user
+  version retried each run. On AWS: 575,377 / 396,842 / 666,781 rows,
+  0 orders outside their user version's range, **101,683 orders keep a
+  former address** (FR4 at scale). Normal silver+gold cycle ~8 min; O2
+  estimate ~40 min worst case (measured in step 10).
+- Lessons:
+  - A logged count of 0 after a retry was correct: the first attempt had
+    merged the items, the retry found nothing left. Counts are now named
+    "recomputed" (what this attempt did), not table sizes.
+  - A mutation that deletes a whole line can break the syntax: pytest then
+    reports a collection *error*, which proves nothing about the tests.
+    Mutate the logic, keep the code compiling.
+  - Ruff B008: default arguments are evaluated once at definition time
+    (harmless for datetimes, a classic bug for mutable defaults).
+  - Catch-up runs scale with the increment (6 h of changes: 31 min of
+    silver); normal 30-minute increments take ~3 min.
+- Pending for Souhail: review ADR 015 (still Proposed); step 6 check
+  questions.
+- Next: step 7, marts and the metric definitions (FR6) + tests.
+
 ### P1 plan (agreed)
 
 | # | Commit | Content / how we verify | What Souhail learns |
