@@ -10,6 +10,7 @@ from pyspark.sql import functions as F
 
 from lakehouse.bronze import record_batch
 from lakehouse.silver import (
+    SNAPSHOT_WATERMARK,
     SPECS,
     WATERMARK,
     consistent_cut,
@@ -189,8 +190,11 @@ def test_events_merge_reads_only_recent_partitions():
 
 def append(spark, table, rows, schema):
     """Append rows to a local bronze table (creating it the first time):
-    each call makes one Iceberg snapshot, like one stream micro-batch."""
-    df = spark.createDataFrame(rows, schema)
+    each call makes one Iceberg snapshot, like one stream micro-batch, and
+    stamps ingested_at with the time of the call, as the stream does."""
+    df = spark.createDataFrame(rows, schema).withColumn(
+        "ingested_at", F.current_timestamp()
+    )
     if spark.catalog.tableExists(table):
         df.writeTo(table).append()
     else:
@@ -288,11 +292,12 @@ def test_rerunning_the_same_increment_changes_nothing(spark, lake):
     process_table(spark, spec, bronze_db, silver_db)
     expected = {k: (v.status, v._position) for k, v in silver_state(spark, dst).items()}
 
-    # Simulate a crash after the MERGE but before the watermark: rewind it.
-    first = spark.sql(
-        f"SELECT snapshot_id FROM {src}.snapshots ORDER BY committed_at"
-    ).first()[0]
-    spark.sql(f"ALTER TABLE {dst} SET TBLPROPERTIES ('{WATERMARK}' = '{first}')")
+    # Simulate a crash after the MERGE but before the watermark: rewind it
+    # to the first batch.
+    first = spark.table(src).agg(F.min("ingested_at")).first()[0]
+    spark.sql(
+        f"ALTER TABLE {dst} SET TBLPROPERTIES ('{WATERMARK}' = '{first.isoformat()}')"
+    )
     process_table(spark, spec, bronze_db, silver_db)
 
     assert {
@@ -308,8 +313,10 @@ def test_a_new_source_column_becomes_a_silver_column(spark, lake):
     process_table(spark, spec, bronze_db, silver_db)
 
     # A nullable column added at the source arrives in bronze's after struct.
-    newer = spark.createDataFrame([pg("c", "b", 200, 2)], PG_BRONZE).withColumn(
-        "after", F.col("after").withField("gift_wrap", F.lit(True))
+    newer = (
+        spark.createDataFrame([pg("c", "b", 200, 2)], PG_BRONZE)
+        .withColumn("after", F.col("after").withField("gift_wrap", F.lit(True)))
+        .withColumn("ingested_at", F.current_timestamp())  # a later batch
     )
     spark.sql(
         f"ALTER TABLE {src} SET TBLPROPERTIES ('write.spark.accept-any-schema'='true')"
@@ -320,3 +327,43 @@ def test_a_new_source_column_becomes_a_silver_column(spark, lake):
     assert result["new_columns"] == ["gift_wrap"]
     state = silver_state(spark, dst)
     assert state["b"].gift_wrap is True and state["a"].gift_wrap is None
+
+
+def test_expired_bronze_snapshots_do_not_stop_silver(spark, lake):
+    bronze_db, silver_db = lake
+    src, dst = f"{bronze_db}.shop_order_items", f"{silver_db}.order_items"
+    spec = SPECS["order_items"]
+    append(spark, src, [pg("c", "a", 100, 1)], PG_BRONZE)
+    process_table(spark, spec, bronze_db, silver_db)
+    append(spark, src, [pg("c", "b", 110, 2)], PG_BRONZE)
+    append(spark, src, [pg("c", "c", 120, 3)], PG_BRONZE)
+    # The stream's maintenance keeps only the newest snapshot (ADR 017): the
+    # one silver last processed and the batch after it are both gone.
+    newest = spark.sql(f"SELECT max(committed_at) FROM {src}.snapshots").first()[0]
+    spark.sql(
+        f"CALL local.system.expire_snapshots(table => '{src.split('.', 1)[1]}', "
+        f"older_than => TIMESTAMP '{newest}', retain_last => 1)"
+    )
+    assert spark.table(f"{src}.snapshots").count() == 1
+
+    result = process_table(spark, spec, bronze_db, silver_db)
+    assert not result["full_read"] and result["keys"] == 2  # b and c
+    assert set(silver_state(spark, dst)) == {"a", "b", "c"}
+
+
+def test_a_snapshot_id_watermark_is_migrated_without_a_full_read(spark, lake):
+    bronze_db, silver_db = lake
+    src, dst = f"{bronze_db}.shop_order_items", f"{silver_db}.order_items"
+    spec = SPECS["order_items"]
+    append(spark, src, [pg("c", "a", 100, 1)], PG_BRONZE)
+    process_table(spark, spec, bronze_db, silver_db)
+    # A table from before ADR 017: its watermark is a bronze snapshot id.
+    snapshot = spark.sql(f"SELECT snapshot_id FROM {src}.snapshots").first()[0]
+    spark.sql(f"ALTER TABLE {dst} UNSET TBLPROPERTIES ('{WATERMARK}')")
+    spark.sql(
+        f"ALTER TABLE {dst} SET TBLPROPERTIES ('{SNAPSHOT_WATERMARK}' = '{snapshot}')"
+    )
+    append(spark, src, [pg("c", "b", 110, 2)], PG_BRONZE)
+
+    result = process_table(spark, spec, bronze_db, silver_db)
+    assert not result["full_read"] and result["keys"] == 1  # only b

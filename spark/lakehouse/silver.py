@@ -13,6 +13,7 @@ between them, the next run reads the same increment again, and the MERGE
 is idempotent (no event is newer than itself), so the result is the same.
 """
 
+import datetime
 from dataclasses import dataclass
 
 from pyspark.sql import Column, DataFrame, SparkSession, Window
@@ -29,7 +30,10 @@ from pyspark.sql.types import (
 
 from lakehouse.bronze import LEDGER, current_snapshot
 
-WATERMARK = "thelook.bronze-snapshot"
+# The newest bronze ingested_at already merged (ADR 017). Before, the id of
+# the last bronze snapshot processed: read once to migrate older tables.
+WATERMARK = "thelook.bronze-ingested-at"
+SNAPSHOT_WATERMARK = "thelook.bronze-snapshot"
 MONEY = "decimal(10,2)"
 METADATA = ["_position", "_source_ts", "_row_hash", "_merged_at"]
 
@@ -258,28 +262,36 @@ def consistent_cut(spark: SparkSession, ledger: str = LEDGER) -> dict[str, int]:
     return dict(newest.snapshots)
 
 
-def watermark(spark: SparkSession, table: str) -> int | None:
+def watermark(spark: SparkSession, table: str, bronze: str) -> datetime.datetime | None:
+    """Newest bronze ingested_at already merged into `table`, or None."""
     if not spark.catalog.tableExists(table):
         return None
     props = {r.key: r.value for r in spark.sql(f"SHOW TBLPROPERTIES {table}").collect()}
-    return int(props[WATERMARK]) if WATERMARK in props else None
+    if WATERMARK in props:
+        return datetime.datetime.fromisoformat(props[WATERMARK])
+    if SNAPSHOT_WATERMARK in props:  # a table from before ADR 017
+        old = int(props[SNAPSHOT_WATERMARK])
+        return (
+            spark.read.format("iceberg")
+            .option("versionAsOf", old)
+            .load(bronze)
+            .agg(F.max("ingested_at"))
+            .first()[0]
+        )
+    return None
 
 
 def read_bronze(
-    spark: SparkSession, table: str, after: int | None, upto: int
+    spark: SparkSession, table: str, after: datetime.datetime | None, upto: int
 ) -> DataFrame:
-    """Bronze rows committed after snapshot `after` up to snapshot `upto`
-    (all of them as of `upto` when there is no watermark yet)."""
-    reader = spark.read.format("iceberg")
-    if after is None:
-        # Time travel to one snapshot: Spark's own option since Iceberg on
-        # Spark 4 (Iceberg's former `snapshot-id` option is rejected).
-        return reader.option("versionAsOf", upto).load(table)
-    return (
-        reader.option("start-snapshot-id", after)
-        .option("end-snapshot-id", upto)
-        .load(table)
-    )
+    """Bronze rows as of snapshot `upto` ingested after `after` (all of them
+    when there is no watermark yet). Iceberg's per-file min/max statistics
+    on ingested_at skip the files already processed, and no old snapshot is
+    needed, so the stream can expire them (ADR 017)."""
+    # Time travel to one snapshot: Spark's own option since Iceberg on
+    # Spark 4 (Iceberg's former `snapshot-id` option is rejected).
+    rows = spark.read.format("iceberg").option("versionAsOf", upto).load(table)
+    return rows if after is None else rows.where(F.col("ingested_at") > F.lit(after))
 
 
 def create_table(
@@ -327,13 +339,20 @@ def process_table(
     for tests and one-off runs); returns what it did."""
     bronze, target = f"{bronze_db}.{spec.bronze}", f"{silver_db}.{spec.name}"
     upto = current_snapshot(spark, bronze) if cut is None else cut.get(spec.bronze)
-    after = watermark(spark, target)
-    if upto is None or upto == after:
+    if upto is None:
         return {"table": spec.name, "status": "up to date"}
-    latest = latest_per_key(read_bronze(spark, bronze, after, upto), spec.source)
-    rows, bad = silver_rows(latest, spec)
-    rows = rows.persist()
+    after = watermark(spark, target, bronze)
+    increment = read_bronze(spark, bronze, after, upto).persist()
+    rows = None
     try:
+        # Rows of a batch share one ingested_at, later batches a later one:
+        # the newest value read is where the next run starts.
+        newest = increment.agg(F.max("ingested_at")).first()[0]
+        if newest is None:
+            return {"table": spec.name, "status": "up to date"}
+        latest = latest_per_key(increment, spec.source)
+        rows, bad = silver_rows(latest, spec)
+        rows = rows.persist()
         if not spark.catalog.tableExists(target):
             create_table(spark, target, rows, spec)
         added = add_new_columns(spark, target, rows)
@@ -345,7 +364,10 @@ def process_table(
         rows.createOrReplaceTempView("silver_source")
         columns = [c for c in rows.columns if c != "_op"]
         spark.sql(merge_sql(target, "silver_source", columns, prune))
-        spark.sql(f"ALTER TABLE {target} SET TBLPROPERTIES ('{WATERMARK}' = '{upto}')")
+        spark.sql(
+            f"ALTER TABLE {target} SET TBLPROPERTIES "
+            f"('{WATERMARK}' = '{newest.isoformat()}')"
+        )
         return {
             "table": spec.name,
             "status": "merged",
@@ -353,7 +375,10 @@ def process_table(
             "bad_json": bad.count(),
             "new_columns": added,
             "bronze_snapshot": upto,
+            "ingested_upto": newest.isoformat(),
             "full_read": after is None,
         }
     finally:
-        rows.unpersist()
+        increment.unpersist()
+        if rows is not None:
+            rows.unpersist()

@@ -519,7 +519,7 @@ parameterised by date, so any run can be repeated or backfilled safely.
 |----------------|---------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
 | transform      | Every 30 minutes                | spark-submit silver then gold jobs, then quality checks; fail and alert if a check fails                                      |
 | graph          | Daily                           | Rebuild the Neo4j co-purchase graph from gold order items                                                                      |
-| maintenance    | Daily                           | OPTIMIZE ... REWRITE DATA USING BIN_PACK on recent partitions; VACUUM to expire snapshots and remove orphan files              |
+| maintenance    | Daily                           | Silver and gold (batch identity): compact data and delete files, expire snapshots, remove orphan files. Bronze is maintained by the stream itself, with its own identity (ADR 017) |
 | gdpr_erasure   | Triggered by a deletion request | Delete the user in every layer, expire snapshots, verify, write the audit record                                               |
 | quality_report | Daily                           | Freshness checks, source-to-silver reconciliation, datacontract-cli tests, connector, consumer-lag and replication-slot health |
 

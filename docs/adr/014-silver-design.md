@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-04 (P4; spec FR3, ADR 009, ADR 012; settles open question E1)
 - Amended: 2026-10-05 (P4 step 8): one consistent bronze cut per run.
+- Amended: 2026-10-05 (P4 step 9): the watermark is an `ingested_at`, not a snapshot id.
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -108,7 +109,24 @@ committing. Gold keeps a safety net for any remaining race: item facts
 built without their order are recomputed once it arrives (ADR 015).
 
 
-## References
+## Amendment 2026-10-05: watermark by `ingested_at` (ADR 017)
+
+The watermark was the id of the last bronze snapshot processed, read with an
+incremental scan from it. Once the stream expires bronze snapshots (ADR
+017), that start snapshot can be gone, and Iceberg refuses the read
+("Starting snapshot (exclusive) ... is not a parent ancestor of end
+snapshot ..."); the full-read fallback described above was never built.
+
+The watermark is now the newest `ingested_at` merged
+(`thelook.bronze-ingested-at`). A run reads bronze as of the cut's
+snapshot (`versionAsOf`, always recent) where `ingested_at` is greater than
+the watermark; per-file min/max statistics on `ingested_at` skip the files
+already processed. Correct because the cut holds only finished batches,
+every row of a batch shares one `ingested_at`, and a later batch has a later
+one. Tables with the old property are migrated on their next run (the
+newest `ingested_at` as of their old snapshot).
+
+
 
 - Apache Iceberg docs: Spark incremental read (`start-snapshot-id`), `MERGE INTO`, write modes (copy-on-write vs merge-on-read)
 - Debezium PostgreSQL connector: blocking snapshots; MongoDB connector: `source.ord`
