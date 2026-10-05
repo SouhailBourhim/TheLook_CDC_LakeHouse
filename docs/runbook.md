@@ -251,6 +251,21 @@ seconds with the Java API; it took 41 min with the SQL procedure). Do not
 replace it with `CALL ... expire_snapshots`: that procedure costs ~2.5 min
 per table whatever the amount to expire.
 
+### Silver and gold maintenance (Airflow DAG `maintenance`, ADR 017)
+
+Daily at 03:00 UTC (or at the next start of the `airflow` profile if the
+slot was missed), `jobs/maintenance.py` runs as the batch user: compaction
+(data files, delete files, dangling deletes removed), expiry of snapshots
+older than a day, and orphan removal on at most 3 tables per run. Its task
+and every `transform` task share the one-slot pool `lake` (created by
+`airflow-init`), so they never commit at the same time. Run it by hand:
+`make spark-run JOB=jobs/maintenance.py` (only when `transform` is paused or
+idle: outside Airflow, the pool does not protect it).
+
+If orphan removal fails with `No FileSystem for scheme "s3"`: the call lost
+`prefix_listing => true` (listing must go through Iceberg's S3FileIO; the
+image has no Hadoop S3 connector).
+
 ### Re-snapshot the PostgreSQL tables
 
 `make snapshot-postgres` sends a **blocking** snapshot signal on

@@ -14,6 +14,8 @@ as the executors):
   (the facts' watermark relies on it) and drivers do not stack up.
 - Each job brings its own AWS identity (the batch user, via lakehouse.session)
   from the scheduler's environment: no AWS key in Airflow connections.
+- Pool "lake" (one slot, shared with the maintenance DAG): a compaction never
+  commits at the same time as a MERGE on the same table (ADR 017).
 """
 
 from datetime import datetime, timedelta
@@ -25,7 +27,11 @@ JOBS = "/opt/lakehouse/jobs"
 
 # spark-submit is not on the image's PATH; the connection spark_default
 # points to spark://spark-master:7077 (AIRFLOW_CONN_SPARK_DEFAULT).
-SPARK = {"conn_id": "spark_default", "spark_binary": "/opt/spark/bin/spark-submit"}
+SPARK = {
+    "conn_id": "spark_default",
+    "spark_binary": "/opt/spark/bin/spark-submit",
+    "pool": "lake",
+}
 
 with DAG(
     dag_id="transform",

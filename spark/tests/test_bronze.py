@@ -10,7 +10,7 @@ import time
 import pytest
 from pyspark.sql import functions as F
 
-from lakehouse import bronze
+from lakehouse import bronze, upkeep
 from lakehouse.bronze import (
     BATCH_ID,
     QUERY_ID,
@@ -213,7 +213,7 @@ def test_ledger_compaction_merges_its_small_files(spark, lake):
     for batch_id in range(6):  # one tiny file per batch
         bronze.record_batch(spark, "q1", batch_id, [], ledger)
 
-    assert bronze.compact(spark, ledger) == 6
+    assert upkeep.compact(spark, ledger) == 6
     assert spark.table(f"{ledger}.files").count() == 1
     assert spark.table(ledger).count() == 6
 
@@ -283,6 +283,6 @@ def test_orphan_removal_deletes_only_old_unreferenced_files(spark, lake):
 
     # Only the file older than ORPHAN_MIN_AGE goes; the young one may belong
     # to a write in progress. (Iceberg refuses a cutoff under 24 hours.)
-    assert bronze.remove_orphans(spark, table, datetime.datetime.now()) == 1
+    assert upkeep.remove_orphans(spark, table, datetime.datetime.now()) == 1
     assert not os.path.exists(old) and os.path.exists(young)
     assert spark.table(table).count() == 2

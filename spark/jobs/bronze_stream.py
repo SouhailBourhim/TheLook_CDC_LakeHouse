@@ -31,7 +31,6 @@ from lakehouse.bronze import (
     SchemaRegistry,
     append_once,
     bronze_rows,
-    compact,
     heavy_upkeep,
     maintain_bronze,
     record_batch,
@@ -40,6 +39,7 @@ from lakehouse.bronze import (
 )
 from lakehouse.cdc import bad_frames
 from lakehouse.session import lake_session
+from lakehouse.upkeep import compact
 
 logging.basicConfig(
     level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s"

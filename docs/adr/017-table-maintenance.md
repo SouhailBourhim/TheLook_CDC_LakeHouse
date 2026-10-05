@@ -77,9 +77,21 @@ never goes backwards (ADR 014 amendment).
   Iceberg retries the one that loses the race, and compaction never changes
   which rows a table holds.
 
-**Silver and gold (Airflow `maintenance` DAG, daily, batch user):** expire
-snapshots older than 1 day, compact data and position-delete files, remove
-orphan files older than 3 days.
+**Silver and gold (Airflow `maintenance` DAG, daily at 03:00 UTC, batch
+user, `jobs/maintenance.py`):** for every table, compact data files
+(applying the merge-on-read delete files, and removing the delete files
+left dangling), compact position-delete files, expire snapshots older than
+1 day keeping the last 5 (Java API, as for bronze); then remove orphan
+files older than 3 days on at most 3 tables per run, those cleaned longest
+ago (an orphan sweep costs minutes per table).
+
+**One writer at a time.** A compaction rewriting silver files while a
+transform MERGE writes delete files against them is a real Iceberg
+conflict: one commit would fail. Every Spark task of both DAGs takes the
+single slot of the Airflow pool `lake` (created by `airflow-init`), so two
+lake writers never run together. The upkeep may run *between* two transform
+tasks: compaction changes neither rows nor `_merged_at`, so gold's watermark
+holds. The shared helpers live in `spark/lakehouse/upkeep.py`.
 
 ## Consequences
 

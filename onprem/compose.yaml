@@ -455,7 +455,13 @@ services:
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
-    command: ["airflow", "db", "migrate"]
+    # Then the pool "lake": one slot shared by every Spark task of transform
+    # and maintenance, so a compaction never commits at the same time as a
+    # MERGE on the same table (ADR 017). Both commands are idempotent.
+    command:
+      - bash
+      - -c
+      - airflow db migrate && airflow pools set lake 1 "Spark jobs writing silver and gold, one at a time (ADR 017)"
 
   airflow-apiserver:
     image: thelook-airflow:local

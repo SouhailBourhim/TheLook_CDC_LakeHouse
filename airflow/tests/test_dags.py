@@ -42,3 +42,17 @@ def test_tasks_retry_and_allow_catch_up_runs(bag):
         assert task.execution_timeout == timedelta(minutes=60)
         # spark-submit is not on the image's PATH.
         assert task._spark_binary == "/opt/spark/bin/spark-submit"
+
+
+def test_maintenance_runs_daily_without_replaying_missed_days(bag):
+    dag = bag.dags["maintenance"]
+    assert dag.task_ids == ["silver_gold_upkeep"]
+    assert dag.max_active_runs == 1 and not dag.catchup
+    assert "0 3 * * *" in repr(dag.timetable)
+
+
+def test_every_spark_task_shares_the_one_slot_lake_pool(bag):
+    # A compaction must never commit at the same time as a MERGE (ADR 017).
+    for dag_id in ("transform", "maintenance"):
+        for task in bag.dags[dag_id].tasks:
+            assert task.pool == "lake", f"{dag_id}.{task.task_id}"
