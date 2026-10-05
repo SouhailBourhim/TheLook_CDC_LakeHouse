@@ -3,7 +3,9 @@
 Stages, run in order (all by default):
   dims    rebuild dim_date, dim_product, dim_distribution_center, dim_user
   facts   recompute and MERGE the changed rows of fct_order_items,
-          fct_orders and fct_sessions (marts come in a later step)
+          fct_orders and fct_sessions
+  marts   recompute the days touched since the last run (daily revenue,
+          session funnel) and rebuild product ratings
 
 Runs as the batch IAM user. Exit code 1 if a stage failed.
 
@@ -16,7 +18,7 @@ import sys
 import time
 
 from lakehouse.bronze import with_retries
-from lakehouse.gold import build_dimensions, build_facts
+from lakehouse.gold import build_dimensions, build_facts, build_marts
 from lakehouse.session import lake_session
 
 logging.basicConfig(
@@ -24,7 +26,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("gold")
 
-STAGES = {"dims": build_dimensions, "facts": build_facts}
+STAGES = {"dims": build_dimensions, "facts": build_facts, "marts": build_marts}
 
 spark = lake_session(
     "gold",

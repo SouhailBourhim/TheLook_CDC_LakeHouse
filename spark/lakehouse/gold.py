@@ -370,6 +370,9 @@ def merge_facts(spark: SparkSession, table: str, rows: DataFrame, key: str) -> N
             .tableProperty("write.delete.mode", "merge-on-read")
             .create()
         )
+    from lakehouse.silver import add_new_columns
+
+    add_new_columns(spark, table, rows)  # e.g. _computed_at on older tables
     rows.createOrReplaceTempView("fact_source")
     spark.sql(
         f"MERGE INTO {table} t USING fact_source s ON t.{key} = s.{key} "
@@ -430,7 +433,10 @@ def build_facts(
             items.join(retry, items["id"] == retry["_retry"], "left_semi")
         ).dropDuplicates(["id"])
     affected = affected.persist()
-    item_rows = order_item_facts(affected, orders, products, users)
+    # _computed_at: when this row was (re)computed; the marts' watermark.
+    item_rows = order_item_facts(affected, orders, products, users).withColumn(
+        "_computed_at", F.current_timestamp()
+    )
     merge_facts(spark, t_items, item_rows, "order_item_id")
     _set_watermark(spark, t_items, changed.agg(F.max("_merged_at")).first()[0])
     counts["fct_order_items_recomputed"] = affected.count()
@@ -450,7 +456,12 @@ def build_facts(
         orders.join(ids, orders["id"] == ids["_id"], "left_semi"),
         spark.table(t_items).join(ids, F.col("order_id") == ids["_id"], "left_semi"),
     )
-    merge_facts(spark, t_orders, order_rows, "order_id")
+    merge_facts(
+        spark,
+        t_orders,
+        order_rows.withColumn("_computed_at", F.current_timestamp()),
+        "order_id",
+    )
     _set_watermark(spark, t_orders, changed_orders.agg(F.max("_merged_at")).first()[0])
     counts["fct_orders_recomputed"] = ids.count()
 
@@ -469,7 +480,9 @@ def build_facts(
         merge_facts(
             spark,
             t_sessions,
-            session_facts(window.join(sessions, "session_id", "left_semi")),
+            session_facts(window.join(sessions, "session_id", "left_semi")).withColumn(
+                "_computed_at", F.current_timestamp()
+            ),
             "session_id",
         )
         _set_watermark(spark, t_sessions, bounds[1])
@@ -481,3 +494,186 @@ def build_facts(
     ids.unpersist()
     new_events.unpersist()
     return counts
+
+
+# --- marts (ADR 015: metric definitions, FR6) ----------------------------------
+
+MART_WATERMARK = "thelook.facts-computed-at"
+
+
+def _ratio(numerator, denominator):
+    """A rate rounded to 4 places. Always a double: rates are ratios, not
+    money (money stays decimal), and decimal / decimal would otherwise give
+    decimal rates next to double ones."""
+    return F.when(denominator > 0, F.round((numerator / denominator).cast("double"), 4))
+
+
+def daily_revenue(orders: DataFrame, items: DataFrame) -> DataFrame:
+    """mart_daily_revenue: one row per order day, every metric as defined
+    once in ADR 015 (gross excludes cancelled items, net = gross - returns,
+    return rate over items that reached the customer...)."""
+    per_order = orders.groupBy("order_date_key").agg(
+        F.count("*").alias("orders"),
+        F.sum(F.col("is_cancelled").cast("int")).alias("cancelled_orders"),
+        F.sum("gross_amount").cast(AMOUNT).alias("gross_revenue"),
+        F.sum("returned_amount").cast(AMOUNT).alias("returns"),
+        F.sum("net_amount").cast(AMOUNT).alias("net_revenue"),
+        F.sum("cost_amount").cast(AMOUNT).alias("cost_of_kept_items"),
+        F.percentile_approx("hours_to_ship", 0.5).alias("median_hours_to_ship"),
+        F.percentile_approx("hours_to_deliver", 0.5).alias("median_hours_to_deliver"),
+    )
+    reached = F.col("status").isin("Delivered", "Returned")
+    per_item = items.groupBy("order_date_key").agg(
+        F.sum(reached.cast("int")).alias("items_reached_customer"),
+        F.sum(F.col("is_returned").cast("int")).alias("items_returned"),
+    )
+    kept_orders = F.col("orders") - F.col("cancelled_orders")
+    return per_order.join(per_item, "order_date_key", "left").select(
+        F.col("order_date_key").alias("date_key"),
+        F.to_date(F.col("order_date_key").cast("string"), "yyyyMMdd").alias("date"),
+        "orders",
+        "cancelled_orders",
+        "gross_revenue",
+        "returns",
+        "net_revenue",
+        _ratio(
+            F.col("net_revenue") - F.col("cost_of_kept_items"), F.col("net_revenue")
+        ).alias("gross_margin"),
+        F.when(
+            kept_orders > 0, (F.col("net_revenue") / kept_orders).cast(AMOUNT)
+        ).alias("average_order_value"),
+        _ratio(F.col("cancelled_orders"), F.col("orders")).alias("cancellation_rate"),
+        _ratio(F.col("items_returned"), F.col("items_reached_customer")).alias(
+            "return_rate"
+        ),
+        "median_hours_to_ship",
+        "median_hours_to_deliver",
+    )
+
+
+def session_funnel(sessions: DataFrame) -> DataFrame:
+    """mart_session_funnel: one row per session day. Ghost sessions are
+    counted apart and excluded from the funnel (their purchases are fake)."""
+    real = ~F.col("is_ghost")
+    count_if = lambda cond: F.sum((real & cond).cast("int"))  # noqa: E731
+    return (
+        sessions.groupBy(F.col("session_date_key").alias("date_key"))
+        .agg(
+            count_if(F.lit(True)).alias("sessions"),
+            count_if(F.col("viewed_product")).alias("viewed_product"),
+            count_if(F.col("added_to_cart")).alias("added_to_cart"),
+            count_if(F.col("purchased")).alias("purchased"),
+            F.sum(F.col("is_ghost").cast("int")).alias("ghost_sessions"),
+        )
+        .withColumn("conversion_rate", _ratio(F.col("purchased"), F.col("sessions")))
+        .withColumn("date", F.to_date(F.col("date_key").cast("string"), "yyyyMMdd"))
+    )
+
+
+def product_ratings(reviews: DataFrame, products: DataFrame) -> DataFrame:
+    """mart_product_ratings: deleted reviews are already gone from silver."""
+    stats = reviews.groupBy("product_id").agg(
+        F.count("*").alias("review_count"),
+        F.round(F.avg("rating"), 2).alias("average_rating"),
+        F.sum("helpful_votes").alias("helpful_votes"),
+        F.max("updated_at").alias("last_review_at"),
+    )
+    return stats.join(
+        products.select("product_id", "name", "brand", "category", "department"),
+        "product_id",
+        "left",
+    )
+
+
+def _mart_days(facts: list[DataFrame], key: str, since) -> tuple[DataFrame, object]:
+    """Days touched by fact rows computed after `since` (all days on the
+    first run), and the newest _computed_at seen: the mart's next watermark."""
+    changed = [
+        f if since is None else f.where(F.col("_computed_at") > F.lit(since))
+        for f in facts
+    ]
+    days = changed[0].select(key)
+    for f in changed[1:]:
+        days = days.unionByName(f.select(key))
+    seen = [c.agg(F.max("_computed_at")).first()[0] for c in changed]
+    seen = [v for v in seen if v is not None]
+    return days.distinct(), (max(seen) if seen else None)
+
+
+def merge_mart(
+    spark: SparkSession, table: str, rows: DataFrame, key: str, watermark
+) -> None:
+    """Upsert the recomputed days, then move the mart's watermark."""
+    merge_facts(spark, table, rows, key)
+    if watermark is not None:
+        spark.sql(
+            f"ALTER TABLE {table} SET TBLPROPERTIES "
+            f"('{MART_WATERMARK}' = '{watermark.isoformat()}')"
+        )
+
+
+def mart_watermark(spark: SparkSession, table: str):
+    if not spark.catalog.tableExists(table):
+        return None
+    props = {r.key: r.value for r in spark.sql(f"SHOW TBLPROPERTIES {table}").collect()}
+    value = props.get(MART_WATERMARK)
+    return datetime.datetime.fromisoformat(value) if value else None
+
+
+def build_marts(
+    spark: SparkSession,
+    gold_db: str = "lake.thelook_gold",
+    silver_db: str = "lake.thelook_silver",
+) -> dict:
+    """Recompute the days touched since the last run (revenue, funnel) and
+    rebuild product ratings (small). Returns days recomputed per mart."""
+    orders = spark.table(f"{gold_db}.fct_orders")
+    items = spark.table(f"{gold_db}.fct_order_items")
+    sessions = spark.table(f"{gold_db}.fct_sessions")
+    result = {}
+
+    t = f"{gold_db}.mart_daily_revenue"
+    days, newest = _mart_days(
+        [
+            orders.select("order_date_key", "_computed_at"),
+            items.select("order_date_key", "_computed_at"),
+        ],
+        "order_date_key",
+        mart_watermark(spark, t),
+    )
+    days = days.persist()
+    if not days.isEmpty():
+        rows = daily_revenue(
+            orders.join(days, "order_date_key", "left_semi"),
+            items.join(days, "order_date_key", "left_semi"),
+        )
+        merge_mart(spark, t, rows, "date_key", newest)
+    result["mart_daily_revenue_days"] = days.count()
+    days.unpersist()
+
+    t = f"{gold_db}.mart_session_funnel"
+    days, newest = _mart_days(
+        [sessions.select("session_date_key", "_computed_at")],
+        "session_date_key",
+        mart_watermark(spark, t),
+    )
+    days = days.persist()
+    if not days.isEmpty():
+        merge_mart(
+            spark,
+            t,
+            session_funnel(sessions.join(days, "session_date_key", "left_semi")),
+            "date_key",
+            newest,
+        )
+    result["mart_session_funnel_days"] = days.count()
+    days.unpersist()
+
+    ratings = product_ratings(
+        spark.table(f"{silver_db}.reviews"), spark.table(f"{gold_db}.dim_product")
+    )
+    replace_table(ratings, f"{gold_db}.mart_product_ratings")
+    result["mart_product_ratings_products"] = spark.table(
+        f"{gold_db}.mart_product_ratings"
+    ).count()
+    return result

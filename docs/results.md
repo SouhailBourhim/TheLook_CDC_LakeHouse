@@ -387,3 +387,24 @@ their user and **101,683 orders keep an address the user no longer has**
 
 O2 estimate (measured end to end in step 10): 30-minute schedule + ~8 min
 cycle + ~1.5 min bronze lag ≈ 40 min worst case, under the 1-hour target.
+
+## P4: gold marts — 2026-10-05
+
+Cycle silver (307 s) + gold (589 s: dims 136, facts 357, marts 90). First
+marts run: 7 revenue days, 6 funnel days, 13,071 products rated.
+
+**Marts reconcile with the facts:** Σ net revenue 82,536,511.85 in both
+`mart_daily_revenue` and `fct_orders`; 489,346 orders in both.
+
+What the numbers say, and why (synthetic data, spec 12):
+
+- No 2026-10-02 row: the stack did not run that day.
+- Session conversion ~98 % and every real session adds to cart: the
+  generator creates sessions only around order items (purchase sessions
+  end in cart + purchase; the ~2 % without a purchase are cancel/return
+  sessions). The funnel logic is right; the data makes it uninformative.
+- Return rate falls to 0 on recent days: returns come days after delivery
+  (spec 8.4, "returns restate the past"); those days are recomputed as
+  returns land.
+- Gross margin ~0.52 and average order value ~171 are steady: products are
+  drawn uniformly with fixed price/cost ratios.
