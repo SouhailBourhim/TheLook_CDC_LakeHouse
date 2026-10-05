@@ -359,3 +359,31 @@ version ends where the next begins). Where the versions come from (bronze
 | `u`, the user's first event (user created before bronze began) | 7,683 | version 1, starting at `created_at` |
 | `u`, address changed | 7,718 | a new version (7,688 at build time; the rest arrived after) |
 | `r`, same state as the previous event | 18,656 | nothing (snapshot repeats are collapsed) |
+
+## P4: gold facts — 2026-10-05
+
+First full build (`jobs/gold.py`, dims + facts): 919 s including two DNS
+retries. A retry re-ran the facts stage after `fct_order_items` had already
+been merged, and correctly found nothing left to do there (the logged
+counts are "recomputed by this attempt", hence renamed).
+
+| Table | Rows | Checks (Athena) |
+|---|---|---|
+| fct_order_items | 575,377 | = silver order_items; keys unique; 0 without a user version |
+| fct_orders | 396,842 | keys unique; 0 without a user version; net = gross − returns in total (66,968,762.56 − 43,368.26 = 66,925,394.30) |
+| fct_sessions | 666,781 | 79,369 ghost sessions flagged |
+
+**Point-in-time join on real data:** 0 of 396,842 orders fall outside the
+validity range of their dim_user version; 15,018 joined a later version of
+their user and **101,683 orders keep an address the user no longer has**
+(FR4: the address at purchase time, not the current one).
+
+**Cycle times (silver then gold, as the DAG will run them):**
+
+| Cycle | Silver | Gold | Notes |
+|---|---|---|---|
+| Catch-up after ~6 h without silver | 1,876 s | 253 s | events 544,334 keys (604 s) |
+| Normal (~30 min of changes: ~10,000 orders) | 183 s | 310 s | ~8 min in total |
+
+O2 estimate (measured end to end in step 10): 30-minute schedule + ~8 min
+cycle + ~1.5 min bronze lag ≈ 40 min worst case, under the 1-hour target.

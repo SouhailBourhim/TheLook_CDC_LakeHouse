@@ -176,3 +176,279 @@ def build_dimensions(
         replace_table(df, f"{gold_db}.{name}")
         counts[name] = spark.table(f"{gold_db}.{name}").count()
     return counts
+
+
+# --- facts (incremental, ADR 015) ---------------------------------------------
+
+AMOUNT = "decimal(12,2)"
+WATERMARK = "thelook.silver-merged-at"
+
+
+def _hours(start: str, end: str):
+    return (F.unix_timestamp(end) - F.unix_timestamp(start)) / 3600.0
+
+
+def order_item_facts(
+    items: DataFrame, orders: DataFrame, products: DataFrame, users: DataFrame
+) -> DataFrame:
+    """fct_order_items: one row per order item.
+
+    user_sk is the dim_user version valid when the order was placed (a
+    point-in-time join, FR4); NULL if no version covers that moment yet
+    (the run retries those rows until one does).
+    """
+    o = orders.select(
+        F.col("id").alias("order_id"),
+        F.col("user_id"),
+        F.col("created_at").alias("order_created_at"),
+    )
+    p = products.select(
+        F.col("product_id"), F.col("cost").alias("unit_cost"), "distribution_center_id"
+    )
+    u = users.select(
+        "user_sk", F.col("user_id").alias("u_user_id"), "valid_from", "valid_to"
+    )
+    joined = (
+        items.join(o, "order_id", "left")
+        .join(p, "product_id", "left")
+        .join(
+            u,
+            (F.col("user_id") == F.col("u_user_id"))
+            & (F.col("order_created_at") >= F.col("valid_from"))
+            & (F.col("order_created_at") < F.col("valid_to")),
+            "left",
+        )
+    )
+    return joined.select(
+        F.col("id").alias("order_item_id"),
+        "order_id",
+        "user_id",
+        "user_sk",
+        "product_id",
+        "distribution_center_id",
+        F.date_format("order_created_at", "yyyyMMdd")
+        .cast("int")
+        .alias("order_date_key"),
+        "status",
+        "quantity",
+        "sale_price",
+        "unit_cost",
+        (F.col("sale_price") * F.col("quantity")).cast(AMOUNT).alias("gross_amount"),
+        (F.col("unit_cost") * F.col("quantity")).cast(AMOUNT).alias("cost_amount"),
+        (F.col("status") == "Cancelled").alias("is_cancelled"),
+        (F.col("status") == "Returned").alias("is_returned"),
+        F.col("order_created_at").alias("created_at"),
+        "shipped_at",
+        "delivered_at",
+        "returned_at",
+        "cancelled_at",
+        _hours("order_created_at", "shipped_at").alias("hours_to_ship"),
+        _hours("order_created_at", "delivered_at").alias("hours_to_deliver"),
+    )
+
+
+def order_facts(orders: DataFrame, item_facts: DataFrame) -> DataFrame:
+    """fct_orders: one row per order, amounts summed from its items with the
+    FR6 rules: gross excludes cancelled items, net = gross - returns."""
+    kept = ~F.col("is_cancelled")
+    totals = item_facts.groupBy("order_id").agg(
+        F.count("*").alias("item_count"),
+        F.max("user_sk").alias("user_sk"),
+        F.sum(F.when(kept, F.col("gross_amount")).otherwise(0))
+        .cast(AMOUNT)
+        .alias("gross_amount"),
+        F.sum(F.when(F.col("is_returned"), F.col("gross_amount")).otherwise(0))
+        .cast(AMOUNT)
+        .alias("returned_amount"),
+        F.sum(F.when(kept & ~F.col("is_returned"), F.col("cost_amount")).otherwise(0))
+        .cast(AMOUNT)
+        .alias("cost_amount"),
+    )
+    return orders.join(totals, orders["id"] == totals["order_id"], "left").select(
+        F.col("id").alias("order_id"),
+        "user_id",
+        "user_sk",
+        F.date_format("created_at", "yyyyMMdd").cast("int").alias("order_date_key"),
+        "status",
+        "num_of_items",
+        F.coalesce("item_count", F.lit(0)).alias("item_count"),
+        F.coalesce("gross_amount", F.lit(0).cast(AMOUNT)).alias("gross_amount"),
+        F.coalesce("returned_amount", F.lit(0).cast(AMOUNT)).alias("returned_amount"),
+        (F.coalesce("gross_amount", F.lit(0)) - F.coalesce("returned_amount", F.lit(0)))
+        .cast(AMOUNT)
+        .alias("net_amount"),
+        F.coalesce("cost_amount", F.lit(0).cast(AMOUNT)).alias("cost_amount"),
+        (F.col("status") == "Cancelled").alias("is_cancelled"),
+        (F.col("status") == "Returned").alias("is_returned"),
+        "created_at",
+        "shipped_at",
+        "delivered_at",
+        "returned_at",
+        "cancelled_at",
+        _hours("created_at", "shipped_at").alias("hours_to_ship"),
+        _hours("created_at", "delivered_at").alias("hours_to_deliver"),
+    )
+
+
+def session_facts(events: DataFrame) -> DataFrame:
+    """fct_sessions: one row per session. Ghost sessions (no user) are kept
+    and flagged: their "purchase" events have no order (source-schema.md),
+    so funnels exclude them."""
+    has = lambda kind: F.max(F.col("event_type") == kind)  # noqa: E731
+    return (
+        events.groupBy("session_id")
+        .agg(
+            F.max("user_id").alias("user_id"),
+            F.max("user_id").isNull().alias("is_ghost"),
+            F.min("created_at").alias("started_at"),
+            F.max("created_at").alias("ended_at"),
+            F.count("*").alias("event_count"),
+            has("product").alias("viewed_product"),
+            has("cart").alias("added_to_cart"),
+            has("purchase").alias("purchased"),
+            F.sum(F.when(F.col("event_type") == "cart", F.col("price")))
+            .cast(AMOUNT)
+            .alias("cart_value"),
+            F.first("traffic_source", ignorenulls=True).alias("traffic_source"),
+            F.first("browser", ignorenulls=True).alias("browser"),
+        )
+        .withColumn(
+            "session_date_key", F.date_format("started_at", "yyyyMMdd").cast("int")
+        )
+    )
+
+
+def fact_watermark(spark: SparkSession, table: str) -> datetime.datetime | None:
+    if not spark.catalog.tableExists(table):
+        return None
+    props = {r.key: r.value for r in spark.sql(f"SHOW TBLPROPERTIES {table}").collect()}
+    return (
+        datetime.datetime.fromisoformat(props[WATERMARK])
+        if WATERMARK in props
+        else None
+    )
+
+
+def merge_facts(spark: SparkSession, table: str, rows: DataFrame, key: str) -> None:
+    """Upsert recomputed fact rows on their grain key (idempotent)."""
+    if not spark.catalog.tableExists(table):
+        (
+            rows.limit(0)
+            .writeTo(table)
+            .using("iceberg")
+            .tableProperty("format-version", "2")
+            .tableProperty("write.merge.mode", "merge-on-read")
+            .tableProperty("write.update.mode", "merge-on-read")
+            .tableProperty("write.delete.mode", "merge-on-read")
+            .create()
+        )
+    rows.createOrReplaceTempView("fact_source")
+    spark.sql(
+        f"MERGE INTO {table} t USING fact_source s ON t.{key} = s.{key} "
+        "WHEN MATCHED THEN UPDATE SET * WHEN NOT MATCHED THEN INSERT *"
+    )
+
+
+def _set_watermark(spark: SparkSession, table: str, value) -> None:
+    if value is not None:
+        spark.sql(
+            f"ALTER TABLE {table} SET TBLPROPERTIES ('{WATERMARK}' = '{value.isoformat()}')"
+        )
+
+
+def _changed(df: DataFrame, since) -> DataFrame:
+    # Every silver run writes new files stamped with one _merged_at: with
+    # Iceberg's per-file min/max statistics, older files are skipped unread.
+    return df if since is None else df.where(F.col("_merged_at") > F.lit(since))
+
+
+def _null_user_ids(spark: SparkSession, table: str, key: str) -> DataFrame | None:
+    if not spark.catalog.tableExists(table):
+        return None
+    return (
+        spark.table(table).where("user_sk IS NULL").select(F.col(key).alias("_retry"))
+    )
+
+
+def build_facts(
+    spark: SparkSession,
+    silver_db: str = "lake.thelook_silver",
+    gold_db: str = "lake.thelook_gold",
+) -> dict:
+    """Recompute and MERGE the fact rows that changed since the last run;
+    returns how many rows *this call* recomputed (after a retry, rows the
+    first attempt already merged are not counted again).
+
+    Assumes silver is not being written meanwhile (the DAG runs silver, then
+    gold, one run at a time): otherwise a silver commit could slip behind
+    the watermark.
+    """
+    items, orders, events = (
+        spark.table(f"{silver_db}.{t}") for t in ("order_items", "orders", "events")
+    )
+    products = spark.table(f"{gold_db}.dim_product")
+    users = spark.table(f"{gold_db}.dim_user")
+    counts = {}
+
+    # fct_order_items: changed items, plus items still waiting for a user.
+    t_items = f"{gold_db}.fct_order_items"
+    since = fact_watermark(spark, t_items)
+    changed = _changed(items, since)
+    retry = _null_user_ids(spark, t_items, "order_item_id")
+    affected = changed
+    if retry is not None:
+        affected = affected.unionByName(
+            items.join(retry, items["id"] == retry["_retry"], "left_semi")
+        ).dropDuplicates(["id"])
+    affected = affected.persist()
+    item_rows = order_item_facts(affected, orders, products, users)
+    merge_facts(spark, t_items, item_rows, "order_item_id")
+    _set_watermark(spark, t_items, changed.agg(F.max("_merged_at")).first()[0])
+    counts["fct_order_items_recomputed"] = affected.count()
+
+    # fct_orders: changed orders, orders of changed items, orders without a user.
+    t_orders = f"{gold_db}.fct_orders"
+    since = fact_watermark(spark, t_orders)
+    changed_orders = _changed(orders, since)
+    ids = changed_orders.select(F.col("id").alias("_id")).unionByName(
+        affected.select(F.col("order_id").alias("_id"))
+    )
+    retry = _null_user_ids(spark, t_orders, "order_id")
+    if retry is not None:
+        ids = ids.unionByName(retry.select(F.col("_retry").alias("_id")))
+    ids = ids.distinct().persist()
+    order_rows = order_facts(
+        orders.join(ids, orders["id"] == ids["_id"], "left_semi"),
+        spark.table(t_items).join(ids, F.col("order_id") == ids["_id"], "left_semi"),
+    )
+    merge_facts(spark, t_orders, order_rows, "order_id")
+    _set_watermark(spark, t_orders, changed_orders.agg(F.max("_merged_at")).first()[0])
+    counts["fct_orders_recomputed"] = ids.count()
+
+    # fct_sessions: sessions with new events, recomputed from recent partitions.
+    t_sessions = f"{gold_db}.fct_sessions"
+    since = fact_watermark(spark, t_sessions)
+    new_events = _changed(events, since).persist()
+    bounds = new_events.agg(F.min("created_at"), F.max("_merged_at")).first()
+    if bounds[0] is not None:
+        sessions = new_events.select("session_id").distinct()
+        # A session spans minutes (events are back-dated): one hour of margin
+        # keeps all its events while reading only recent day partitions.
+        window = events.where(
+            F.col("created_at") >= F.lit(bounds[0] - datetime.timedelta(hours=1))
+        )
+        merge_facts(
+            spark,
+            t_sessions,
+            session_facts(window.join(sessions, "session_id", "left_semi")),
+            "session_id",
+        )
+        _set_watermark(spark, t_sessions, bounds[1])
+        counts["fct_sessions_recomputed"] = sessions.count()
+    else:
+        counts["fct_sessions_recomputed"] = 0
+
+    affected.unpersist()
+    ids.unpersist()
+    new_events.unpersist()
+    return counts
