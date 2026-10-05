@@ -16,7 +16,7 @@ import time
 
 from lakehouse.bronze import with_retries
 from lakehouse.session import lake_session
-from lakehouse.silver import SPECS, process_table
+from lakehouse.silver import SPECS, consistent_cut, process_table
 
 logging.basicConfig(
     level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s"
@@ -37,12 +37,18 @@ spark = lake_session(
 )
 
 names = sys.argv[1:] or list(SPECS)
+# One cut for the whole run (and its retries): every table as of the end of
+# the same stream batch (ADR 014).
+cut = with_retries(lambda: consistent_cut(spark))
+log.info("bronze cut: %s", cut)
 failed = []
 for name in names:
     start = time.monotonic()
     try:
         # Safe to retry: the MERGE is idempotent (ADR 014).
-        result = with_retries(lambda name=name: process_table(spark, SPECS[name]))
+        result = with_retries(
+            lambda name=name: process_table(spark, SPECS[name], cut=cut)
+        )
         log.info("%s in %.1f s", result, time.monotonic() - start)
     except Exception:
         log.exception("silver %s failed", name)

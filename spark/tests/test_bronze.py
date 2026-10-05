@@ -152,3 +152,23 @@ def test_append_once_skips_a_batch_already_in_the_table(monkeypatch):
     assert bronze.append_once(None, None, "t", "q1", 7) is False
     assert bronze.append_once(None, None, "t", "q1", 8) is True
     assert len(writes) == 1
+
+
+def test_ledger_row_records_every_table_once(spark, lake):
+    bronze_db, _ = lake
+    ledger = f"{bronze_db}.stream_batches"
+    users, orders = f"{bronze_db}.shop_users", f"{bronze_db}.shop_orders"
+    not_yet = f"{bronze_db}.shop_products"  # no batch has written it yet
+    for table in (users, orders):
+        spark.createDataFrame([(1,)], "id int").writeTo(table).using("iceberg").create()
+
+    assert bronze.record_batch(spark, "q1", 7, [users, orders, not_yet], ledger)
+    # A replayed batch finds its row and does not add a second one.
+    assert not bronze.record_batch(spark, "q1", 7, [users, orders, not_yet], ledger)
+
+    (row,) = spark.table(ledger).collect()
+    assert (row.query_id, row.batch_id) == ("q1", 7)
+    assert row.snapshots == {
+        "shop_users": bronze.current_snapshot(spark, users),
+        "shop_orders": bronze.current_snapshot(spark, orders),
+    }

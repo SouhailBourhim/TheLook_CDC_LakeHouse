@@ -28,6 +28,7 @@ from lakehouse.bronze import (
     SchemaRegistry,
     append_once,
     bronze_rows,
+    record_batch,
     table_for,
     with_retries,
 )
@@ -88,6 +89,11 @@ def process_batch(batch: DataFrame, batch_id: int) -> None:
             done.append(
                 f"{name}={per_topic[topic]}" if written else f"{name}=skipped(replay)"
             )
+        # Last, and only once every table above has committed: the ledger
+        # row that tells silver this batch is complete (ADR 012, ADR 014).
+        with_retries(
+            lambda: record_batch(spark, qid, batch_id, [table_for(t) for t in TOPICS])
+        )
         log.info(
             "batch %s: %s in %.1f s",
             batch_id,

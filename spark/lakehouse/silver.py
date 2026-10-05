@@ -1,7 +1,8 @@
 """Bronze change events -> silver current state (ADR 014).
 
 For one table, each run:
-  1. reads the bronze snapshots added since the last run (incremental read);
+  1. reads the bronze snapshots added since the last run (incremental read),
+     up to the stream's newest finished batch (consistent_cut);
   2. keeps the latest event per key (latest_per_key);
   3. types the columns (timestamps, money, MongoDB JSON) (silver_rows);
   4. MERGEs into the silver table with a position guard (merge_sql);
@@ -25,6 +26,8 @@ from pyspark.sql.types import (
     StructField,
     StructType,
 )
+
+from lakehouse.bronze import LEDGER, current_snapshot
 
 WATERMARK = "thelook.bronze-snapshot"
 MONEY = "decimal(10,2)"
@@ -242,11 +245,17 @@ def merge_sql(
 # --- 1 and 5. snapshots, watermark, table creation ------------------------------
 
 
-def current_snapshot(spark: SparkSession, table: str) -> int | None:
-    rows = spark.sql(
-        f"SELECT snapshot_id FROM {table}.refs WHERE name = 'main'"
-    ).collect()
-    return rows[0][0] if rows else None
+def consistent_cut(spark: SparkSession, ledger: str = LEDGER) -> dict[str, int]:
+    """Every bronze table's snapshot id at the end of the newest finished
+    stream batch (the stream's ledger, ADR 012). Reading all tables up to
+    the same batch keeps silver consistent across tables: an order item is
+    never merged while its order, written in the same batch, is not."""
+    if not spark.catalog.tableExists(ledger):
+        raise RuntimeError(f"{ledger} does not exist: has the bronze stream run?")
+    newest = spark.table(ledger).orderBy(F.col("committed_at").desc()).first()
+    if newest is None:
+        raise RuntimeError(f"{ledger} is empty: has the bronze stream run?")
+    return dict(newest.snapshots)
 
 
 def watermark(spark: SparkSession, table: str) -> int | None:
@@ -311,10 +320,13 @@ def process_table(
     spec: TableSpec,
     bronze_db: str = "lake.thelook_bronze",
     silver_db: str = "lake.thelook_silver",
+    cut: dict[str, int] | None = None,
 ) -> dict:
-    """One incremental run for one table; returns what it did."""
+    """One incremental run for one table, up to its snapshot in `cut` (the
+    job passes consistent_cut(); without one, the table's current snapshot,
+    for tests and one-off runs); returns what it did."""
     bronze, target = f"{bronze_db}.{spec.bronze}", f"{silver_db}.{spec.name}"
-    upto = current_snapshot(spark, bronze)
+    upto = current_snapshot(spark, bronze) if cut is None else cut.get(spec.bronze)
     after = watermark(spark, target)
     if upto is None or upto == after:
         return {"table": spec.name, "status": "up to date"}

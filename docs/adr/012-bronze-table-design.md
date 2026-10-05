@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-04 (P3, before the parsing code; spec FR2)
+- Amended: 2026-10-05 (P4 step 8): a per-batch ledger, `stream_batches`.
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -61,6 +62,25 @@ write (ADR 006).
   parser per source family.
 - ❌ Partitioning by commit day puts a whole snapshot in the snapshot's
   day (snapshot rows carry the snapshot time).
+
+## Amendment 2026-10-05: the stream's batch ledger
+
+The stream commits a table only when the batch has rows for it, so the
+tables' latest batch ids differ and nothing in them says whether the newest
+batch has finished. Silver, reading each table at whatever snapshot was
+current, merged order items whose orders were in the next batch (329 items
+in one run, P4 step 8).
+
+Each micro-batch now ends with one row in `lake.thelook_bronze.stream_batches`
+(`query_id`, `batch_id`, `committed_at`, `snapshots`: bronze table -> its
+snapshot id), written after every table append of the batch, with the same
+replay guard (query id and batch id in the snapshot summary). A row for
+batch N means all of batch N has committed. Rejected: "newest batch id - 1"
+(never confirms the last batch once the writers stop, so silver could not
+catch up for a reconciliation); committing every table every batch (seven
+mostly empty commits a minute). Cost: one small commit per batch, compacted
+by the maintenance job.
+
 
 ## References
 

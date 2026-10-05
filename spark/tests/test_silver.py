@@ -8,9 +8,11 @@ from decimal import Decimal
 from pyspark.sql import Row
 from pyspark.sql import functions as F
 
+from lakehouse.bronze import record_batch
 from lakehouse.silver import (
     SPECS,
     WATERMARK,
+    consistent_cut,
     latest_per_key,
     merge_sql,
     process_table,
@@ -222,6 +224,24 @@ def test_first_run_reads_everything_then_only_new_snapshots(spark, lake):
     assert set(state) == {"a", "c"}  # b deleted, c inserted
     assert state["a"].status == "Shipped" and state["a"]._position == 200
     assert process_table(spark, spec, bronze_db, silver_db)["status"] == "up to date"
+
+
+def test_rows_of_an_unfinished_stream_batch_wait_for_the_next_run(spark, lake):
+    bronze_db, silver_db = lake
+    src, dst = f"{bronze_db}.shop_order_items", f"{silver_db}.order_items"
+    ledger, spec = f"{bronze_db}.stream_batches", SPECS["order_items"]
+    append(spark, src, [pg("c", "a", 100, 1), pg("c", "b", 110, 2)], PG_BRONZE)
+    record_batch(spark, "q1", 1, [src], ledger)  # batch 1 finished
+    # Batch 2 has appended this table but not yet the others (no ledger row):
+    # in production, the orders of these items may not be in bronze yet.
+    append(spark, src, [pg("c", "c", 120, 3)], PG_BRONZE)
+
+    process_table(spark, spec, bronze_db, silver_db, cut=consistent_cut(spark, ledger))
+    assert set(silver_state(spark, dst)) == {"a", "b"}
+
+    record_batch(spark, "q1", 2, [src], ledger)  # batch 2 finished
+    process_table(spark, spec, bronze_db, silver_db, cut=consistent_cut(spark, ledger))
+    assert set(silver_state(spark, dst)) == {"a", "b", "c"}
 
 
 def test_an_older_event_replayed_later_cannot_overwrite_newer_state(spark, lake):

@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-04 (P4; spec FR3, ADR 009, ADR 012; settles open question E1)
+- Amended: 2026-10-05 (P4 step 8): one consistent bronze cut per run.
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -94,6 +95,18 @@ reads only the recent partitions of a 2.6 M-row table, not all of it.
 - ❌ A field whose type changes inside a MongoDB document becomes null
   rather than failing (JSON parsing is permissive); data contracts (P7)
   detect it.
+
+## Amendment 2026-10-05: one consistent bronze cut per run
+
+A silver run reads the newest row of the stream's ledger (ADR 012
+amendment) once, at the start, and processes every table up to the
+snapshot id that row gives it, retries included. All silver tables then
+reflect the end of the same stream batch: an order item is never merged
+while its order, written in the same batch, is not. Before, each table read
+the bronze snapshot current when its turn came, while the stream kept
+committing. Gold keeps a safety net for any remaining race: item facts
+built without their order are recomputed once it arrives (ADR 015).
+
 
 ## References
 

@@ -33,6 +33,9 @@ POSTGRES_TOPICS = [
 MONGO_TOPICS = [f"thelook_mongo.web.{c}" for c in ("events", "reviews")]
 TOPICS = POSTGRES_TOPICS + MONGO_TOPICS
 DATABASE = "lake.thelook_bronze"
+# One row per finished micro-batch: every bronze table's snapshot id at the
+# end of that batch (ADR 012). Silver reads the newest row (ADR 014).
+LEDGER = f"{DATABASE}.stream_batches"
 
 QUERY_ID = "thelook.query-id"
 BATCH_ID = "thelook.batch-id"
@@ -110,15 +113,27 @@ def bronze_rows(
     return postgres_bronze(decoded, ingested_at)
 
 
+def current_snapshot(spark: SparkSession, table: str) -> int | None:
+    rows = spark.sql(
+        f"SELECT snapshot_id FROM {table}.refs WHERE name = 'main'"
+    ).collect()
+    return rows[0][0] if rows else None
+
+
+def _marks(query_id: str, batch_id: int) -> dict:
+    """Write options that stamp the commit's snapshot summary (replay guard)."""
+    return {
+        f"snapshot-property.{QUERY_ID}": query_id,
+        f"snapshot-property.{BATCH_ID}": str(batch_id),
+    }
+
+
 def write_bronze(
     spark: SparkSession, rows: DataFrame, table: str, query_id: str, batch_id: int
 ) -> None:
     """Append rows, creating the table on its first batch (ADR 006: the
     writer creates and evolves bronze tables)."""
-    marks = {
-        f"snapshot-property.{QUERY_ID}": query_id,
-        f"snapshot-property.{BATCH_ID}": str(batch_id),
-    }
+    marks = _marks(query_id, batch_id)
     if not spark.catalog.tableExists(table):
         (
             rows.writeTo(table)
@@ -187,4 +202,35 @@ def append_once(
     if already_committed(snapshot_summaries(spark, table), query_id, batch_id):
         return False
     write_bronze(spark, rows, table, query_id, batch_id)
+    return True
+
+
+def record_batch(
+    spark: SparkSession,
+    query_id: str,
+    batch_id: int,
+    tables: list[str],
+    ledger: str = LEDGER,
+) -> bool:
+    """The micro-batch's last step: one ledger row holding every bronze
+    table's current snapshot id. A row for batch N therefore means all of
+    batch N's appends have committed, so silver can read every table as of
+    the same batch (ADR 014). Returns False when a replay finds the row.
+    """
+    if already_committed(snapshot_summaries(spark, ledger), query_id, batch_id):
+        return False
+    snapshots = {
+        table.rsplit(".", 1)[1]: current_snapshot(spark, table)
+        for table in tables
+        if spark.catalog.tableExists(table)
+    }
+    row = spark.createDataFrame(
+        [(query_id, batch_id, snapshots)],
+        "query_id string, batch_id bigint, snapshots map<string, bigint>",
+    ).withColumn("committed_at", F.current_timestamp())
+    writer = row.writeTo(ledger).options(**_marks(query_id, batch_id))
+    if spark.catalog.tableExists(ledger):
+        writer.append()
+    else:
+        writer.using("iceberg").tableProperty("format-version", "2").create()
     return True
