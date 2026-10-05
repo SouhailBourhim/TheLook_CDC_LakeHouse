@@ -766,7 +766,7 @@ September 2026. Real costs must be checked in AWS Cost Explorer.
 |---------------------------------------|--------------------------------------------------------------------|------------------------------------------------------------------|
 | Kafka, Kafka Connect, Schema Registry | Self-hosted in Docker on the local machine                         | \$0                                                              |
 | S3 requests from Spark streaming      | One commit per table per minute during work sessions (~8 tables x ~5 PUTs) | About \$0.01 per running hour                             |
-| Data transfer out of S3               | Local Spark jobs read the lake over the internet                   | \$0 under the 100 GB/month free allowance; \$0.09/GB above      |
+| Data transfer out of S3               | Local Spark jobs read the lake over the internet; measured (P4): ~0.8 GB per hour the full stack is up (transform ~0.6, stream ~0.2) | \$0 under the 100 GB/month free allowance (~125 hours of uptime); \$0.09/GB above |
 | S3 + Glue Catalog                     | A few GB stored                                                    | Under \$1                                                        |
 | Athena                                | \$5 per TB scanned, with a per-query scan limit                    | Under \$1                                                        |
 | Airflow, Spark, MongoDB, Redis, Neo4j | Self-hosted in Docker on the local machine                         | \$0                                                              |
@@ -796,7 +796,7 @@ and raise it only for load tests.
 | Debezium MongoDB connector may not support exactly-once source delivery       | Checked in P2: supported (Debezium 3.7 lists it; the connector runs with `exactly.once.support=required`); silver deduplication stays the safety net |
 | Kafka retention (3 days) is shorter than the life of most rows, so the topics no longer hold a full snapshot of the PostgreSQL tables (found in P2) | Bronze cannot be built from Kafka alone: P3 starts with a Debezium incremental snapshot of the PostgreSQL tables (signal), so bronze begins complete; afterwards bronze, not Kafka, is the full history |
 | A hard crash of the Docker VM loses records Kafka had acknowledged (one broker, no fsync); Connect's offsets can survive the records they cover, so the gap is silent (found in P4: ~16 s lost on 2026-10-04) | Kafka fsyncs every write (ADR 016); runbook: after any unclean Kafka shutdown ("no clean shutdown file" in its log), run the source-to-silver verify drill and re-snapshot the keys that differ |
-| Local Spark reading S3 incurs data-transfer charges                           | Demo volume stays far below the 100 GB/month free allowance; warn before any bulk backfill               |
+| Local Spark reading S3 incurs data-transfer charges (measured in P4: ~0.8 GB per hour of the full stack; running all month would be ~\$47 above the free allowance) | The `stream` and `airflow` profiles run only while working or demoing (`make down` otherwise); incremental reads, merge-on-read and table maintenance keep each run near its floor (~300 MB, set by MERGE key scans on random keys); weekly `make cost-report` and the budget alarm; warn before any bulk backfill |
 
 ## 13. Working with Claude Code
 

@@ -1169,8 +1169,19 @@ Traced step by step:
 - Stack up (core, stream, airflow); `transform` and `maintenance` DAGs
   **unpaused** and green. Stop with `make down` (clean Kafka shutdown).
 - Steps 8 and 9 done in code (commits up to 528e5c9), CI green.
-- **Waiting for Souhail:** (1) the spec's cost row (measured ~0.86 GB per
-  hour of the full stack); (2) review ADR 017 (proposed); (3) check
+- **Cost decided (Souhail):** optimize first, then stop and record. Done:
+  the facts build reads only the changed orders (fallback lookup logged as
+  `orders_looked_up`, 0 live) and the repair join skips items without an
+  order (b59d27b). Per run ~290-300 MB (was ~670 MB at the start of the
+  day): fixed cost of MERGE key scans on random keys, not cost per change.
+  Full stack ~0.8 GB per hour up = ~125 h/month free. Spec cost and risk
+  rows updated; profiles up only while working or demoing. Remaining ideas
+  for P9: facts partitioned by order day (marts), incremental dim_user,
+  skip idle gold stages.
+- Lesson: Spark's "bytes read" also counts reads from Spark's own cache, so
+  it overstates S3 reads (silver's increment appeared six times); network
+  counters per job are the ground truth, the event log only ranks queries.
+- **Waiting for Souhail:** (1) review ADR 017 (proposed); (2) check
   questions on step 9c-9d.
 - **Next: step 10**, P4 proofs: reconciliation drill (verify_silver with
   writers paused), O2 measured end to end (source change -> gold), Athena
