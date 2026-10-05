@@ -782,7 +782,7 @@ include table maintenance (snapshot expiry, compaction) in P4.
   `/dev/null` exits non-zero after a successful download; and `--dryrun`
   never calls AWS, so it proves nothing.
 
-### Where we stopped
+### Where we stopped (session 4, superseded below)
 
 - Steps 0-3 committed and pushed, CI green (39 Spark tests). Stream
   running (core + stream profiles).
@@ -912,7 +912,124 @@ include table maintenance (snapshot expiry, compaction) in P4.
   does not define.
 - Next: step 8, Airflow (image as a stage of the Spark Dockerfile, metadata
   Postgres, `airflow` profile) and the `transform` DAG every 30 minutes.
-- Next: step 7, marts and the metric definitions (FR6) + tests.
+- **Step 8a done** (commit 001cf12): Airflow 3.3.2 on the Spark image (uv,
+  constraints minus our overridden pins, `pyspark-client` 4.1.3), metadata
+  Postgres, apiserver on 127.0.0.1:8088, only the batch key in the
+  scheduler, scheduler capped at 3 GiB. Idle RAM measured: ~0.9 GB.
+- **Step 8b, first half** (commit f8819f7): `transform` DAG (silver ->
+  gold_dims -> gold_facts -> gold_marts, SparkSubmitOperator client mode,
+  `*/30`, catchup off, `max_active_runs=1`, 2 retries, 60 min timeout) and
+  a CI job that installs Airflow exactly like the image and parses the DAG
+  folder (4 tests; `max_active_runs=2` mutation fails them). CI green.
+- **Two green runs in a row** (2026-10-05 03:32-03:59 UTC). Unpausing ran
+  the latest missed slot (catchup=False skips older slots, not the last
+  one); the manual run waited *queued* until it finished: one active run.
+  Normal 18-min increment: **8 min 48 s** (silver 162 s, dims 91 s, facts
+  203 s, marts 67 s). After 1 h without silver: 18 min (silver 533 s).
+
+### Session 5 (cont.) — three findings from measuring the DAG
+
+Measuring is what found them; none would have shown as a red task.
+
+**1. Cost: ~0.67 GB downloaded from AWS per run** (container network
+counters, `/proc/net/dev` read *inside* the containers: Docker Desktop's
+PIDs are not visible from WSL). gold_facts alone read ~485 MB in both runs,
+whatever the increment: a fixed cost means a full read. Located with a
+**Spark event log** (`--conf spark.eventLog.enabled=true`, input bytes per
+SQL execution and per Iceberg scan):
+- lookups by random UUID (point-in-time join, the "retry unknown users"
+  path, each MERGE's target) cannot skip any file: min/max of random keys
+  covers everything, and with ~9 files per table, a few hundred keys hit
+  them all anyway (sorting by key would not help either);
+- **a bug**: `affected` / `ids` were `persist()`ed but read the fact table
+  merged right after; **Spark drops a cached frame when a table in its plan
+  is written**, so the logging `count()` recomputed everything from S3
+  (~110 MB) and could count something other than what was merged.
+- Uncommitted fix (see "Where we stopped"): repair unknown-member rows from
+  the fact's own `user_id` / `created_at` (`repair_unknown_users`, reads
+  only `user_sk` when there is nothing to repair); caches now read silver
+  only. Facts: ~310 -> 183 MB per run; it also repaired 51 orders stuck on
+  NULL forever (orders without items: the old retry recomputed NULL again).
+  60 tests pass; disabling the repair fails the retry test.
+- The spec's cost row ("demo volume far below 100 GB/month") is wrong at
+  ~1.3 GB per hour of the airflow profile (~75 h/month). Final figure after
+  the fixes, then Souhail decides (cost row / schedule / uptime).
+
+**2. Silver is not a consistent cut.** Silver processes tables one after
+another, each at the bronze snapshot current at that moment; the stream
+commits every 60 s meanwhile. Run 2: 329 items (216 orders) were merged
+without their orders (orders created 03:50:15-55, read by `orders` a few
+seconds before the next bronze batch). Silver heals at the next run, but
+gold built those facts with no user and no date, and the new repair cannot
+fix them (no `user_id` to repair from). Proposed fix (inside ADR 014):
+every silver run reads all tables up to **the same bronze batch** (the
+newest batch id all 7 tables committed; the ids are already in the bronze
+snapshot summaries), and gold re-computes facts that were built without
+their order (cheap check on a null column first).
+
+**3. Data loss: ~16 s of Postgres changes lost on 2026-10-04 at
+21:18:26-41 UTC.** Found from 6 users with orders but no bronze event.
+Traced step by step:
+- the users are in Postgres, not in Kafka (not even aborted records:
+  `read_uncommitted`), their orders are;
+- Kafka record times: an event of 21:18:44 written at 21:26:37: an outage;
+- all containers started 21:25:53-21:26:26 with 0 restarts: the Docker VM
+  died hard (~21:18:42) and `make up` started it again;
+- Kafka log 21:25:59: "Recovering 144 logs ... no clean shutdown file";
+- `_connect-offsets` kept positions up to txId **1197128** (21:18:41) while
+  `thelook.shop.users` kept records only up to **1196999**; streaming
+  resumed at 1197139, right after the stored offset.
+- **Why**: Kafka acknowledges writes before fsync (it relies on replicas;
+  we have RF=1). The crash lost the unflushed tail of some partition files
+  and not others: Connect's offsets survived, the data did not, so Connect
+  resumed *past* the lost records. Exactly-once is atomic only if the
+  broker keeps what it acknowledged.
+- Impact found so far: 6 users missing, **71 of 75 order items** created in
+  the window missing from silver (orders survived); updates in the window
+  left stale rows that only a full-column comparison can list. MongoDB
+  (events, reviews) not checked yet: same failure mode.
+- Connect's container log stops at 21:18:04 and keeps nothing after the
+  restart (cause unknown): Debezium's resume message is not available.
+
+### Debugging lessons (session 5, step 8)
+
+- **A cost that does not scale with the increment is a full read.** Two
+  runs with very different increments reading the same ~485 MB said so
+  before any code was read.
+- Measure with the engine's own counters (event log) rather than guessing
+  from code; the first guess (the events window) was wrong.
+- A measurement can include a retry: the first event log had a MERGE that
+  failed on a DNS outage (`UnknownHostException`) and ran twice.
+- Leftover files of the same size in `silver/events` are **orphans** from
+  backfill attempts killed by DNS outages: referenced by no snapshot, never
+  read, still stored (step 9's `remove_orphan_files`).
+- `aws s3 ls` prints local time (UTC+1 here).
+- Python 3.10 on the host: no backslash quotes inside f-strings (3.12+).
+
+### Where we stopped (2026-10-05, ~04:45 UTC) — LATEST, start here
+
+- **Stack down cleanly** with `make down` (Kafka flushed; volumes kept).
+  The `transform` DAG is **paused** in Airflow's database: `make up` with
+  the airflow profile will not start runs until it is unpaused.
+- **Uncommitted** (not yet commit-ready, finish with item 3 below):
+  `spark/lakehouse/gold.py` (`repair_unknown_users`, caches read silver
+  only), `spark/tests/test_gold_facts.py`, ADR 015 paragraph on the repair.
+- **Decisions waiting for Souhail:**
+  1. Kafka `log.flush.interval.messages=1` (fsync every write; measure the
+     cost) + a risk-register row + runbook rule "any unclean Kafka
+     shutdown -> run the verify drill". Spec change: needs approval.
+  2. Repair now: pause writers, `verify_silver` lists every differing key,
+     Debezium **blocking snapshot filtered by `additional-conditions`** on
+     those keys only, verify again. Check MongoDB for the same window.
+  3. What happened at 22:18 local time on 2026-10-04 (sleep? Docker
+     Desktop update? WSL shutdown?): decides whether it can be prevented.
+- **Then, in order:** Kafka setting -> repair -> silver consistent cut
+  (ADR 014 amendment) + gold facts rebuilt without their order -> tests ->
+  remeasure a full run (event log + network counters) -> cost decision ->
+  unpause, two green runs -> step 8 check questions -> step 9 maintenance.
+- Still pending from before: O8 (leaning B), E2 (before P6), the
+  "provisional days" rule for the revenue mart, P7 ideas (heartbeat
+  liveness table, alert on long-unresolved unknown members, oplog window).
 
 ### P1 plan (agreed)
 
