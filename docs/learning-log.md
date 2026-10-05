@@ -1059,6 +1059,8 @@ Traced step by step:
 | Gold facts | unknown members repaired from the fact itself, empty MERGE skipped, items built without their order recomputed; live: 0 items without order, 0 on the unknown member (a35ca4e) |
 | 9a silver watermark | `ingested_at`, migrated live with no full read (133e74a) |
 | 9b stream maintenance | hourly expiry (Java API) + metadata cleanup + ledger compaction: 36 s an hour (ddcef76) |
+| 9c bronze compaction + orphans | one heavier task per hourly run, in a background thread with a FAIR pool; batches keep running (d752856) |
+| 9d silver/gold maintenance DAG | `jobs/maintenance.py` daily, batch user, pool `lake` shared with transform; silver MoR tables 9+33 files -> 1+0 (528e5c9) |
 
 ### Concepts covered
 
@@ -1111,6 +1113,32 @@ Traced step by step:
   with metadata (manifests read for reachability), not with the work;
   the Java API avoids that computation; `rewrite_manifests` kept for 9d.
 
+### Debugging lessons (9c-9d)
+
+- **Blocking compaction cannot keep O1**: ~0.8 s per small file over the
+  internet (230 files: 3.5 min), and a full day makes 1,440 files a table.
+  Moved to a background thread; Spark's default FIFO scheduler would still
+  queue the thread's jobs ahead of the batches, hence a FAIR pool.
+- **A mutation that survived**: the "before today" filter could be removed
+  without failing the test, because today's partition had only 2 files and
+  Iceberg compacts groups of 5+. The test now has 6 files per day.
+- **Two ways a test row avoided a delete file**: alone in its file (Iceberg
+  drops the whole file, metadata only), or alone in its *partition* of a
+  `local[2]` DataFrame (two rows, two files). `coalesce(1)` fixed it.
+- **Dangling deletes**: after compaction applies a delete file, the file
+  stays and readers still open it (deletes are matched by partition and
+  sequence number, not by data file): `remove-dangling-deletes`.
+- **`No FileSystem for scheme "s3"`**: orphan removal lists files through
+  Hadoop's FileSystem by default, unlike every other Iceberg access
+  (S3FileIO); `prefix_listing => true`. The stream would have hit it on its
+  first orphan task: the rotation had not reached orphans yet.
+- **`r.day` on a date** is the day of the month: a misleading name clash,
+  not an Iceberg integer.
+- `Failed to load catalog: thelook_bronze` warnings: procedures given
+  "db.table" try "db" as a catalog first; full names remove them.
+- Again: a Python text replacement silently skipped because ruff had
+  reformatted the target (the assertion caught it). Re-read before editing.
+
 ### Measurements
 
 - Stream before maintenance: batches ~110 s (60 s trigger), driver download
@@ -1118,12 +1146,41 @@ Traced step by step:
 - After the first expiry (41 min, one-off): metadata.json 46 KB, batches
   34-45 s, driver download 3.2 MB/min (~0.19 GB per hour).
 - Silver with the ingested_at watermark: 2.5 min for ~25 min of changes.
+- **transform after all fixes** (network counters, idle baseline removed):
+  catch-up run (3 h of changes) 12.5 min, ~640 MB; **normal run (~20 min
+  of changes) 6.7 min, ~337 MB** (was 8.8 min, ~670 MB). Remaining reads
+  are structural: MERGE target key scans and the point-in-time join on
+  random UUID keys (no file can be skipped; bucketing would not help: a few
+  hundred random keys hit every bucket).
+- Per hour a profile is up: transform ~0.67 GB, stream ~0.19 GB; full stack
+  ~0.86 GB: the 100 GB free allowance = ~116 h/month; 24/7 = ~620 GB
+  (~$47/month above the allowance). Spec cost row: Souhail's decision.
+- maintenance DAG first run: 2 min 53 s, serialized with transform by the
+  pool. Two scheduled transform runs green (21:00, 21:30 UTC).
 - Hourly expiry, same work (~31-36 snapshots per table): SQL procedure
   `expire_snapshots` 935 s (a fixed ~2.5 min per table reading every
   manifest as Spark tasks); Iceberg Java API (incremental cleanup) 36 s.
 - Lesson: **measure the steady state, not just the first run**. The 41-min
   catch-up looked like a one-off; the hourly run showed the cost was fixed
   per table, which pointed at the cleanup strategy, not the backlog.
+
+### Where we stopped (2026-10-05, ~22:00 UTC) — LATEST, start here
+
+- Stack up (core, stream, airflow); `transform` and `maintenance` DAGs
+  **unpaused** and green. Stop with `make down` (clean Kafka shutdown).
+- Steps 8 and 9 done in code (commits up to 528e5c9), CI green.
+- **Waiting for Souhail:** (1) the spec's cost row (measured ~0.86 GB per
+  hour of the full stack); (2) review ADR 017 (proposed); (3) check
+  questions on step 9c-9d.
+- **Next: step 10**, P4 proofs: reconciliation drill (verify_silver with
+  writers paused), O2 measured end to end (source change -> gold), Athena
+  gold queries, README/runbook/results, then the P4 checkpoint.
+- Watch: the stream's first orphan task (after all 7 tables are
+  compacted, ~7 hours of runtime); `web_events` compaction (~540 files) in
+  the background thread; DNS / "Connection refused" blips (P9 hardening).
+- Still pending from before: O8 (leaning B), E2 (before P6), the
+  "provisional days" rule for the revenue mart, P7 ideas (heartbeat
+  liveness table, alert on long-unresolved unknown members, oplog window).
 
 ### P1 plan (agreed)
 
