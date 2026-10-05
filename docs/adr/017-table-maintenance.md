@@ -72,8 +72,16 @@ orphan files older than 3 days.
 
 - FR12 changes: the maintenance DAG covers silver and gold; bronze is
   maintained by the stream.
-- The stream pauses its batches while it maintains bronze (expected to be
-  seconds hourly and a minute or two daily; measured when built).
+- The stream pauses its batches while it maintains bronze. Measured
+  (2026-10-05): the first run, catching up on ~437 snapshots per busy
+  table, took 41 min; then Iceberg's `expire_snapshots` SQL procedure took
+  15.6 min an hour for ~36 snapshots per table, a fixed ~2.5 min per table
+  spent reading every manifest as Spark tasks to find unreferenced files.
+  The same expiry through Iceberg's Java API (`table.expireSnapshots()`,
+  whose incremental cleanup reads only what the expired snapshots
+  referenced) takes **36 s** for all 8 tables. The stream uses the Java API.
+- After the first expiry: `metadata.json` 487 KB -> 46 KB per busy table,
+  batches ~110 s -> 34-45 s, stream driver download 9.2 -> 3.2 MB/min.
 - Bronze time travel is limited to about an hour; "bronze as of T" is still
   a filter on `ingested_at`.
 - Orphan removal waits 3 days so that files of a write still in progress are

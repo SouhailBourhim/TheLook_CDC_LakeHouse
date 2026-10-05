@@ -14,6 +14,7 @@ Settings, overridable by environment variable:
   BRONZE_CHECKPOINT       checkpoint folder (default /opt/checkpoints/bronze)
 """
 
+import datetime
 import json
 import logging
 import os
@@ -24,10 +25,13 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from lakehouse.bronze import (
+    LEDGER,
     TOPICS,
     SchemaRegistry,
     append_once,
     bronze_rows,
+    compact,
+    maintain_bronze,
     record_batch,
     table_for,
     with_retries,
@@ -48,6 +52,38 @@ CHECKPOINT = os.environ.get("BRONZE_CHECKPOINT", "/opt/checkpoints/bronze")
 # batch jobs (P4).
 spark = lake_session("bronze-stream", cores_max=2)
 registry = SchemaRegistry("http://schema-registry:8081")
+
+
+# Bronze upkeep (ADR 017): at the first batch after a start, then hourly.
+MAINTAIN_EVERY = 3600  # seconds
+last_maintained = None
+
+
+def maintain() -> None:
+    """Expire bronze snapshots and compact the ledger. Best effort: a failure
+    is logged and retried an hour later, never allowed to stop the stream."""
+    global last_maintained
+    if (
+        last_maintained is not None
+        and time.monotonic() - last_maintained < MAINTAIN_EVERY
+    ):
+        return
+    start = time.monotonic()
+    try:
+        tables = [table_for(t) for t in TOPICS] + [LEDGER]
+        expired = maintain_bronze(
+            spark, tables, datetime.datetime.now(datetime.timezone.utc)
+        )
+        compacted = compact(spark, LEDGER)
+        log.info(
+            "maintenance: expired snapshots %s, ledger files compacted %s, in %.1f s",
+            expired,
+            compacted,
+            time.monotonic() - start,
+        )
+    except Exception:
+        log.exception("maintenance failed; next attempt in an hour")
+    last_maintained = time.monotonic()
 
 
 def query_id() -> str:
@@ -100,6 +136,7 @@ def process_batch(batch: DataFrame, batch_id: int) -> None:
             ", ".join(done) or "empty",
             time.monotonic() - start,
         )
+        maintain()
     finally:
         batch.unpersist()
 

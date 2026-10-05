@@ -14,6 +14,7 @@ would then hold duplicates, which silver removes by log position and the
 Kafka coordinates make visible).
 """
 
+import datetime
 import json
 import logging
 import time
@@ -234,3 +235,72 @@ def record_batch(
     else:
         writer.using("iceberg").tableProperty("format-version", "2").create()
     return True
+
+
+# --- maintenance (ADR 017): the stream maintains its own tables ----------------
+
+# Bronze is an append-only log: its history is in the rows ("bronze as of T"
+# is a filter on ingested_at), so an hour of snapshots is enough; the replay
+# guard needs only the newest one, silver only the ledger's cut (ADR 014).
+KEEP_SNAPSHOTS_FOR = datetime.timedelta(hours=1)
+KEEP_LAST_SNAPSHOTS = 5
+# Every commit writes a new metadata.json; Iceberg deletes the oldest ones at
+# commit time instead of letting them pile up.
+METADATA_CLEANUP = {
+    "write.metadata.delete-after-commit.enabled": "true",
+    "write.metadata.previous-versions-max": "20",
+}
+
+
+def maintain_bronze(
+    spark: SparkSession, tables: list[str], now: datetime.datetime
+) -> dict:
+    """Expire snapshots older than KEEP_SNAPSHOTS_FOR on each table (keeping
+    the last KEEP_LAST_SNAPSHOTS), and make Iceberg delete old metadata
+    files at commit; returns how many snapshots each table lost.
+
+    Append-only tables: every data file stays referenced by the newest
+    snapshot, so expiry deletes only old manifest lists and manifests.
+
+    Uses Iceberg's Java API (through PySpark's gateway to the JVM), not the
+    `expire_snapshots` SQL procedure: the procedure finds unreferenced files
+    by reading every manifest as Spark tasks, a fixed ~2.5 min per table
+    here (measured: 15.6 min an hour for 36 snapshots a table). The Java
+    API's incremental cleanup, chosen automatically when only the main
+    branch exists, reads only what the expired snapshots referenced.
+    """
+    older_than_ms = int((now - KEEP_SNAPSHOTS_FOR).timestamp() * 1000)
+    jvm = spark._jvm
+    size = jvm.org.apache.iceberg.relocated.com.google.common.collect.Iterables.size
+    expired = {}
+    for table in tables:
+        if not spark.catalog.tableExists(table):
+            continue
+        props = ", ".join(f"'{k}' = '{v}'" for k, v in METADATA_CLEANUP.items())
+        spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ({props})")
+        iceberg = jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
+            spark._jsparkSession, table
+        )
+        before = size(iceberg.snapshots())
+        (
+            iceberg.expireSnapshots()
+            .expireOlderThan(older_than_ms)
+            .retainLast(KEEP_LAST_SNAPSHOTS)
+            .commit()
+        )
+        iceberg.refresh()
+        expired[table.rsplit(".", 1)[1]] = before - size(iceberg.snapshots())
+        # Spark caches loaded tables: forget this one so the next append
+        # starts from the new metadata.
+        spark.catalog.refreshTable(table)
+    return expired
+
+
+def compact(spark: SparkSession, table: str) -> int:
+    """Rewrite small data files into larger ones; returns how many files
+    were rewritten (Iceberg's default: groups of at least 5 small files)."""
+    catalog, name = table.split(".", 1)
+    result = spark.sql(
+        f"CALL {catalog}.system.rewrite_data_files(table => '{name}')"
+    ).first()
+    return result.rewritten_data_files_count

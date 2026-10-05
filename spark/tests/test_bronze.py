@@ -1,6 +1,7 @@
 """Tests for lakehouse.bronze: table names, the replay guard, the schema cache,
 and routing each topic to the right parser."""
 
+import datetime
 import io
 import json
 
@@ -172,3 +173,44 @@ def test_ledger_row_records_every_table_once(spark, lake):
         "shop_users": bronze.current_snapshot(spark, users),
         "shop_orders": bronze.current_snapshot(spark, orders),
     }
+
+
+def test_maintenance_expires_old_snapshots_but_keeps_every_row(spark, lake):
+    bronze_db, _ = lake
+    table = f"{bronze_db}.shop_users"
+    for i in range(8):  # eight micro-batches, eight snapshots
+        df = spark.createDataFrame([(i,)], "id int")
+        if i == 0:
+            df.writeTo(table).using("iceberg").create()
+        else:
+            df.writeTo(table).append()
+    later = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
+
+    expired = bronze.maintain_bronze(spark, [table], later)
+
+    assert expired == {"shop_users": 8 - bronze.KEEP_LAST_SNAPSHOTS}
+    assert spark.table(table).count() == 8  # an append-only log loses no row
+    props = {r.key: r.value for r in spark.sql(f"SHOW TBLPROPERTIES {table}").collect()}
+    assert props["write.metadata.delete-after-commit.enabled"] == "true"
+
+
+def test_recent_snapshots_are_kept(spark, lake):
+    bronze_db, _ = lake
+    table = f"{bronze_db}.shop_orders"
+    spark.createDataFrame([(1,)], "id int").writeTo(table).using("iceberg").create()
+    for i in range(6):
+        spark.createDataFrame([(i,)], "id int").writeTo(table).append()
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    assert bronze.maintain_bronze(spark, [table], now) == {"shop_orders": 0}
+
+
+def test_ledger_compaction_merges_its_small_files(spark, lake):
+    bronze_db, _ = lake
+    ledger = f"{bronze_db}.stream_batches"
+    for batch_id in range(6):  # one tiny file per batch
+        bronze.record_batch(spark, "q1", batch_id, [], ledger)
+
+    assert bronze.compact(spark, ledger) == 6
+    assert spark.table(f"{ledger}.files").count() == 1
+    assert spark.table(ledger).count() == 6

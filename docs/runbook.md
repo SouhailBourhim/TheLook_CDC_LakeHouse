@@ -228,6 +228,23 @@ SELECT committed_at, summary['thelook.batch-id'], summary['added-records']
 FROM thelook_bronze."shop_orders$snapshots" ORDER BY committed_at DESC LIMIT 5
 ```
 
+### Bronze maintenance (inside the stream, ADR 017)
+
+At the first batch after a start, then hourly, the stream expires bronze
+snapshots older than 1 hour (keeping the last 5) and compacts its ledger
+(`thelook_bronze.stream_batches`). Check:
+
+```bash
+docker compose -f onprem/compose.yaml logs bronze-stream | grep "INFO: maintenance"
+```
+
+Normal: about 30-40 s. A failure is logged ("maintenance failed; next
+attempt in an hour") and never stops the stream. After the stream has been
+down for a long time, the first run expires everything at once (still
+seconds with the Java API; it took 41 min with the SQL procedure). Do not
+replace it with `CALL ... expire_snapshots`: that procedure costs ~2.5 min
+per table whatever the amount to expire.
+
 ### Re-snapshot the PostgreSQL tables
 
 `make snapshot-postgres` sends a **blocking** snapshot signal on
