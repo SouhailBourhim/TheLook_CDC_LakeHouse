@@ -885,7 +885,24 @@ include table maintenance (snapshot expiry, compaction) in P4.
   a Kimball **unknown member** (`user_sk = -1`) instead of NULL, so inner
   joins keep unresolved orders (reported as "Unknown"); **adopted**.
   Alert on rows unresolved for long: P7.
-- Pending for Souhail: review ADR 015 (still Proposed).
+- **ADR 015 accepted** (Souhail).
+- **Unknown member adopted** (Souhail's design): facts without a user
+  version point to `user_sk = -1`, a real dim_user row, so inner joins keep
+  them; retried each run.
+- **Step 7 done: marts.** Daily revenue, session funnel, product ratings;
+  revenue and funnel recompute only the days touched (facts carry
+  `_computed_at`, each mart a watermark on it). 60 Spark tests. On AWS the
+  marts reconcile with the facts (net 82,536,511.85, 489,346 orders).
+  Reading the numbers: conversion ~98 % because the generator only creates
+  sessions around orders (synthetic data, spec 12); recent return rates are
+  0 because returns come days later (spec 8.4, recomputed as they land); no
+  row for 2026-10-02 (stack off).
+- Lessons (step 7): decimal / decimal gives a decimal rate next to double
+  rates; rates are now always doubles, money always decimal. I twice wrote
+  convoluted placeholder code (`if False` branches) and replaced it before
+  running: code Souhail reads line by line must be plain.
+- Next: step 8, Airflow (image as a stage of the Spark Dockerfile, metadata
+  Postgres, `airflow` profile) and the `transform` DAG every 30 minutes.
 - Next: step 7, marts and the metric definitions (FR6) + tests.
 
 ### P1 plan (agreed)

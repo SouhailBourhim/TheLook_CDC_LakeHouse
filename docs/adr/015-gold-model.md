@@ -1,6 +1,6 @@
 # 015. Gold: star schema, SCD2 users, metric definitions
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-04 (P4; spec FR4, FR5, FR6)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
