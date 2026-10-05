@@ -210,6 +210,7 @@ def test_second_run_recomputes_only_what_changed(spark, lake):
     assert first == {
         "fct_order_items_repaired": 0,
         "fct_orders_repaired": 0,
+        "orders_looked_up": 0,  # first run: every order counts as changed
         "fct_order_items_recomputed": 2,
         "fct_orders_recomputed": 2,
         "fct_sessions_recomputed": 1,
@@ -233,6 +234,7 @@ def test_second_run_recomputes_only_what_changed(spark, lake):
     assert second == {
         "fct_order_items_repaired": 0,
         "fct_orders_repaired": 0,
+        "orders_looked_up": 0,  # o2 changed with its item
         "fct_order_items_recomputed": 1,
         "fct_orders_recomputed": 1,
         "fct_sessions_recomputed": 0,
@@ -273,3 +275,23 @@ def test_items_built_before_their_order_are_recomputed_when_it_arrives(spark, la
     row = spark.table(f"{gold}.fct_order_items").first()
     assert second["fct_order_items_recomputed"] == 1
     assert row.created_at == ORDERED and row.user_sk == 100
+
+
+def test_an_item_changing_without_its_order_looks_the_order_up(spark, lake):
+    silver, gold = setup(
+        spark, lake, [item("i1"), item("i2", "o2")], [order("o1"), order("o2")]
+    )
+    build_facts(spark, silver, gold)
+
+    # Item i2 is returned; its order o2 does not change in silver.
+    spark.sql(f"DELETE FROM {silver}.order_items WHERE id = 'i2'")
+    spark.createDataFrame(
+        [item("i2", "o2", status="Returned", merged=at(21))], ITEMS
+    ).writeTo(f"{silver}.order_items").append()
+    second = build_facts(spark, silver, gold)
+
+    assert second["orders_looked_up"] == 1  # o2, from the whole orders table
+    i2 = spark.table(f"{gold}.fct_order_items").where("order_item_id = 'i2'").first()
+    assert i2.created_at == ORDERED and i2.user_sk == 100  # its order was found
+    o2 = spark.table(f"{gold}.fct_orders").where("order_id = 'o2'").first()
+    assert o2.returned_amount == Decimal("10.00")  # totals recomputed

@@ -406,7 +406,9 @@ def repair_unknown_users(
     if not spark.catalog.tableExists(table):
         return 0
     unresolved = F.col("user_sk").isNull() | (F.col("user_sk") == UNKNOWN_USER_SK)
-    facts = spark.table(table).where(unresolved)
+    # Facts built without their order (no created_at) have no user to look
+    # up: build_facts recomputes them from silver instead.
+    facts = spark.table(table).where(unresolved & F.col("created_at").isNotNull())
     # The usual case: nothing to repair, found by reading user_sk alone.
     if facts.limit(1).count() == 0:
         return 0
@@ -496,25 +498,39 @@ def build_facts(
             items.join(orphans, items["id"] == orphans["_id"], "left_semi")
         ).dropDuplicates(["id"])
     affected = affected.persist()
+
+    # The orders this run needs: the changed orders, read through the
+    # _merged_at file statistics (older files skipped), plus the orders of
+    # changed items that are not among them. The generator updates an order
+    # with its items, so that second set is usually empty (7,065 of 7,065 in
+    # a measured run): the whole orders table, keyed on random UUIDs no file
+    # statistic can skip, is read only when it is not.
+    changed_orders = _changed(orders, fact_watermark(spark, t_orders)).persist()
+    needed = affected.select(F.col("order_id").alias("_id")).distinct()
+    missing = needed.join(
+        changed_orders, needed["_id"] == changed_orders["id"], "left_anti"
+    ).persist()
+    relevant_orders = changed_orders
+    counts["orders_looked_up"] = missing.count()
+    if counts["orders_looked_up"]:
+        relevant_orders = changed_orders.unionByName(
+            orders.join(missing, orders["id"] == missing["_id"], "left_semi")
+        ).dropDuplicates(["id"])
+    relevant_orders = relevant_orders.persist()
+
     # _computed_at: when this row was (re)computed; the marts' watermark.
-    item_rows = order_item_facts(affected, orders, products, users).withColumn(
+    item_rows = order_item_facts(affected, relevant_orders, products, users).withColumn(
         "_computed_at", F.current_timestamp()
     )
     merge_facts(spark, t_items, item_rows, "order_item_id")
     _set_watermark(spark, t_items, changed.agg(F.max("_merged_at")).first()[0])
     counts["fct_order_items_recomputed"] = affected.count()
 
-    # fct_orders: changed orders and the orders of changed items.
-    since = fact_watermark(spark, t_orders)
-    changed_orders = _changed(orders, since)
-    ids = (
-        changed_orders.select(F.col("id").alias("_id"))
-        .unionByName(affected.select(F.col("order_id").alias("_id")))
-        .distinct()
-        .persist()
-    )
+    # fct_orders: changed orders and the orders of changed items, i.e. the
+    # relevant orders; totals from their items' facts (just merged above).
+    ids = relevant_orders.select(F.col("id").alias("_id"))
     order_rows = order_facts(
-        orders.join(ids, orders["id"] == ids["_id"], "left_semi"),
+        relevant_orders,
         spark.table(t_items).join(ids, F.col("order_id") == ids["_id"], "left_semi"),
     )
     merge_facts(
@@ -524,7 +540,7 @@ def build_facts(
         "order_id",
     )
     _set_watermark(spark, t_orders, changed_orders.agg(F.max("_merged_at")).first()[0])
-    counts["fct_orders_recomputed"] = ids.count()
+    counts["fct_orders_recomputed"] = relevant_orders.count()
 
     # fct_sessions: sessions with new events, recomputed from recent partitions.
     t_sessions = f"{gold_db}.fct_sessions"
@@ -552,7 +568,9 @@ def build_facts(
         counts["fct_sessions_recomputed"] = 0
 
     affected.unpersist()
-    ids.unpersist()
+    changed_orders.unpersist()
+    missing.unpersist()
+    relevant_orders.unpersist()
     new_events.unpersist()
     return counts
 
