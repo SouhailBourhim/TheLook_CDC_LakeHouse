@@ -40,8 +40,11 @@ def event(op, lsn, ts, city="Casablanca", offset=None):
 
 
 def versions(spark, events):
+    """The real versions (the unknown member, version 0, is tested apart)."""
     df = spark.createDataFrame(events, BRONZE_USERS)
-    return sorted(dim_user(df).collect(), key=lambda r: r.version)
+    return sorted(
+        (r for r in dim_user(df).collect() if r.version > 0), key=lambda r: r.version
+    )
 
 
 # --- dim_user ------------------------------------------------------------------
@@ -130,6 +133,14 @@ def test_surrogate_keys_are_unique_and_identical_on_every_rebuild(spark):
 def test_dim_user_keeps_every_tracked_column(spark):
     (v,) = versions(spark, [event("r", 100, at(10))])
     assert all(getattr(v, c) is not None for c in USER_COLUMNS)
+
+
+def test_one_unknown_member_row_for_unresolved_facts(spark):
+    df = spark.createDataFrame([event("r", 100, at(10))], BRONZE_USERS)
+    unknown = [r for r in dim_user(df).collect() if r.user_sk == -1]
+    assert len(unknown) == 1
+    (u,) = unknown
+    assert (u.city, u.is_current, u.valid_to) == ("Unknown", False, OPEN_END)
 
 
 # --- dim_date ------------------------------------------------------------------

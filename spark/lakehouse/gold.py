@@ -10,10 +10,16 @@ import datetime
 
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
+from pyspark.sql.types import StringType
 
 # The open end of the current version: a sentinel instead of NULL, so a
 # point-in-time join is just `ts >= valid_from AND ts < valid_to`.
 OPEN_END = datetime.datetime(9999, 12, 31)
+
+# Kimball's "unknown member": facts whose user version does not exist (yet)
+# point here instead of holding NULL, so an inner join to dim_user keeps them
+# (reported as "Unknown") and the retry finds them by this key.
+UNKNOWN_USER_SK = -1
 
 # Columns whose change makes a new version of a user. updated_at is left
 # out: the generator does not bump it on address changes (source-schema.md).
@@ -130,7 +136,7 @@ def dim_user(bronze_users: DataFrame) -> DataFrame:
         .where(F.col("op") != "d")
     )
     first_valid_from = F.least(F.col("created_at"), F.col("changed_at"))
-    return versions.select(
+    known = versions.select(
         F.xxhash64("user_id", "lsn").alias("user_sk"),
         "user_id",
         *USER_COLUMNS,
@@ -142,6 +148,28 @@ def dim_user(bronze_users: DataFrame) -> DataFrame:
         F.col("valid_to").isNull().alias("is_current"),
         "version",
     )
+    return known.unionByName(_unknown_user(known))
+
+
+def _unknown_user(known: DataFrame) -> DataFrame:
+    """The single "unknown member" row: valid for all time, never current,
+    text attributes "Unknown", the rest NULL."""
+    values = {
+        "user_sk": UNKNOWN_USER_SK,
+        "valid_from": datetime.datetime(1900, 1, 1),
+        "valid_to": OPEN_END,
+        "is_current": False,
+        "version": 0,
+    }
+    row = []
+    for f in known.schema.fields:
+        if f.name in values:
+            row.append(values[f.name])
+        elif f.name in USER_COLUMNS and isinstance(f.dataType, StringType):
+            row.append("Unknown")
+        else:
+            row.append(None)
+    return known.sparkSession.createDataFrame([tuple(row)], known.schema)
 
 
 def replace_table(df: DataFrame, table: str) -> None:
@@ -194,8 +222,8 @@ def order_item_facts(
     """fct_order_items: one row per order item.
 
     user_sk is the dim_user version valid when the order was placed (a
-    point-in-time join, FR4); NULL if no version covers that moment yet
-    (the run retries those rows until one does).
+    point-in-time join, FR4); the unknown member (-1) if no version covers
+    that moment yet (the run retries those rows until one does).
     """
     o = orders.select(
         F.col("id").alias("order_id"),
@@ -223,7 +251,7 @@ def order_item_facts(
         F.col("id").alias("order_item_id"),
         "order_id",
         "user_id",
-        "user_sk",
+        F.coalesce("user_sk", F.lit(UNKNOWN_USER_SK)).alias("user_sk"),
         "product_id",
         "distribution_center_id",
         F.date_format("order_created_at", "yyyyMMdd")
@@ -362,12 +390,13 @@ def _changed(df: DataFrame, since) -> DataFrame:
     return df if since is None else df.where(F.col("_merged_at") > F.lit(since))
 
 
-def _null_user_ids(spark: SparkSession, table: str, key: str) -> DataFrame | None:
+def _unresolved_ids(spark: SparkSession, table: str, key: str) -> DataFrame | None:
+    """Fact rows still pointing to the unknown member (or NULL, the
+    convention before the unknown member existed): retried every run."""
     if not spark.catalog.tableExists(table):
         return None
-    return (
-        spark.table(table).where("user_sk IS NULL").select(F.col(key).alias("_retry"))
-    )
+    unresolved = F.col("user_sk").isNull() | (F.col("user_sk") == UNKNOWN_USER_SK)
+    return spark.table(table).where(unresolved).select(F.col(key).alias("_retry"))
 
 
 def build_facts(
@@ -394,7 +423,7 @@ def build_facts(
     t_items = f"{gold_db}.fct_order_items"
     since = fact_watermark(spark, t_items)
     changed = _changed(items, since)
-    retry = _null_user_ids(spark, t_items, "order_item_id")
+    retry = _unresolved_ids(spark, t_items, "order_item_id")
     affected = changed
     if retry is not None:
         affected = affected.unionByName(
@@ -413,7 +442,7 @@ def build_facts(
     ids = changed_orders.select(F.col("id").alias("_id")).unionByName(
         affected.select(F.col("order_id").alias("_id"))
     )
-    retry = _null_user_ids(spark, t_orders, "order_id")
+    retry = _unresolved_ids(spark, t_orders, "order_id")
     if retry is not None:
         ids = ids.unionByName(retry.select(F.col("_retry").alias("_id")))
     ids = ids.distinct().persist()

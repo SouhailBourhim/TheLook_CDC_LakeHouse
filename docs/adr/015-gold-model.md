@@ -64,6 +64,13 @@ events arrive late or out of order; ~70,000 bronze rows make it cheap.
 | `fct_orders` | one order | items, amounts, status, timestamps, flags |
 | `fct_sessions` | one session (events) | user (null for ghosts), `is_ghost`, start, end, events, viewed product / added to cart / purchased, cart value |
 
+An order whose user version does not exist (yet) points to the **unknown
+member**: a single `dim_user` row with `user_sk = -1` (Kimball), not NULL,
+so an inner join to `dim_user` keeps the order (reported as "Unknown")
+instead of silently dropping it; those rows are retried on every run until
+a version matches (Souhail's design, adopted at step 6). A row unresolved
+for long is a data problem, not timing: alert in P7.
+
 Each run recomputes only what changed: order items and orders whose silver
 row was merged since the last gold run (silver's `_merged_at` is the
 watermark, stored as a gold table property like silver's), and sessions

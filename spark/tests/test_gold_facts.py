@@ -101,11 +101,11 @@ def test_line_amounts_flags_and_durations(spark):
     assert row.hours_to_ship == 3.0  # ordered 11:00, shipped 14:00
 
 
-def test_no_user_version_leaves_user_sk_null(spark):
+def test_no_user_version_points_to_the_unknown_member(spark):
     (row,) = order_item_facts(
         *frames(spark, [item("i1")], [order("o1", user="u-new")])
     ).collect()
-    assert row.user_sk is None
+    assert row.user_sk == -1  # kept by inner joins, reported as "Unknown"
 
 
 def test_order_amounts_follow_the_fr6_rules(spark):
@@ -240,7 +240,7 @@ def test_second_run_recomputes_only_what_changed(spark, lake):
 def test_rows_without_a_user_version_are_retried_until_one_exists(spark, lake):
     silver, gold = setup(spark, lake, [item("i1")], [order("o1", user="u-late")])
     build_facts(spark, silver, gold)
-    assert spark.table(f"{gold}.fct_order_items").first().user_sk is None
+    assert spark.table(f"{gold}.fct_order_items").first().user_sk == -1
 
     # The user's version appears in a later dim_user rebuild; nothing changed
     # in silver, yet the fact is repaired.

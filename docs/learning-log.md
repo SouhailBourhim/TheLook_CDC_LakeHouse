@@ -878,8 +878,14 @@ include table maintenance (snapshot expiry, compaction) in P4.
     (harmless for datetimes, a classic bug for mutable defaults).
   - Catch-up runs scale with the increment (6 h of changes: 31 min of
     silver); normal 30-minute increments take ~3 min.
-- Pending for Souhail: review ADR 015 (still Proposed); step 6 check
-  questions.
+- Check answers (step 6), all correct: (1) volume and S3 transfer, and facts
+  have no intervals to split, only rows to upsert; (3) a cancelled item
+  never was a sale, a returned one was (the refund is a real outflow and
+  the return rate is a metric of its own). (2) went further than the code:
+  a Kimball **unknown member** (`user_sk = -1`) instead of NULL, so inner
+  joins keep unresolved orders (reported as "Unknown"); **adopted**.
+  Alert on rows unresolved for long: P7.
+- Pending for Souhail: review ADR 015 (still Proposed).
 - Next: step 7, marts and the metric definitions (FR6) + tests.
 
 ### P1 plan (agreed)
