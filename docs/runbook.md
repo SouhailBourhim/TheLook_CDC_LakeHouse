@@ -262,6 +262,47 @@ signal table and an INSERT grant (ADR 004), so blocking snapshots are used.
    connector (`PUT .../stop`), write the offset back without them
    (`PATCH .../offsets`, Kafka Connect 3.6+), then resume.
 
+### After an unclean Kafka shutdown: verify, then repair silver
+
+**Trigger.** Kafka's log at start says `Recovering N logs ... since no clean
+shutdown file was found` (`docker compose -f onprem/compose.yaml logs kafka
+| grep "no clean shutdown"`): the broker was killed (Docker VM crash, power
+loss, `docker kill`), not stopped. Before ADR 016, records Kafka had
+acknowledged could be lost while Connect's offsets past them survived:
+Connect then resumes after the gap and nothing reports it (2026-10-04:
+~16 s lost). With the fsync setting this should not happen; the procedure
+proves it each time.
+
+1. **Quiesce.** `docker compose -f onprem/compose.yaml stop generator
+   review-simulator` (`make up` restarts the generator: stop it again).
+   Keep `stream` up until its log says "idle and waiting for new data".
+2. **Bring silver up to bronze:** `make spark-run JOB=jobs/silver.py`
+   (tee the output to a file: `--rm` containers lose their logs).
+3. **Compare:** `uv run drills/verify_silver.py` (reads all of silver,
+   ~0.7 GB of S3 transfer). Every missing / differing / extra key goes to
+   `drills/logs/silver-diff-<time>.json` (git-ignored: keys identify people).
+   All OK: stop here.
+4. **Re-send only those keys:** `python3 drills/resnapshot.py
+   drills/logs/silver-diff-<time>.json` prints one BLOCKING snapshot signal
+   per connector, filtered to the keys; add `--send` to send it. Check
+   `docker compose -f onprem/compose.yaml logs connect | grep -E
+   "Finished (exporting|snapshotting)"`: the counts must equal the keys.
+   The `filter` field differs per connector: PostgreSQL runs it as the whole
+   SELECT (a bare `id IN (...)` fails with `syntax error at or near "id"`,
+   logged as a WARN, the task keeps running); MongoDB parses a query
+   document (`{"_id": {"$in": [...]}}`). Blocking snapshots only read.
+5. **Wait for bronze** (a batch with those row counts in the stream's
+   progress), run silver for the affected tables
+   (`make spark-run JOB="jobs/silver.py users order_items events"`), then
+   verify them again: all OK. Restart the writers. The next gold run
+   recomputes the affected facts (their silver `_merged_at` moved).
+
+Measured on 2026-10-05 for the 2026-10-04 loss: users 6 missing + 4 stale,
+order_items 69 missing + 27 stale, events 314 missing (all created in the
+crash window); orders, products, dist_centers and reviews intact.
+Snapshots: 10 + 96 rows in 46 ms (PostgreSQL), 314 documents in 41 ms
+(MongoDB).
+
 ## Spark AWS credentials
 
 The streaming job authenticates as IAM user `thelook-spark-stream`

@@ -23,6 +23,10 @@ Run it when the sources are quiet and both bronze and silver have caught
 up: stop the generator and the review simulator, wait for the stream's
 batches to be empty, run `make spark-run JOB=jobs/silver.py`, then this.
 
+Every key that is missing, differs or is extra is written to
+drills/logs/silver-diff-<UTC time>.json (git-ignored: keys identify people):
+the input of the repair procedure (runbook, "Repair silver after a loss").
+
 Usage: uv run drills/verify_silver.py [table ...]   (exit code 0 = identical)
 """
 
@@ -91,27 +95,23 @@ def silver_digests(table) -> tuple[list[str], dict]:
     return columns, out
 
 
-def compare(name: str, columns: list[str], silver: dict, source_rows) -> bool:
-    missing = differ = seen = 0
-    examples = []
+def compare(name: str, columns: list[str], silver: dict, source_rows) -> dict:
+    """Keys missing from silver, differing, or in silver only."""
+    missing, differ, seen = [], [], 0
     for row in source_rows:
         seen += 1
         got = silver.pop(row["id"], None)
         if got is None:
-            missing += 1
+            missing.append(str(row["id"]))
         elif got != digest(columns, [row.get(c) for c in columns]):
-            differ += 1
-            if len(examples) < 3:
-                examples.append(row["id"])
-    extra = len(silver)
-    ok = not (missing or extra or differ)
+            differ.append(str(row["id"]))
+    keys = {"missing": missing, "differ": differ, "extra": [str(k) for k in silver]}
+    ok = not any(keys.values())
     print(
-        f"{name:13} source={seen:>8} missing={missing} extra={extra} differ={differ}  "
-        f"{'OK' if ok else 'MISMATCH'}"
+        f"{name:13} source={seen:>8} missing={len(missing)} extra={len(keys['extra'])} "
+        f"differ={len(differ)}  {'OK' if ok else 'MISMATCH'}"
     )
-    for e in examples:
-        print("   example", e)
-    return ok
+    return keys
 
 
 def main() -> int:
@@ -120,7 +120,7 @@ def main() -> int:
     os.environ.setdefault("AWS_REGION", "us-east-1")
     catalog = load_catalog("glue", type="glue", **{"glue.region": "us-east-1"})
     only = set(sys.argv[1:])
-    start, ok = time.monotonic(), True
+    start, diff = time.monotonic(), {}
 
     with psycopg.connect(
         host="localhost",
@@ -139,7 +139,7 @@ def main() -> int:
             cur.execute(f"SELECT * FROM shop.{name}")
             names = [d.name for d in cur.description]
             rows = (dict(zip(names, r, strict=True)) for r in cur)
-            ok &= compare(name, columns, silver, rows)
+            diff[name] = compare(name, columns, silver, rows)
             cur.close()
 
     mongo = MongoClient(
@@ -152,8 +152,16 @@ def main() -> int:
             continue
         columns, silver = silver_digests(catalog.load_table(f"thelook_silver.{name}"))
         docs = ({**d, "id": d["_id"]} for d in mongo["web"][name].find())
-        ok &= compare(name, columns, silver, docs)
+        diff[name] = compare(name, columns, silver, docs)
 
+    ok = not any(any(keys.values()) for keys in diff.values())
+    if not ok:
+        logs = Path(__file__).resolve().parent / "logs"
+        logs.mkdir(exist_ok=True)
+        stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+        out = logs / f"silver-diff-{stamp}.json"
+        out.write_text(json.dumps(diff, indent=1))
+        print("keys written to", out)
     print(f"{'ALL OK' if ok else 'MISMATCH'} in {time.monotonic() - start:.0f} s")
     return 0 if ok else 1
 

@@ -16,6 +16,11 @@
   "snapshot.mode": "initial",
   "exactly.once.support": "required",
 
+  "signal.enabled.channels": "kafka",
+  "signal.kafka.topic": "thelook.signals",
+  "signal.kafka.bootstrap.servers": "kafka:29092",
+  "signal.kafka.groupId": "thelook-mongo-signals",
+
   "heartbeat.interval.ms": "30000",
 
   "topic.creation.default.partitions": "1",

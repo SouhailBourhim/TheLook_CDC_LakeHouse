@@ -1,6 +1,6 @@
 # 016. Kafka fsyncs every write on the single broker
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-05 (P4; spec NFR "Kafka configuration", risk register)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
