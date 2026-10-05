@@ -85,6 +85,24 @@ jobs:
           --with-requirements requirements-test.txt
           python -m pytest -q
 
+  dags:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.20"
+      # Airflow installed exactly as in the image (ADR 013): Python 3.10, the
+      # checksummed 3.3.2 constraints minus our overridden pins, the override.
+      - run: airflow/ci-constraints.sh /tmp/constraints.txt
+      - run: >
+          uv venv --python 3.10 /tmp/af &&
+          uv pip install --python /tmp/af -r airflow/requirements-test.txt
+          -c /tmp/constraints.txt --override onprem/spark/airflow-overrides.txt
+      - run: /tmp/af/bin/python -m pytest -q airflow/tests
+        env:
+          AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+
   alert-rules:
     runs-on: ubuntu-24.04
     steps:
