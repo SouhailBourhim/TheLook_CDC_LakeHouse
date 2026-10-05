@@ -1006,7 +1006,7 @@ Traced step by step:
 - `aws s3 ls` prints local time (UTC+1 here).
 - Python 3.10 on the host: no backslash quotes inside f-strings (3.12+).
 
-### Where we stopped (2026-10-05, ~04:45 UTC) — LATEST, start here
+### Where we stopped (2026-10-05, ~04:45 UTC) — superseded by session 6
 
 - **Stack down cleanly** with `make down` (Kafka flushed; volumes kept).
   The `transform` DAG is **paused** in Airflow's database: `make up` with
@@ -1030,6 +1030,87 @@ Traced step by step:
 - Still pending from before: O8 (leaning B), E2 (before P6), the
   "provisional days" rule for the revenue mart, P7 ideas (heartbeat
   liveness table, alert on long-unresolved unknown members, oplog window).
+
+## Session 6 — 2026-10-05 (afternoon) — P4 step 8 fixes, step 9 started
+
+### Decisions taken
+
+- **ADR 016 accepted**: Kafka fsyncs every write (`log.flush.interval.messages=1`)
+  + risk row + runbook rule (unclean Kafka shutdown -> verify drill).
+  Measured: 43,253 -> 6,907 records/s flat out; p99 2 -> 5 ms at 200/s.
+  The crash cause stays unknown (Souhail): treated as unpredictable.
+- **Repair now** (Souhail): done, see below.
+- **Maintenance: each layer by its writer** (Souhail, ADR 017 proposed):
+  the stream maintains bronze with the key it already has; the Airflow DAG
+  maintains silver and gold as the batch user. No new IAM user; spec FR12
+  updated.
+- Mine, inside the spec: the stream's batch **ledger** and silver's
+  **consistent cut** (ADR 012/014 amendments); silver's watermark by
+  `ingested_at` (ADR 014 amendment); gold repairs without re-reading silver
+  (ADR 015).
+
+### Steps done
+
+| Step | Result |
+|---|---|
+| Kafka fsync | live, measured, ADR 016 (9a80b88) |
+| Repair of the 2026-10-04 loss | verify listed users 6 missing + 4 stale, order_items 69 + 27, events 314 missing (all from the crash window); `drills/resnapshot.py` re-sent exactly those keys (10 + 96 rows in 46 ms, 314 docs in 41 ms); all 7 silver tables identical to the sources again (ecf54df) |
+| Ledger + consistent cut | `thelook_bronze.stream_batches`, one row per finished batch; silver reads one cut per run (b11298a) |
+| Gold facts | unknown members repaired from the fact itself, empty MERGE skipped, items built without their order recomputed; live: 0 items without order, 0 on the unknown member (a35ca4e) |
+| 9a silver watermark | `ingested_at`, migrated live with no full read (133e74a) |
+| 9b stream maintenance | hourly expiry (Java API) + metadata cleanup + ledger compaction: 36 s an hour (ddcef76) |
+
+### Concepts covered
+
+- **Exactly-once is atomic at the protocol level only**: with one
+  unflushed broker, a crash kept Connect's offsets and lost the records
+  they covered (Souhail's answer, refined: the resume point came from
+  Connect's own stored offset; the slot never runs ahead of it).
+- **A re-read restores current state, not history**: intermediate versions
+  lost in a gap stay lost (a user changing address twice in the gap gets
+  one dim_user version), and the verify drill cannot see it.
+- **Commit log / ledger**: a "this batch is complete" record written last,
+  so readers get a consistent cut across tables (the idea behind Delta's
+  `_delta_log` or a database's commit record).
+- **Iceberg metadata grows with every commit**: `metadata.json` lists every
+  snapshot and is rewritten at each commit; an always-on writer slows down
+  and downloads more each batch until snapshots are expired.
+- **Expiry is cheap to commit, expensive to clean up**: the commit is
+  metadata only; finding the files no longer referenced reads every
+  manifest (~420 per table here), which is what took 41 minutes.
+
+### Debugging lessons
+
+- **The `filter` of a Debezium snapshot means different things**:
+  PostgreSQL blocking snapshots run it as the whole SELECT (`id IN (...)`
+  failed with "syntax error at or near id", logged as a WARN only);
+  MongoDB parses a query document. Checked in the connector source code.
+- MongoDB incremental snapshots *write* watermark documents to a signal
+  collection (write access to the source): blocking ones only read.
+- A test that passes on the old code proves nothing: the first expiry test
+  removed one snapshot, and Iceberg still accepted the read through the
+  retained snapshot's parent id; with a gap of two, the old code fails
+  ("not a parent ancestor"), the new one passes.
+- `datetime.UTC` written a third time (Python 3.11+, the image runs 3.10);
+  ruff cannot catch an attribute: grep for it before running.
+- `grep | tee` buffers: a log file can stay empty until the job ends.
+- A slow stream had two causes on top of each other: concurrent silver and
+  verify runs on the same network, and metadata growth. Separate them
+  before fixing (batches were 37-47 s once the other jobs stopped).
+
+### Measurements
+
+- Stream before maintenance: batches ~110 s (60 s trigger), driver download
+  9.2 MB/min; metadata.json 487 KB per busy table.
+- After the first expiry (41 min, one-off): metadata.json 46 KB, batches
+  34-45 s, driver download 3.2 MB/min (~0.19 GB per hour).
+- Silver with the ingested_at watermark: 2.5 min for ~25 min of changes.
+- Hourly expiry, same work (~31-36 snapshots per table): SQL procedure
+  `expire_snapshots` 935 s (a fixed ~2.5 min per table reading every
+  manifest as Spark tasks); Iceberg Java API (incremental cleanup) 36 s.
+- Lesson: **measure the steady state, not just the first run**. The 41-min
+  catch-up looked like a one-off; the hourly run showed the cost was fixed
+  per table, which pointed at the cleanup strategy, not the backlog.
 
 ### P1 plan (agreed)
 
