@@ -845,6 +845,15 @@ include table maintenance (snapshot expiry, compaction) in P4.
   the build); 18,656 snapshot rows repeating the state were collapsed.
 - Again `datetime.UTC` in code for Python 3.10: ruff's py310 target stops
   ruff *suggesting* it, not me writing it; the 3.10 test run caught it.
+- Check answers (step 5), all correct: (1) a rebuild is a pure function of
+  bronze, and a logic fix applies to all history at the next run with no
+  backfill; an incremental SCD2 would have to get atomic close/open,
+  several changes per batch, late events splitting an interval, no-ops and
+  erasure right; (2) unstable keys orphan facts or, worse, get reused by
+  another version (orders silently attributed to the wrong person); (3)
+  without the created_at start, an order placed before bronze began matches
+  no version. Souhail's caveat added to ADR 015: before bronze began, the
+  first captured address is an approximation.
 - Next: step 6, gold facts (incremental) + tests.
 
 ### P1 plan (agreed)

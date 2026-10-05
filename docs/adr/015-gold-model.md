@@ -40,7 +40,9 @@ began (3-day retention) plus the P3 snapshot.
 4. **the first known version starts at the user's `created_at`**:
    history before bronze began was lost to Kafka retention, and without
    this an old order would match no version (documented limitation:
-   address changes before bronze began are not recoverable);
+   address changes before bronze began are not recoverable, so for that
+   period the first captured address is an approximation of where the
+   user lived);
 5. `user_sk` = `xxhash64(user_id, lsn of the version's first event)`:
    deterministic, so a full rebuild gives every version the same key and
    facts keep matching; and unique, which `(user_id, valid_from)` would not
