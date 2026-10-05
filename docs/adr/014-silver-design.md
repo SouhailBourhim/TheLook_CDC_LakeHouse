@@ -121,9 +121,14 @@ The watermark is now the newest `ingested_at` merged
 (`thelook.bronze-ingested-at`). A run reads bronze as of the cut's
 snapshot (`versionAsOf`, always recent) where `ingested_at` is greater than
 the watermark; per-file min/max statistics on `ingested_at` skip the files
-already processed. Correct because the cut holds only finished batches,
-every row of a batch shares one `ingested_at`, and a later batch has a later
-one. Tables with the old property are migrated on their next run (the
+already processed. Correct because the stream runs one micro-batch at a
+time and writes each table in one atomic commit, stamped with that write's
+`current_timestamp()` (a retry gets a new, later stamp): for one table,
+commit order is `ingested_at` order. (The ledger's cut adds consistency
+*across* tables; it is not what makes the watermark safe.) The assumption
+that can fail is the driver's clock: if it went backwards (WSL can resync
+after the laptop sleeps), a batch stamped before the watermark would be
+skipped silently. Known limit; the verify drill would show it. Tables with the old property are migrated on their next run (the
 newest `ingested_at` as of their old snapshot).
 
 

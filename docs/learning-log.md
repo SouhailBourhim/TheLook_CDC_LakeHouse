@@ -1098,6 +1098,19 @@ Traced step by step:
   verify runs on the same network, and metadata growth. Separate them
   before fixing (batches were 37-47 s once the other jobs stopped).
 
+### Check answers (step 9a-9b)
+
+- (1) Conclusion right, mechanism wrong: commits cannot land out of
+  `ingested_at` order (one micro-batch at a time, one atomic commit per
+  table, a retry gets a later stamp). The ledger gives cross-table
+  consistency, not watermark safety. The real risk, missed by both of us
+  and by ADR 014's first wording (corrected): the driver's clock going
+  backwards. (2) Correct; Souhail added that expiry is what physically
+  removes erased personal data (P8). Precision: silver is merge-on-read,
+  so erasure = delete + compaction + expiry. (3) Correct: the cost scales
+  with metadata (manifests read for reachability), not with the work;
+  the Java API avoids that computation; `rewrite_manifests` kept for 9d.
+
 ### Measurements
 
 - Stream before maintenance: batches ~110 s (60 s trigger), driver download

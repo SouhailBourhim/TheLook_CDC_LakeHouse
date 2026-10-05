@@ -49,9 +49,10 @@ Option 1 (Souhail, 2026-10-05). No new identity, no right widened.
 its watermark is the newest `ingested_at` it has processed. Each run reads
 bronze as of the ledger's cut (`versionAsOf`, always a recent snapshot)
 filtered on `ingested_at` greater than the watermark; Iceberg's per-file
-min/max statistics skip the files already processed. Safe because the cut
-holds only finished batches: a row committed later has a later
-`ingested_at`.
+min/max statistics skip the files already processed. Safe because the
+stream commits one batch at a time, each table in one commit, so a row
+committed later has a later `ingested_at`, as long as the driver's clock
+never goes backwards (ADR 014 amendment).
 
 **Bronze (in the stream):**
 
