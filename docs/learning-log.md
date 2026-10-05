@@ -901,6 +901,15 @@ include table maintenance (snapshot expiry, compaction) in P4.
   rates; rates are now always doubles, money always decimal. I twice wrote
   convoluted placeholder code (`if False` branches) and replaced it before
   running: code Souhail reads line by line must be plain.
+- Check answers (step 7), all correct: (1) days to recompute come from the
+  changed fact rows' order dates (a cohort view), so yesterday is
+  recomputed when its items are returned today; (2) keep everything at the
+  fact's grain, filter in the mart; (3) floats cannot hold most cent
+  amounts, and Spark's parallel, unordered sums make float totals differ
+  between runs of the same query; decimal is exact and deterministic.
+  **Proposal pending (Souhail):** mark recent days provisional in the
+  revenue mart; needs a business rule (return window), which the source
+  does not define.
 - Next: step 8, Airflow (image as a stage of the Spark Dockerfile, metadata
   Postgres, `airflow` profile) and the `transform` DAG every 30 minutes.
 - Next: step 7, marts and the metric definitions (FR6) + tests.
