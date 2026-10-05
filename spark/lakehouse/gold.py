@@ -18,7 +18,7 @@ OPEN_END = datetime.datetime(9999, 12, 31)
 
 # Kimball's "unknown member": facts whose user version does not exist (yet)
 # point here instead of holding NULL, so an inner join to dim_user keeps them
-# (reported as "Unknown") and the retry finds them by this key.
+# (reported as "Unknown") and repair_unknown_users finds them by this key.
 UNKNOWN_USER_SK = -1
 
 # Columns whose change makes a new version of a user. updated_at is left
@@ -223,7 +223,7 @@ def order_item_facts(
 
     user_sk is the dim_user version valid when the order was placed (a
     point-in-time join, FR4); the unknown member (-1) if no version covers
-    that moment yet (the run retries those rows until one does).
+    that moment yet (later runs repair those rows once one does).
     """
     o = orders.select(
         F.col("id").alias("order_id"),
@@ -393,13 +393,63 @@ def _changed(df: DataFrame, since) -> DataFrame:
     return df if since is None else df.where(F.col("_merged_at") > F.lit(since))
 
 
-def _unresolved_ids(spark: SparkSession, table: str, key: str) -> DataFrame | None:
-    """Fact rows still pointing to the unknown member (or NULL, the
-    convention before the unknown member existed): retried every run."""
+def repair_unknown_users(
+    spark: SparkSession, table: str, key: str, users: DataFrame
+) -> int:
+    """Point fact rows still on the unknown member (or NULL, the convention
+    before it existed) to the user version that now covers them; returns how
+    many were repaired.
+
+    Uses the fact's own user_id and created_at, never silver: any other
+    change would have brought the row back through _changed() anyway.
+    """
+    if not spark.catalog.tableExists(table):
+        return 0
+    unresolved = F.col("user_sk").isNull() | (F.col("user_sk") == UNKNOWN_USER_SK)
+    facts = spark.table(table).where(unresolved)
+    # The usual case: nothing to repair, found by reading user_sk alone.
+    if facts.limit(1).count() == 0:
+        return 0
+    u = users.select(
+        F.col("user_sk").alias("found_sk"),
+        F.col("user_id").alias("u_user_id"),
+        "valid_from",
+        "valid_to",
+    )
+    found = (
+        facts.join(
+            u,
+            (F.col("user_id") == F.col("u_user_id"))
+            & (F.col("created_at") >= F.col("valid_from"))
+            & (F.col("created_at") < F.col("valid_to")),
+        )
+        .select(key, "found_sk")
+        # Materialised before the MERGE: once user_sk changes, recomputing
+        # this plan would find nothing (and count 0).
+        .localCheckpoint()
+    )
+    repaired = found.count()
+    if repaired == 0:  # e.g. users that never existed: an empty MERGE still
+        return 0  # reads the whole target
+    found.createOrReplaceTempView("repair_source")
+    spark.sql(
+        f"MERGE INTO {table} t USING repair_source s ON t.{key} = s.{key} "
+        "WHEN MATCHED THEN UPDATE SET "
+        "t.user_sk = s.found_sk, t._computed_at = current_timestamp()"
+    )
+    return repaired
+
+
+def _built_without_order(spark: SparkSession, table: str) -> DataFrame | None:
+    """Ids of item facts built while their order was not in silver yet (no
+    created_at: it comes from the order), or None. Materialised: a frame that
+    still read the fact table would be recomputed after the MERGE into it."""
     if not spark.catalog.tableExists(table):
         return None
-    unresolved = F.col("user_sk").isNull() | (F.col("user_sk") == UNKNOWN_USER_SK)
-    return spark.table(table).where(unresolved).select(F.col(key).alias("_retry"))
+    missing = spark.table(table).where(F.col("created_at").isNull())
+    if missing.limit(1).count() == 0:  # the usual case, reads created_at alone
+        return None
+    return missing.select(F.col("order_item_id").alias("_id")).localCheckpoint()
 
 
 def build_facts(
@@ -407,9 +457,10 @@ def build_facts(
     silver_db: str = "lake.thelook_silver",
     gold_db: str = "lake.thelook_gold",
 ) -> dict:
-    """Recompute and MERGE the fact rows that changed since the last run;
-    returns how many rows *this call* recomputed (after a retry, rows the
-    first attempt already merged are not counted again).
+    """Repair rows still on the unknown member, then recompute and MERGE the
+    fact rows that changed since the last run; returns how many rows *this
+    call* repaired and recomputed (after a retry, rows the first attempt
+    already merged are not counted again).
 
     Assumes silver is not being written meanwhile (the DAG runs silver, then
     gold, one run at a time): otherwise a silver commit could slip behind
@@ -420,17 +471,29 @@ def build_facts(
     )
     products = spark.table(f"{gold_db}.dim_product")
     users = spark.table(f"{gold_db}.dim_user")
-    counts = {}
-
-    # fct_order_items: changed items, plus items still waiting for a user.
     t_items = f"{gold_db}.fct_order_items"
+    t_orders = f"{gold_db}.fct_orders"
+    counts = {
+        "fct_order_items_repaired": repair_unknown_users(
+            spark, t_items, "order_item_id", users
+        ),
+        "fct_orders_repaired": repair_unknown_users(spark, t_orders, "order_id", users),
+    }
+
+    # The cached frames below read silver only. Spark drops a cached frame
+    # when a table in its plan is written: one reading a fact table merged
+    # below would be recomputed from S3 at its next use.
+
+    # fct_order_items: the items changed since the last run, plus items built
+    # before their order reached silver (rare since silver reads one
+    # consistent bronze cut, ADR 014; re-read from silver when it happens).
     since = fact_watermark(spark, t_items)
     changed = _changed(items, since)
-    retry = _unresolved_ids(spark, t_items, "order_item_id")
+    orphans = _built_without_order(spark, t_items)
     affected = changed
-    if retry is not None:
+    if orphans is not None:
         affected = affected.unionByName(
-            items.join(retry, items["id"] == retry["_retry"], "left_semi")
+            items.join(orphans, items["id"] == orphans["_id"], "left_semi")
         ).dropDuplicates(["id"])
     affected = affected.persist()
     # _computed_at: when this row was (re)computed; the marts' watermark.
@@ -441,17 +504,15 @@ def build_facts(
     _set_watermark(spark, t_items, changed.agg(F.max("_merged_at")).first()[0])
     counts["fct_order_items_recomputed"] = affected.count()
 
-    # fct_orders: changed orders, orders of changed items, orders without a user.
-    t_orders = f"{gold_db}.fct_orders"
+    # fct_orders: changed orders and the orders of changed items.
     since = fact_watermark(spark, t_orders)
     changed_orders = _changed(orders, since)
-    ids = changed_orders.select(F.col("id").alias("_id")).unionByName(
-        affected.select(F.col("order_id").alias("_id"))
+    ids = (
+        changed_orders.select(F.col("id").alias("_id"))
+        .unionByName(affected.select(F.col("order_id").alias("_id")))
+        .distinct()
+        .persist()
     )
-    retry = _unresolved_ids(spark, t_orders, "order_id")
-    if retry is not None:
-        ids = ids.unionByName(retry.select(F.col("_retry").alias("_id")))
-    ids = ids.distinct().persist()
     order_rows = order_facts(
         orders.join(ids, orders["id"] == ids["_id"], "left_semi"),
         spark.table(t_items).join(ids, F.col("order_id") == ids["_id"], "left_semi"),

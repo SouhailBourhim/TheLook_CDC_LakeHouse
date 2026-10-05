@@ -67,9 +67,16 @@ events arrive late or out of order; ~70,000 bronze rows make it cheap.
 An order whose user version does not exist (yet) points to the **unknown
 member**: a single `dim_user` row with `user_sk = -1` (Kimball), not NULL,
 so an inner join to `dim_user` keeps the order (reported as "Unknown")
-instead of silently dropping it; those rows are retried on every run until
-a version matches (Souhail's design, adopted at step 6). A row unresolved
-for long is a data problem, not timing: alert in P7.
+instead of silently dropping it; every run repairs those rows once a
+version matches (Souhail's design, adopted at step 6). The repair reads the
+fact's own `user_id` and order time and updates `user_sk` only: any other
+change would have brought the row back as changed. (The first version
+recomputed them from silver, which read all of silver `order_items` every
+run; measured and changed at step 8.) A row unresolved
+for long is a data problem, not timing: alert in P7. Item facts built while
+their order was not in silver yet (no `created_at`, which comes from the
+order) are recomputed from silver once it arrives; silver's consistent cut
+(ADR 014) makes this rare, and the check reads that one column.
 
 Each run recomputes only what changed: order items and orders whose silver
 row was merged since the last gold run (silver's `_merged_at` is the

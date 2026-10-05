@@ -208,6 +208,8 @@ def test_second_run_recomputes_only_what_changed(spark, lake):
     )
     first = build_facts(spark, silver, gold)
     assert first == {
+        "fct_order_items_repaired": 0,
+        "fct_orders_repaired": 0,
         "fct_order_items_recomputed": 2,
         "fct_orders_recomputed": 2,
         "fct_sessions_recomputed": 1,
@@ -229,6 +231,8 @@ def test_second_run_recomputes_only_what_changed(spark, lake):
     second = build_facts(spark, silver, gold)
 
     assert second == {
+        "fct_order_items_repaired": 0,
+        "fct_orders_repaired": 0,
         "fct_order_items_recomputed": 1,
         "fct_orders_recomputed": 1,
         "fct_sessions_recomputed": 0,
@@ -245,7 +249,27 @@ def test_rows_without_a_user_version_are_retried_until_one_exists(spark, lake):
     # The user's version appears in a later dim_user rebuild; nothing changed
     # in silver, yet the fact is repaired.
     write(spark, f"{gold}.dim_user", [(300, "u-late", at(0, day=1), OPEN_END)], USERS)
-    build_facts(spark, silver, gold)
+    second = build_facts(spark, silver, gold)
 
+    # Repaired from the fact rows themselves: nothing recomputed from silver.
+    assert (second["fct_order_items_repaired"], second["fct_orders_repaired"]) == (1, 1)
+    assert second["fct_order_items_recomputed"] == 0
     assert spark.table(f"{gold}.fct_order_items").first().user_sk == 300
     assert spark.table(f"{gold}.fct_orders").first().user_sk == 300
+
+
+def test_items_built_before_their_order_are_recomputed_when_it_arrives(spark, lake):
+    silver, gold = setup(spark, lake, [item("i1", "o9")], [order("o1")])
+    build_facts(spark, silver, gold)
+    first = spark.table(f"{gold}.fct_order_items").first()
+    assert first.created_at is None and first.user_sk == -1  # o9 not in silver
+
+    # The order reaches silver in a later run; the item itself does not change.
+    spark.createDataFrame([order("o9", merged=at(21))], ORDERS).writeTo(
+        f"{silver}.orders"
+    ).append()
+    second = build_facts(spark, silver, gold)
+
+    row = spark.table(f"{gold}.fct_order_items").first()
+    assert second["fct_order_items_recomputed"] == 1
+    assert row.created_at == ORDERED and row.user_sk == 100
