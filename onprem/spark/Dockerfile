@@ -1,9 +1,15 @@
 # syntax=docker/dockerfile:1.7
+# Two stages (ADR 011, ADR 013):
+#   spark    the cluster and job image: the Docker Official Spark image plus
+#            the jars Spark does not ship (Compose builds it with target: spark)
+#   airflow  Airflow on top of exactly that stage, so its spark-submit drivers
+#            share Python 3.10, Java 17 and the jars with the executors
+#
 # Spark image for the lake jobs (ADR 011): the Docker Official Spark image
 # plus the jars Spark does not ship. Each jar was verified against Maven
 # Central's published SHA-512 or SHA-1, then pinned here by SHA-256;
 # ADD --checksum fails the build if a download differs.
-FROM spark:4.1.3-python3@sha256:8abe31671cf03d5bcf0c3746c31c62e76b65e450a005eafb2c017db76e56b294
+FROM spark:4.1.3-python3@sha256:8abe31671cf03d5bcf0c3746c31c62e76b65e450a005eafb2c017db76e56b294 AS spark
 
 ARG MAVEN=https://repo1.maven.org/maven2
 
@@ -45,4 +51,42 @@ COPY --chmod=644 spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 # owner of the image's folder, so the spark user (uid 185) can write it;
 # otherwise the volume would be root-owned.
 RUN mkdir -p /opt/checkpoints && chown spark:spark /opt/checkpoints
+USER spark
+
+# --- Airflow stage (ADR 013) -------------------------------------------------------
+FROM spark AS airflow
+USER root
+
+# uv 0.12.20, the same version as locally and in CI: the image's Python has
+# no ensurepip, so `python3 -m venv` fails; uv creates the virtualenv itself
+# and supports --override. Checksum from the release's .sha256 file.
+ADD --checksum=sha256:6590717592ace991ff83a63fef799e3ad9d33ecc8f96c5d6bdd732496e79337f \
+    https://github.com/astral-sh/uv/releases/download/0.12.20/uv-x86_64-unknown-linux-gnu.tar.gz /tmp/uv.tgz
+RUN tar -xzf /tmp/uv.tgz -C /usr/local/bin --strip-components=1 && rm /tmp/uv.tgz
+
+# Airflow's tested dependency versions for 3.3.2 on Python 3.10, pinned by
+# checksum, plus our one override (airflow-overrides.txt).
+ADD --checksum=sha256:9c78ff08ccbe56f9a8cc0a3171927d53a95bd49d12d6bd7eaa91281b34b654fb \
+    https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.10.txt /opt/airflow/constraints.txt
+COPY airflow-overrides.txt /opt/airflow/overrides.txt
+
+# Airflow in its own virtualenv, so the image's system Python (which runs
+# the Spark drivers and executors) is untouched. The pins we override are
+# removed from our copy of the constraints first: an --override replaces
+# what packages *declare*, but a constraint still applies on top, so
+# keeping pyspark-client==4.2.0 there next to our 4.1.3 is unsatisfiable.
+RUN sed -E "/^($(grep -v '^#' /opt/airflow/overrides.txt | cut -d= -f1 | paste -sd'|'))==/d" \
+      /opt/airflow/constraints.txt > /opt/airflow/constraints-thelook.txt \
+ && uv venv --python /usr/bin/python3 /opt/airflow/venv \
+ && uv pip install --python /opt/airflow/venv --no-cache \
+      apache-airflow==3.3.2 \
+      apache-airflow-providers-apache-spark==6.3.2 \
+      apache-airflow-providers-postgres==7.0.2 \
+      --constraint /opt/airflow/constraints-thelook.txt \
+      --override /opt/airflow/overrides.txt \
+ && mkdir -p /opt/airflow/logs /opt/airflow/dags \
+ && chown -R spark:spark /opt/airflow
+
+ENV AIRFLOW_HOME=/opt/airflow \
+    PATH=/opt/airflow/venv/bin:$PATH
 USER spark

@@ -89,6 +89,7 @@ counts page cache for Kafka and MongoDB, so it is an upper bound):
 | `core` | postgres, mongo, generator, review-simulator, kafka, schema-registry, connect | ~4.6 GB (mongo 1.1, kafka 1.0, postgres 0.9, connect 0.8, registry 0.7) |
 | `monitoring` | postgres-exporter, prometheus, alertmanager | ~0.1 GB (Prometheus grows with its 7-day history) |
 | `stream` | spark-master, spark-worker | ~0.5 GB idle; executors up to the worker's 3 GB cap, plus ~1 GB per driver |
+| `airflow` | airflow-db, -apiserver, -scheduler, -dag-processor | ~1.5 GB idle; the scheduler (capped at 3 GB) hosts the Spark drivers |
 
 ```bash
 cp onprem/.env.example onprem/.env     # then set every password
@@ -99,6 +100,7 @@ onprem/postgres/apply-sql.sh onprem/postgres/reviewer-setup.sql    # review simu
 make register-connectors               # Debezium Postgres + MongoDB, then status
 make up PROFILES="core stream"         # adds the Spark cluster (UI http://localhost:8080)
 make spark-run JOB=jobs/smoke_test.py  # Kafka, Avro and Glue catalog checks on the cluster
+make up PROFILES="core stream airflow" # adds Airflow: UI http://localhost:8088 (user admin, AIRFLOW_ADMIN_PASSWORD)
 make snapshot-postgres                 # P3: blocking re-snapshot so bronze starts complete
 # bronze-stream (stream profile) appends every CDC topic to lake.thelook_bronze.* every 60 s
 make ps                                # what is running

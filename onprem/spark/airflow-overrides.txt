@@ -1,0 +1,7 @@
+# Overrides of Airflow's constraints file (ADR 013). Keep this list short and
+# explain every line.
+#
+# The constraints pin pyspark-client 4.2.0, newer than our Spark 4.1.3. The
+# Spark provider only needs pyspark-client>=4.0.0, so match the cluster and
+# keep a single PySpark version line in the image.
+pyspark-client==4.1.3

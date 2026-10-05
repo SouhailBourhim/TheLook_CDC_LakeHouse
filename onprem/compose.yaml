@@ -291,7 +291,11 @@ services:
   #   make up PROFILES="core stream"
 
   spark-master:
-    build: ./spark
+    build:
+      context: ./spark
+      # The Dockerfile's last stage is Airflow: name the Spark stage, or the
+      # cluster would silently be built from the Airflow image.
+      target: spark
     image: thelook-spark:local
     profiles: [stream]
     hostname: spark-master
@@ -407,6 +411,125 @@ services:
       - ../spark:/opt/lakehouse:ro
     entrypoint: ["/opt/spark/bin/spark-submit", "--master", "spark://spark-master:7077"]
 
+  # --- airflow profile (P4): scheduling of the batch jobs (ADR 013) ---------------
+  #   make up PROFILES="core stream airflow"
+  # Airflow runs spark-submit (client mode) against the stream profile's
+  # cluster; that profile must be up too (no depends_on across profiles).
+
+  airflow-db:
+    # Airflow's own metadata database, never the source database. Same
+    # pinned image as the source Postgres.
+    image: postgres:17.11-trixie@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+    profiles: [airflow]
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:?set AIRFLOW_DB_PASSWORD in onprem/.env}
+    volumes:
+      - airflow-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U airflow -d airflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    stop_grace_period: 30s
+
+  airflow-init:
+    # One-shot: create or upgrade Airflow's metadata schema (idempotent).
+    build:
+      context: ./spark
+      target: airflow
+    image: thelook-airflow:local
+    profiles: [airflow]
+    depends_on:
+      airflow-db:
+        condition: service_healthy
+    environment: &airflow-common
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD:?set AIRFLOW_DB_PASSWORD in onprem/.env}@airflow-db:5432/airflow
+      # Encrypts connection passwords stored in the metadata database.
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in onprem/.env}
+      # Signs the tokens between the api-server and the task runners.
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in onprem/.env}
+      # Airflow 3: tasks report to the api-server's execution API.
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    command: ["airflow", "db", "migrate"]
+
+  airflow-apiserver:
+    image: thelook-airflow:local
+    profiles: [airflow]
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-common
+      # Login with the simple auth manager: one admin user whose password
+      # comes from onprem/.env (written to the passwords file at start).
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_USERS: admin:admin
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_PASSWORDS_FILE: /opt/airflow/passwords.json
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?set AIRFLOW_ADMIN_PASSWORD in onprem/.env}
+    command:
+      - bash
+      - -c
+      - >-
+        python -c 'import json, os; json.dump({"admin": os.environ["AIRFLOW_ADMIN_PASSWORD"]},
+        open("/opt/airflow/passwords.json", "w"))' && exec airflow api-server
+    ports:
+      # UI and API (Spark's master UI already uses 8080 on the host).
+      - "127.0.0.1:8088:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v2/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  airflow-scheduler:
+    # Under LocalExecutor the scheduler also runs the tasks, i.e. the
+    # spark-submit drivers: the only Airflow container with the AWS key.
+    image: thelook-airflow:local
+    profiles: [airflow]
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-common
+      # spark-submit target (JSON connection: the URI form would lose the
+      # spark:// scheme of the host).
+      AIRFLOW_CONN_SPARK_DEFAULT: '{"conn_type": "spark", "host": "spark://spark-master", "port": 7077}'
+      # The jobs' environment (as in the jobs profile): the batch user only,
+      # never the stream key (ADR 013).
+      PYTHONPATH: /opt/lakehouse
+      LAKE_BUCKET: ${LAKE_BUCKET:?set LAKE_BUCKET in onprem/.env}
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${SPARK_BATCH_AWS_ACCESS_KEY_ID:?set SPARK_BATCH_AWS_ACCESS_KEY_ID in onprem/.env}
+      AWS_SECRET_ACCESS_KEY: ${SPARK_BATCH_AWS_SECRET_ACCESS_KEY:?set SPARK_BATCH_AWS_SECRET_ACCESS_KEY in onprem/.env}
+      # Drivers run the system Python 3.10, like the executors, not
+      # Airflow's virtualenv.
+      PYSPARK_PYTHON: /usr/bin/python3
+      PYSPARK_DRIVER_PYTHON: /usr/bin/python3
+    command: ["airflow", "scheduler"]
+    # Bounded resources (ADR 013): the scheduler hosts the Spark drivers.
+    mem_limit: 3g
+    volumes:
+      - ../spark:/opt/lakehouse:ro
+      - ../airflow/dags:/opt/airflow/dags:ro
+
+  airflow-dag-processor:
+    # Airflow 3: parses DAG files in its own process (no AWS key needed).
+    image: thelook-airflow:local
+    profiles: [airflow]
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *airflow-common
+    command: ["airflow", "dag-processor"]
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags:ro
+
   # --- monitoring profile ------------------------------------------------------
   # Start with the core stack:
   #   docker compose --profile core --profile monitoring up -d
@@ -451,6 +574,7 @@ services:
 
 volumes:
   pgdata:
+  airflow-db:
   spark-checkpoints:
   mongo-data:
   mongo-config:
