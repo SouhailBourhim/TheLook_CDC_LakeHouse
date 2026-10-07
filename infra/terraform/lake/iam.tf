@@ -174,3 +174,123 @@ resource "aws_iam_user_policy_attachment" "spark_batch" {
 output "spark_batch_user" {
   value = aws_iam_user.spark_batch.name
 }
+
+# --- Analyst (P4): read-only SQL access to the lake for a desktop client --------
+# For exploring the lake from DBeaver (or any Athena client): queries run only
+# in the thelook workgroup, which enforces the results location, encryption
+# and the 1 GB scan cutoff. Read-only by permissions: an Athena INSERT, DELETE
+# or DROP would need Glue and S3 write rights this user does not have. Its
+# key lives in a desktop app's settings, so it can change nothing.
+resource "aws_iam_user" "analyst" {
+  name = "thelook-analyst"
+  path = "/thelook/"
+}
+
+data "aws_iam_policy_document" "analyst" {
+  statement {
+    sid = "QueryInTheWorkgroup"
+    actions = [
+      "athena:StartQueryExecution",
+      "athena:StopQueryExecution",
+      "athena:GetQueryExecution",
+      "athena:GetQueryResults",
+      "athena:GetQueryResultsStream",
+      "athena:ListQueryExecutions",
+      "athena:BatchGetQueryExecution",
+      "athena:GetWorkGroup",
+    ]
+    resources = [aws_athena_workgroup.lake.arn]
+  }
+
+  # What a SQL client calls to draw its tree of databases and tables.
+  statement {
+    sid = "BrowseTheCatalog"
+    actions = [
+      "athena:GetDataCatalog",
+      "athena:ListDatabases",
+      "athena:GetDatabase",
+      "athena:ListTableMetadata",
+      "athena:GetTableMetadata",
+    ]
+    resources = ["arn:aws:athena:us-east-1:${data.aws_caller_identity.current.account_id}:datacatalog/AwsDataCatalog"]
+  }
+
+  # These two list actions have no resource-level permissions in IAM.
+  statement {
+    sid       = "ListCatalogsAndWorkgroups"
+    actions   = ["athena:ListDataCatalogs", "athena:ListWorkGroups"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "ReadLakeCatalog"
+    actions = [
+      "glue:GetDatabase",
+      "glue:GetDatabases",
+      "glue:GetTable",
+      "glue:GetTables",
+      "glue:GetPartition",
+      "glue:GetPartitions",
+    ]
+    resources = concat(
+      ["${local.glue_prefix}:catalog"],
+      [for layer in ["bronze", "silver", "gold"] : aws_glue_catalog_database.layer[layer].arn],
+      [for layer in ["bronze", "silver", "gold"] : "${local.glue_prefix}:table/${aws_glue_catalog_database.layer[layer].name}/*"],
+    )
+  }
+
+  statement {
+    sid       = "ListLakeAndResults"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.lake.arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values = [
+        "bronze/", "bronze/*", "silver/", "silver/*", "gold/", "gold/*",
+        "athena-results/", "athena-results/*",
+      ]
+    }
+  }
+
+  # Athena asks where the bucket is before writing results to it.
+  statement {
+    sid       = "LocateTheBucket"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [aws_s3_bucket.lake.arn]
+  }
+
+  statement {
+    sid     = "ReadTheLayers"
+    actions = ["s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.lake.arn}/bronze/*",
+      "${aws_s3_bucket.lake.arn}/silver/*",
+      "${aws_s3_bucket.lake.arn}/gold/*",
+    ]
+  }
+
+  # Athena writes each query's result file with the caller's credentials,
+  # then reads it back (files expire after 7 days, storage.tf).
+  statement {
+    sid       = "WriteQueryResults"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"]
+    resources = ["${aws_s3_bucket.lake.arn}/athena-results/*"]
+  }
+}
+
+resource "aws_iam_policy" "analyst" {
+  name        = "thelook-analyst"
+  path        = "/thelook/"
+  description = "Read-only SQL on the lake through Athena (thelook workgroup)"
+  policy      = data.aws_iam_policy_document.analyst.json
+}
+
+resource "aws_iam_user_policy_attachment" "analyst" {
+  user       = aws_iam_user.analyst.name
+  policy_arn = aws_iam_policy.analyst.arn
+}
+
+output "analyst_user" {
+  value = aws_iam_user.analyst.name
+}

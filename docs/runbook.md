@@ -391,6 +391,32 @@ Create, rotate and revoke exactly as above, with
 `--user-name thelook-spark-batch`. Only this key (never the stream key) goes
 into Airflow's environment (ADR 013).
 
+## Analyst access (DBeaver or any Athena client)
+
+IAM user `thelook-analyst` (`infra/terraform/lake/iam.tf`): read-only SQL on
+the lake through Athena, in the `thelook` workgroup only (results location,
+encryption and the 1 GB scan cutoff enforced). Verified with real calls on
+2026-10-07: queries on gold and on Iceberg metadata tables and catalog
+listings work; the default workgroup, `CREATE TABLE`, S3 writes and deletes
+in the layers, Glue `UpdateTable` and the Terraform state bucket are denied.
+
+**Create the key** (operator profile; the key goes into DBeaver only, not
+into `onprem/.env`, which the Spark jobs read):
+
+```bash
+aws --profile thelook iam create-access-key --user-name thelook-analyst
+```
+
+**DBeaver**: New Database Connection -> Athena. Region `us-east-1`; S3
+location `s3://thelook-lake-<account>/athena-results/`; access key and
+secret from the command above; driver property `WorkGroup` = `thelook`
+(older driver versions: `Workgroup`). Without the workgroup property,
+queries go to the default workgroup and are denied.
+
+**Revoke**: `aws --profile thelook iam delete-access-key --user-name
+thelook-analyst --access-key-id <id>` (DBeaver keeps the secret in its own
+settings: delete the key if the laptop or the DBeaver profile is shared).
+
 ## Cost
 
 ### Weekly cost check (`make cost-report`)
