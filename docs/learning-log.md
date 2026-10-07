@@ -1295,17 +1295,27 @@ Traced step by step:
 - (5) Proving correctness: excellent (stale rows with correct counts).
 - **Checkpoint passed.** P4 closes once O2 is measured.
 
-### Where we stopped (2026-10-07, ~18:15 UTC) — LATEST, start here
+### O2 measured, P4 closed (2026-10-07, ~20:10 UTC)
 
-- **Next: O2 with the laptop awake for ~45 min.** Stack up; the
-  orchestrator (worst case 60 s after an on-time run's silver starts, best
-  case 3 min before a slot) with the retrying drill. Then record O2 in
-  results.md, here and on the project page, close P4, start P5.
-- Uncommitted: `drills/gold_freshness.py` retry (shell was unavailable).
-- Check after the next maintenance run: its duration with delete files
-  compacted first.
+- **O2 passed**: worst case 36.2 min (order committed just after the 19:30
+  run read its cut, in gold through the 20:00 run), best case 10.1 min (3
+  min before a slot). Bound: schedule + one run. Results in results.md.
+- Same afternoon, what can break it: the laptop slept 4 h (runs resumed on
+  their own, the stream restarted by its restart policy, the VM was paused,
+  not killed: no unclean Kafka shutdown); one run's silver needed 3 tries
+  for DNS outages (33 min late). DNS hardening is P9's first item.
+- **P4 is done**: silver, gold, Airflow, maintenance, analyst access;
+  acceptance = reconciliation (6.16 M rows identical), all tests (CI green),
+  O2 < 1 h; checkpoint passed.
+
+### Where we stopped (2026-10-07, ~20:10 UTC) — LATEST, start here
+
+- P4 closed. **Next: P5** (Redis + FastAPI serving layer, ADR 010): plan it
+  first, as for P4.
+- Watch: the next maintenance run's duration (delete files compacted
+  first); DNS outages (P9).
 - Still pending: O8 (leaning B), E2 (before P6), "provisional days" rule,
-  P7 ideas, P9 ideas (DNS/blip hardening; facts partitioned by day,
+  P7 ideas, P9 ideas (DNS hardening first; facts partitioned by day,
   incremental dim_user, skip idle gold stages; a lighter first maintenance
   after downtime).
 

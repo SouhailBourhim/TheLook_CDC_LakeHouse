@@ -462,3 +462,34 @@ Full stack: ~0.8 GB of S3 transfer per hour up (transform ~0.6, stream
 ~0.2): the 100 GB free allowance covers ~125 hours a month. Measured with
 container network counters (idle baseline removed); Spark's "bytes read"
 also counts reads from its own cache and is used only to rank queries.
+
+## P4: gold freshness (O2: source commit -> gold, < 1 hour) — 2026-10-07
+
+**Method:** `drills/gold_freshness.py` (written before measuring): take the
+newest order committed in PostgreSQL, poll Athena every 30 s until
+`gold.fct_orders` returns it; latency = first successful query - the
+order's `created_at`. Gold freshness depends on when a change lands
+relative to the 30-minute transform runs, so both ends were measured on
+steady, on-time runs: worst case = an order committed just after a run's
+silver task read its bronze cut (it must wait for the next run); best case
+= an order committed 3 minutes before a slot.
+
+**Result: passed.**
+
+| Case | Order committed | In gold | Latency |
+|---|---|---|---|
+| Worst (just after the 19:30 run read its cut) | 19:31:07 | 20:07:21 | **36.2 min** |
+| Best (3 min before the 20:00 slot) | 19:57:03 | 20:07:12 | **10.1 min** |
+
+Both orders reached gold through the 20:00 run (silver ~2.5 min, gold
+facts merged ~7 min after the slot). Bound: 30-minute schedule + one run.
+
+**What can break it (observed the same day):**
+
+- DNS outages on this laptop: one run's silver task succeeded only on its
+  third try (`UnknownHostException` for S3, then "Read timed out"), 33 min
+  late; the job's retries and Airflow's 2 task retries absorbed it.
+- After downtime: the first runs absorb the backlog (a 4-hour sleep gave a
+  20-minute catch-up run), and the first maintenance run holds the `lake`
+  pool (39 min once, before delete files were compacted first). Gold is
+  stale from the downtime anyway; steady runs resume within ~1 hour.
