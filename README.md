@@ -26,26 +26,28 @@ flowchart LR
     mongo -->|change streams| connect
     connect -->|Avro| kafka[(Kafka 4 KRaft)]
     connect <--> sr[Schema Registry]
-    spark[Spark Structured Streaming P3]:::planned
+    spark[Spark Structured Streaming<br/>+ hourly bronze upkeep]
+    batch[Spark batch jobs<br/>silver, gold, upkeep]
+    airflow[Airflow<br/>transform 30 min, maintenance daily] -->|spark-submit| batch
     redis[(Redis P5)]:::planned
     neo[(Neo4j P6)]:::planned
     api[FastAPI P5/P6]:::planned
-    airflow[Airflow P4]:::planned
-    kafka -.-> spark
+    kafka --> spark
     spark -.->|features| redis
     redis -.-> api
     neo -.-> api
   end
   subgraph aws["AWS (S3, Glue, Athena only)"]
-    bronze[(Iceberg bronze)]:::planned
-    silver[(silver)]:::planned
-    gold[(gold star schema)]:::planned
+    bronze[(Iceberg bronze<br/>+ batch ledger)]
+    silver[(silver)]
+    gold[(gold star schema)]
     athena[Athena]
   end
-  spark -.-> bronze
-  bronze -.->|PySpark MERGE, SCD2| silver -.-> gold
-  airflow -.->|spark-submit| silver
-  gold -.-> athena
+  spark --> bronze
+  bronze -->|consistent cut| batch
+  batch -->|MERGE| silver
+  batch -->|SCD2, facts, marts| gold
+  gold --> athena
   gold -.->|co-purchases| neo
   classDef planned stroke-dasharray: 5 5
 ```
@@ -60,6 +62,9 @@ flowchart LR
 | Bronze: Spark Structured Streaming -> 7 Iceberg tables (S3 + Glue), queryable in Athena | P3 | `lake.thelook_bronze.<database>_<table>` |
 | Silver: incremental MERGE, latest version per key (batch IAM user) | P4 | `lake.thelook_silver.<table>`, `make spark-run JOB=jobs/silver.py` |
 | Gold: star schema (dim_user SCD2, facts, marts) | P4 | `lake.thelook_gold.*`, `make spark-run JOB=jobs/gold.py` |
+| Orchestration: `transform` (silver -> gold, every 30 min), `maintenance` (silver/gold upkeep, daily), one-slot pool `lake` | P4 | `airflow/dags/`, UI `http://localhost:8088` |
+| Table upkeep: bronze by the stream (hourly expiry, rotating compaction and orphan removal), silver/gold by the `maintenance` DAG | P4 | `spark/lakehouse/upkeep.py` |
+| Durability: Kafka fsyncs every write; verify drill + key-filtered re-snapshot after an unclean shutdown | P4 | `drills/verify_silver.py`, `drills/resnapshot.py` |
 
 ## Repository layout
 
@@ -107,6 +112,13 @@ make ps                                # what is running
 make down                              # stop everything, keep the data
 ```
 
+The `transform` and `maintenance` DAGs start paused on a fresh Airflow
+database: unpause them in the UI. **Data transfer:** Spark on the laptop
+reads S3 over the internet, ~0.8 GB per hour with `stream` and `airflow` up
+(the free allowance covers ~125 hours a month): run those profiles while
+working or demoing, `make down` otherwise. Always stop with `make down`: a
+killed Kafka (sleep, crash) triggers the verify drill (runbook).
+
 The SQL scripts need the generator's tables, which it creates on its first
 start; if one reports a missing table, run it again a few seconds later
 (all are idempotent). MongoDB needs no manual step: the one-shot
@@ -124,6 +136,8 @@ role exists. After a reboot, rerun `make up` (no restart policy on purpose).
 
 Checks and drills: `uv run drills/verify_cdc.py [source ...]` (Kafka vs
 both databases, with the generator and review simulator stopped),
+`uv run drills/verify_silver.py` (silver vs both databases, every column),
+`uv run drills/freshness.py` (O1) and `uv run drills/gold_freshness.py` (O2),
 `drills/slot-drill.sh`, `drills/throughput-baseline.sh`. Results in
 [docs/results.md](docs/results.md), procedures in
 [docs/runbook.md](docs/runbook.md).
@@ -150,6 +164,31 @@ Talking points: why a replica set for one node, oplog vs replication slot,
 why `thelook_mongo` and not `thelook-mongo` (Avro names), why the history
 was copied before the connector's snapshot.
 
+## How to demo P4 (about 3 minutes)
+
+With `core stream airflow` up and both DAGs unpaused:
+
+```bash
+# 1. Airflow UI (http://localhost:8088): transform green every 30 minutes,
+#    silver -> gold_dims -> gold_facts -> gold_marts; maintenance daily.
+# 2. Gold answers questions in Athena (workgroup thelook), e.g. revenue by
+#    country *as the customer's address was when they ordered* (SCD2):
+#    SELECT u.country, sum(f.gross_amount) FROM thelook_gold.fct_order_items f
+#    JOIN thelook_gold.dim_user u ON f.user_sk = u.user_sk GROUP BY 1
+# 3. Freshness: a just-committed order reaches gold in under an hour (O2):
+uv run drills/gold_freshness.py
+# 4. Correctness: stop the writers, let bronze go idle, run silver, then
+#    prove silver = sources, every column of all 7 tables:
+uv run drills/verify_silver.py              # ALL OK (about 7 minutes)
+```
+
+Talking points: the 16 seconds Kafka lost in a crash and how they were found
+and repaired (exactly-once assumes the broker keeps what it acknowledged);
+the batch ledger and consistent cut; why silver's watermark is an
+`ingested_at`, not a snapshot id; merge-on-read and why maintenance is
+not optional (a 487 KB metadata file slowed the stream); what each run
+costs in S3 transfer and why it does not go lower (random keys).
+
 ## Design decisions
 
 Each has an ADR with the alternatives and consequences.
@@ -165,6 +204,13 @@ Each has an ADR with the alternatives and consequences.
 | MongoDB holds clickstream and reviews, one document per event | One source of truth per dataset; append-only inserts, not growing session documents | [008](docs/adr/008-mongodb-second-cdc-source.md) |
 | PySpark builds silver and gold, not dbt | One engine, logic unit-tested with pytest + chispa | [009](docs/adr/009-pyspark-instead-of-dbt.md) |
 | Redis + Neo4j + FastAPI serving layer | Each store fits its access pattern; TTLs bound personal data | [010](docs/adr/010-serving-layer.md) |
+| Spark 4.1 + Iceberg 1.12, jars baked and checksummed in one image | Driver and executors on one Python; no download at run time | [011](docs/adr/011-spark-runtime-and-versions.md) |
+| Bronze: one table per source table, envelope kept, replay guard, batch ledger | Exactly-once appends; silver reads a consistent cut across tables | [012](docs/adr/012-bronze-table-design.md) |
+| Airflow on the Spark image, spark-submit in client mode | Same Python as the executors; no Docker socket in Airflow | [013](docs/adr/013-airflow-runtime.md) |
+| Silver: incremental MERGE by log position, merge-on-read, `ingested_at` watermark | Idempotent replays; reads only new bronze files | [014](docs/adr/014-silver-design.md) |
+| Gold: star schema, dim_user SCD2 rebuilt each run, unknown member, written metric definitions | Orders keep the address of their time; inner joins drop nothing | [015](docs/adr/015-gold-model.md) |
+| Kafka fsyncs every write (single broker) | No silent loss of acknowledged records on a crash (one happened) | [016](docs/adr/016-kafka-fsync-single-broker.md) |
+| Each layer maintained by its writer | No key that can delete bronze ever enters Airflow | [017](docs/adr/017-table-maintenance.md) |
 
 ## After cloning
 

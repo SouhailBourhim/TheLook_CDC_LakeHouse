@@ -1234,16 +1234,46 @@ Traced step by step:
   of it by the next gold run). (3) Correct and complete: an orphan and a
   file of an uncommitted write look identical; only age tells them apart.
 
-### Where we stopped (2026-10-07) — LATEST, start here
+### Later on 2026-10-07
 
-- Stack up (core + stream, writers running); airflow profile down. Stop
-  with `make down` when done.
-- Waiting for Souhail: review ADR 017 (proposed).
-- **Next: rest of step 10**: O2 measured end to end (source change -> gold),
-  Athena gold queries, README/runbook, then the P4 checkpoint.
+- **Analyst user** (`thelook-analyst`, plan approved by Souhail): read-only
+  Athena SQL in the `thelook` workgroup for DBeaver; 4 calls allowed and 6
+  denied as expected with a temporary key (deleted). Runbook: key creation,
+  DBeaver settings. Explained: DBeaver draws no relationships because
+  neither the source nor Iceberg declares foreign keys; virtual foreign keys
+  in DBeaver (facts point to `dim_user.user_sk`, not `user_id`).
+- **Project page** (private artifact): architecture, phases, layers, the
+  four findings with charts, freshness, lessons, ADRs. O2 still shown as
+  "measuring": update it when measured.
+- **O2 not measured yet.** Two attempts stopped: the laptop's sleep left a
+  maintenance attempt and a transform run half-done; Airflow recovered on its
+  own (zombie detection, retry), but the retried maintenance held the `lake`
+  pool for 39 min, so transform ran ~40 min late. Cause, from the task log:
+  gold fact compactions ran as one Spark task each (one file group), the
+  slowest 20 min (`fct_sessions`). Fix committed (6b4d8f3): compact delete
+  files before data files. Measure the next maintenance run's duration.
+- **Airflow UI could not show task logs** (each component had its own random
+  `[api] secret_key`): fixed in compose + `AIRFLOW_SECRET_KEY` in
+  `onprem/.env` (f9746f9); takes effect at the next `make up` with airflow.
+- `drills/gold_freshness.py` (O2 drill) and the README's P4 sections are in.
+- ADR 017 accepted (Souhail).
+
+### Where we stopped (2026-10-07, ~12:10 UTC) — LATEST, start here
+
+- Stack **down cleanly** (`make down`). DAGs stay unpaused in Airflow's DB:
+  the next `make up` with airflow runs the latest missed slots (transform,
+  maintenance) at once, so expect a catch-up hour before steady runs.
+- **Next: O2.** After `make up PROFILES="core stream airflow"`, wait for an
+  on-time transform run, then take the samples (`uv run
+  drills/gold_freshness.py worst-case` 60 s after an on-time run's silver
+  starts; `best-case` 3 min before a slot). Record in results.md, the
+  learning log and the project page. Also check: the maintenance run's
+  duration with the reordered compaction; task logs visible in the UI.
+- Then: P4 checkpoint (interview questions), then P5.
 - Still pending: O8 (leaning B), E2 (before P6), "provisional days" rule,
   P7 ideas, P9 ideas (DNS/blip hardening; facts partitioned by day,
-  incremental dim_user, skip idle gold stages).
+  incremental dim_user, skip idle gold stages; a lighter first maintenance
+  after downtime).
 
 ### P1 plan (agreed)
 

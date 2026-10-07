@@ -1,6 +1,6 @@
 # 017. Table maintenance: each layer maintained by its writer
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-05 (P4 step 9; spec FR12, NFR cost; ADR 012, ADR 014)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
