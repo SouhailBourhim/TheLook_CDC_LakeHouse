@@ -451,6 +451,10 @@ services:
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in onprem/.env}
       # Signs the tokens between the api-server and the task runners.
       AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in onprem/.env}
+      # Signs the requests the api-server makes to the scheduler's log server
+      # (task logs in the UI). Unset, every component generates its own
+      # random key and the UI cannot show any task log.
+      AIRFLOW__API__SECRET_KEY: ${AIRFLOW_SECRET_KEY:?set AIRFLOW_SECRET_KEY in onprem/.env}
       # Airflow 3: tasks report to the api-server's execution API.
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
