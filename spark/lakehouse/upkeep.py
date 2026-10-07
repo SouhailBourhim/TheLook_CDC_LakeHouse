@@ -143,17 +143,22 @@ def maintain_tables(
     orphans_every: datetime.timedelta = datetime.timedelta(days=7),
     orphan_tables: int = 3,
 ) -> dict:
-    """Daily upkeep of silver and gold (ADR 017), table by table: compact data
-    files (applying the MERGEs' delete files), compact delete files, expire
-    snapshots older than `keep_for` (keeping `keep_last`); then remove the
+    """Daily upkeep of silver and gold (ADR 017), table by table: compact
+    delete files, then data files (applying the deletes), expire snapshots
+    older than `keep_for` (keeping `keep_last`); then remove the
     orphan files of at most `orphan_tables` tables due (each costs minutes:
     the run holds the Airflow pool that transform needs, and O2 is 1 hour).
     Returns what was done per table."""
     report = {}
     for table in tables:
+        # Delete files first: in an unpartitioned table every delete file
+        # applies to every data file, so a data compaction reads all of them
+        # once per data file (measured: one fact table's compaction, one
+        # Spark task, took 20 minutes after a day of MERGEs).
+        deletes = compact_deletes(spark, table)
         report[table.rsplit(".", 1)[1]] = {
+            "delete_files_rewritten": deletes,
             "files_rewritten": compact(spark, table),
-            "delete_files_rewritten": compact_deletes(spark, table),
             "snapshots_expired": expire(spark, table, now - keep_for, keep_last),
         }
     for table in due(
