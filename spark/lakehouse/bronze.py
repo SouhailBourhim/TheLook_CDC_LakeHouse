@@ -57,6 +57,9 @@ TRANSIENT_MARKERS = (
     "ThrottlingException",
     "SlowDown",
     "ServiceUnavailable",
+    # Iceberg's S3 input stream when opening a file failed on the network
+    # (seen in P4, raised as a Spark INTERNAL_ERROR while planning a MERGE).
+    '"this.stream" is null',
 )
 
 
@@ -116,10 +119,19 @@ def bronze_rows(
 
 
 def current_snapshot(spark: SparkSession, table: str) -> int | None:
-    rows = spark.sql(
-        f"SELECT snapshot_id FROM {table}.refs WHERE name = 'main'"
-    ).collect()
-    return rows[0][0] if rows else None
+    """The table's current snapshot id, as the catalog (Glue) has it now.
+
+    Not through Spark's cached copy of the table: it stays cached while in
+    use, and lags behind commits made through another table object (the
+    maintenance thread's). Reading it, the ledger once recorded the previous
+    batch's snapshot. refresh() reloads the metadata from the catalog.
+    """
+    iceberg = spark._jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
+        spark._jsparkSession, table
+    )
+    iceberg.refresh()
+    snapshot = iceberg.currentSnapshot()
+    return None if snapshot is None else snapshot.snapshotId()
 
 
 def _marks(query_id: str, batch_id: int) -> dict:

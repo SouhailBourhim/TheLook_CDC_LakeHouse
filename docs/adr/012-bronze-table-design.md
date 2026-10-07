@@ -81,6 +81,17 @@ catch up for a reconciliation); committing every table every batch (seven
 mostly empty commits a minute). Cost: one small commit per batch, compacted
 by the maintenance job.
 
+The snapshot ids are read from the catalog itself (Iceberg's
+`table.refresh()`), not from Spark's cached copy of the table. Found on
+2026-10-07: once the stream's maintenance thread committed through its own
+table object, the cached copy (kept alive while in use) could lag behind,
+and the ledger recorded the previous batch's snapshot for some tables
+(3 rows in ~500, each right after a maintenance run). Silver then stopped
+short on those tables: a delay, not a loss (its watermark is an
+`ingested_at`), but an order item could again be merged without its order,
+which is what the "items built without their order" seen on 2026-10-05
+were.
+
 
 ## References
 

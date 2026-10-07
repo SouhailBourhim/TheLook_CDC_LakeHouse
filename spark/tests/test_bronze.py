@@ -108,6 +108,12 @@ def test_network_errors_are_transient_and_permissions_are_not():
     assert bronze.is_transient(GLUE_BLIP)
     assert not bronze.is_transient(Exception("AccessDeniedException: not authorized"))
     assert not bronze.is_transient(Exception("Cannot write incompatible data"))
+    s3_open_failed = Exception(
+        "[INTERNAL_ERROR] The Spark SQL phase optimization failed ... "
+        'NullPointerException: Cannot invoke "java.io.InputStream.read(byte[], int, '
+        'int)" because "this.stream" is null'
+    )
+    assert bronze.is_transient(s3_open_failed)
 
 
 def test_with_retries_recovers_from_a_blip():
@@ -286,3 +292,23 @@ def test_orphan_removal_deletes_only_old_unreferenced_files(spark, lake):
     assert upkeep.remove_orphans(spark, table, datetime.datetime.now()) == 1
     assert not os.path.exists(old) and os.path.exists(young)
     assert spark.table(table).count() == 2
+
+
+def test_current_snapshot_sees_commits_made_behind_the_cache(spark, lake):
+    # The maintenance thread commits through its own table object; Spark's
+    # cached copy, kept alive while the stream uses it, can lag behind. The
+    # ledger once recorded the previous batch's snapshot this way.
+    bronze_db, _ = lake
+    table = f"{bronze_db}.shop_users"
+    spark.createDataFrame([(1,)], "id int").writeTo(table).using("iceberg").create()
+    bronze.current_snapshot(spark, table)  # Spark now holds a cached copy
+    jvm = spark._jvm
+    location = jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
+        spark._jsparkSession, table
+    ).location()
+    other = jvm.org.apache.iceberg.hadoop.HadoopTables(
+        spark._jsc.hadoopConfiguration()
+    ).load(location)
+    other.newAppend().commit()  # a commit the cached copy does not know about
+
+    assert bronze.current_snapshot(spark, table) == other.currentSnapshot().snapshotId()
