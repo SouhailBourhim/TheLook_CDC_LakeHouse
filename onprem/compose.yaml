@@ -489,6 +489,10 @@ services:
     ports:
       # UI and API (Spark's master UI already uses 8080 on the host).
       - "127.0.0.1:8088:8080"
+    volumes:
+      # Task logs, shared with the scheduler that writes them: the UI reads
+      # the files directly, and they survive `make down`.
+      - airflow-logs:/opt/airflow/logs
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/v2/version"]
       interval: 10s
@@ -526,6 +530,7 @@ services:
     volumes:
       - ../spark:/opt/lakehouse:ro
       - ../airflow/dags:/opt/airflow/dags:ro
+      - airflow-logs:/opt/airflow/logs
 
   airflow-dag-processor:
     # Airflow 3: parses DAG files in its own process (no AWS key needed).
@@ -539,6 +544,7 @@ services:
     command: ["airflow", "dag-processor"]
     volumes:
       - ../airflow/dags:/opt/airflow/dags:ro
+      - airflow-logs:/opt/airflow/logs
 
   # --- monitoring profile ------------------------------------------------------
   # Start with the core stack:
@@ -585,6 +591,9 @@ services:
 volumes:
   pgdata:
   airflow-db:
+  # The volume is created from the image's /opt/airflow/logs (owned by the
+  # spark user), so Airflow can write to it.
+  airflow-logs:
   spark-checkpoints:
   mongo-data:
   mongo-config:
