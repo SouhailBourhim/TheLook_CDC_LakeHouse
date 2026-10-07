@@ -1258,18 +1258,52 @@ Traced step by step:
 - `drills/gold_freshness.py` (O2 drill) and the README's P4 sections are in.
 - ADR 017 accepted (Souhail).
 
-### Where we stopped (2026-10-07, ~12:10 UTC) — LATEST, start here
+### Where we stopped (2026-10-07, ~12:10 UTC) — superseded below
 
-- Stack **down cleanly** (`make down`). DAGs stay unpaused in Airflow's DB:
-  the next `make up` with airflow runs the latest missed slots (transform,
-  maintenance) at once, so expect a catch-up hour before steady runs.
-- **Next: O2.** After `make up PROFILES="core stream airflow"`, wait for an
-  on-time transform run, then take the samples (`uv run
-  drills/gold_freshness.py worst-case` 60 s after an on-time run's silver
-  starts; `best-case` 3 min before a slot). Record in results.md, the
-  learning log and the project page. Also check: the maintenance run's
-  duration with the reordered compaction; task logs visible in the UI.
-- Then: P4 checkpoint (interview questions), then P5.
+- Stack down cleanly; next was O2, then the P4 checkpoint.
+
+## Session 8 — 2026-10-07 (afternoon) — logs fixed, P4 checkpoint
+
+- Kafka started clean (yesterday's `make down`). Airflow task logs fixed
+  for good: shared `[api] secret_key` (f9746f9) and a named volume
+  `airflow-logs` mounted in the scheduler, api-server and dag-processor
+  (b2ee8f8), so logs survive `make down` and the UI reads the files.
+- **O2: third attempt failed, for two reasons.** (1) The drill died on a
+  DNS outage ("Temporary failure in name resolution" for Athena): it had
+  no retry; now a failed poll is retried 30 s later. (2) The laptop slept
+  ~14:30-18:10 UTC: the 14:30 run started at 18:11, so both sampled orders
+  (14:01, 14:27) waited ~4 h; a measurement of the laptop, not the pipeline.
+  O2 needs ~45 min with the laptop awake.
+
+### P4 checkpoint (answers without the code)
+
+- (1) End to end: excellent, every hop named by its mechanism. Refinements:
+  the old order is never recomputed (only dim_user is rebuilt; `user_sk` =
+  hash(user_id, LSN) is the same at every rebuild); no-op updates do not
+  open a version.
+- (2) The 16 seconds: excellent (cause, trace, repair, measured fsync cost,
+  runbook rule). Date: the second crash was on wake on 10-07.
+- (3) Merge-on-read: correct. Add: maintenance order matters (delete files
+  before data files: the 20-min compaction), and "between MERGEs" is
+  enforced by the one-slot `lake` pool, not by timing.
+- (4) 300 MB floor: right diagnosis. Qualified: partitioning by order day
+  helps only if changes cluster by date (real shops; not this generator);
+  bloom filters and key sorting do not help a MERGE over ~10,000 scattered
+  keys (nearly every row group is hit). Decisive fix: compute in the same
+  region as the data. "The layout can only prune if the change pattern
+  correlates with it; otherwise move the compute to the data."
+- (5) Proving correctness: excellent (stale rows with correct counts).
+- **Checkpoint passed.** P4 closes once O2 is measured.
+
+### Where we stopped (2026-10-07, ~18:15 UTC) — LATEST, start here
+
+- **Next: O2 with the laptop awake for ~45 min.** Stack up; the
+  orchestrator (worst case 60 s after an on-time run's silver starts, best
+  case 3 min before a slot) with the retrying drill. Then record O2 in
+  results.md, here and on the project page, close P4, start P5.
+- Uncommitted: `drills/gold_freshness.py` retry (shell was unavailable).
+- Check after the next maintenance run: its duration with delete files
+  compacted first.
 - Still pending: O8 (leaning B), E2 (before P6), "provisional days" rule,
   P7 ideas, P9 ideas (DNS/blip hardening; facts partitioned by day,
   incremental dim_user, skip idle gold stages; a lighter first maintenance

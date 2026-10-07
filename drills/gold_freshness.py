@@ -28,6 +28,7 @@ from pathlib import Path
 
 import boto3
 import psycopg
+from botocore.exceptions import BotoCoreError, ClientError
 
 POLL = 30
 TIMEOUT = 2 * 3600
@@ -83,9 +84,16 @@ def main() -> int:
         flush=True,
     )
     while (datetime.datetime.now(UTC) - now).total_seconds() < TIMEOUT:
-        found = athena_rows(
-            f"SELECT count(*) FROM thelook_gold.fct_orders WHERE order_id = '{order_id}'"
-        )
+        try:
+            found = athena_rows(
+                f"SELECT count(*) FROM thelook_gold.fct_orders WHERE order_id = '{order_id}'"
+            )
+        except (BotoCoreError, ClientError, RuntimeError) as error:
+            # A network blip (this laptop's DNS) is a missed poll, not the
+            # end of the measurement: it once ended a two-hour drill.
+            print(f"[{label}] poll failed, retrying: {str(error)[:120]}", flush=True)
+            time.sleep(POLL)
+            continue
         if found and found[0][0] != "0":
             seen = datetime.datetime.now(UTC)
             minutes = (seen - created_at).total_seconds() / 60
