@@ -408,3 +408,57 @@ What the numbers say, and why (synthetic data, spec 12):
   returns land.
 - Gross margin ~0.52 and average order value ~171 are steady: products are
   drawn uniformly with fixed price/cost ratios.
+
+## P4: data loss, repair and durability — 2026-10-05 to 2026-10-07
+
+**Loss (2026-10-04, before ADR 016).** The Docker VM died hard; Kafka
+(one broker, no fsync) lost the unflushed tail of some partitions while
+Connect's offsets past them survived. Found by the verify drill:
+
+| Table | Missing | Stale | Repair (key-filtered blocking snapshot) |
+|---|---|---|---|
+| users | 6 | 4 | 10 rows in 46 ms (with order_items) |
+| order_items | 69 | 27 | 96 rows |
+| events (MongoDB) | 314 | 0 | 314 documents in 41 ms |
+| orders, products, dist_centers, reviews | 0 | 0 | — |
+
+After the repair, all 7 tables identical to the sources (2026-10-05).
+
+**Kafka fsync on every write (ADR 016):** 43,253 -> 6,907 records/s flat
+out (1 KB, acks=all); p99 2 -> 5 ms at a steady 200 records/s.
+
+**Second unclean shutdown (2026-10-07, after ADR 016).** The laptop slept
+at ~03:35 UTC on 10-06 and the Docker VM died on wake ("Recovering 144 logs
+... no clean shutdown file was found"). Runbook procedure: writers paused,
+bronze caught up (the interrupted batch 894 was replayed and skipped on
+every table), silver run, verify drill:
+
+| Table | Rows | Missing | Extra | Different |
+|---|---|---|---|---|
+| users | 59,408 | 0 | 0 | 0 |
+| orders | 643,247 | 0 | 0 | 0 |
+| order_items | 932,558 | 0 | 0 | 0 |
+| products | 29,120 | 0 | 0 | 0 |
+| dist_centers | 10 | 0 | 0 | 0 |
+| events | 4,472,038 | 0 | 0 | 0 |
+| reviews | 22,225 | 0 | 0 | 0 |
+
+**Result: nothing lost** (6.16 M rows, every column). The drill also
+exposed a stale ledger row (fixed in a8606a7) and needed longer S3 timeouts
+on this laptop's resolver.
+
+## P4: maintenance and cost — 2026-10-05
+
+| Measure | Before | After |
+|---|---|---|
+| bronze `metadata.json` per busy table | 487 KB | 46 KB |
+| stream batch duration (60 s trigger) | ~110 s | 34-45 s |
+| stream driver download | 9.2 MB/min | 3.2 MB/min |
+| hourly bronze expiry | 935 s (SQL procedure) | 36 s (Java API) |
+| silver `orders` files | 9 data + 33 delete | 1 data + 0 delete |
+| transform run, normal increment | 8.8 min, ~670 MB | 6.3-6.7 min, ~290-340 MB |
+
+Full stack: ~0.8 GB of S3 transfer per hour up (transform ~0.6, stream
+~0.2): the 100 GB free allowance covers ~125 hours a month. Measured with
+container network counters (idle baseline removed); Spark's "bytes read"
+also counts reads from its own cache and is used only to rank queries.

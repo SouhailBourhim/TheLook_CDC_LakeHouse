@@ -118,7 +118,18 @@ def main() -> int:
     env = load_env(Path(__file__).resolve().parent.parent / "onprem" / ".env")
     os.environ.setdefault("AWS_PROFILE", "thelook")
     os.environ.setdefault("AWS_REGION", "us-east-1")
-    catalog = load_catalog("glue", type="glue", **{"glue.region": "us-east-1"})
+    catalog = load_catalog(
+        "glue",
+        type="glue",
+        **{
+            "glue.region": "us-east-1",
+            # PyArrow's S3 default (3.1 s to connect, DNS included) is shorter
+            # than this laptop's resolver sometimes takes; one slow lookup
+            # used to abort the whole drill.
+            "s3.connect-timeout": "30",
+            "s3.request-timeout": "60",
+        },
+    )
     only = set(sys.argv[1:])
     start, diff = time.monotonic(), {}
 

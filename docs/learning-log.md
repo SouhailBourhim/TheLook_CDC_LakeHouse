@@ -1164,7 +1164,7 @@ Traced step by step:
   catch-up looked like a one-off; the hourly run showed the cost was fixed
   per table, which pointed at the cleanup strategy, not the backlog.
 
-### Where we stopped (2026-10-05, ~22:00 UTC) — LATEST, start here
+### Where we stopped (2026-10-05, ~22:00 UTC) — superseded by session 7
 
 - Stack up (core, stream, airflow); `transform` and `maintenance` DAGs
   **unpaused** and green. Stop with `make down` (clean Kafka shutdown).
@@ -1192,6 +1192,58 @@ Traced step by step:
 - Still pending from before: O8 (leaning B), E2 (before P6), the
   "provisional days" rule for the revenue mart, P7 ideas (heartbeat
   liveness table, alert on long-unresolved unknown members, oplog window).
+
+## Session 7 — 2026-10-07 — second crash, stale ledger, reconciliation
+
+### What happened
+
+- The stack had been left up; the laptop slept at ~03:35 UTC on 10-06 and
+  the Docker VM died on wake (all containers exit 255; Kafka: "no clean
+  shutdown file"). Cost Explorer: 3.28 GB of S3 transfer on 10-06, i.e.
+  ~4 h of running, not the 30+ h first feared (October so far: 14.4 GB of
+  100). Lesson: "stack up" is not "stack running"; read the ledger or the
+  stream's batches before estimating.
+- Runbook procedure (ADR 016 rule): writers paused, bronze caught up
+  (batch 894 replayed, every table "skipped(replay)": the replay guard),
+  silver, verify. **All 7 tables identical, 6.16 M rows: fsync held, no
+  loss this time.** This is also P4's reconciliation proof (results.md).
+
+### Debugging lessons
+
+- **A stale cache, found by a log line that did not add up**: silver's
+  `ingested_upto` for users stopped at 10-06 03:31 while orders reached
+  today. The ledger had recorded batch 894's users snapshot in batch 895's
+  row. Cause: `current_snapshot()` read Spark's cached copy of the table,
+  which stays alive while in use and lagged behind commits the maintenance
+  thread made through its own table object (3 stale rows in ~500, each
+  right after a maintenance run). Fix: refresh from the catalog (Iceberg
+  Java API); a test commits behind the cache and fails on the old code.
+  The same bug explains the items built without their order on 10-05.
+- An S3 open failure surfaced as a Spark `INTERNAL_ERROR` (`"this.stream"
+  is null`) while planning a MERGE: retried now as transient.
+- PyArrow's S3 connect timeout (3.1 s, DNS included) aborted the verify
+  twice on this laptop's resolver: 30 s in the drill.
+
+### Check answers (step 9c-9d)
+
+- (1) Correct: appends add files, compaction replaces others, no overlap;
+  a MERGE's deletes target the files compaction replaces (Souhail: a late
+  compaction would resurrect rows the MERGE deleted). Our mechanism is the
+  one-slot pool, not "same DAG". (2) Correct, except "tighter statistics":
+  one compacted file spans every key and every `_merged_at` (one full read
+  of it by the next gold run). (3) Correct and complete: an orphan and a
+  file of an uncommitted write look identical; only age tells them apart.
+
+### Where we stopped (2026-10-07) — LATEST, start here
+
+- Stack up (core + stream, writers running); airflow profile down. Stop
+  with `make down` when done.
+- Waiting for Souhail: review ADR 017 (proposed).
+- **Next: rest of step 10**: O2 measured end to end (source change -> gold),
+  Athena gold queries, README/runbook, then the P4 checkpoint.
+- Still pending: O8 (leaning B), E2 (before P6), "provisional days" rule,
+  P7 ideas, P9 ideas (DNS/blip hardening; facts partitioned by day,
+  incremental dim_user, skip idle gold stages).
 
 ### P1 plan (agreed)
 
