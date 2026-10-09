@@ -1355,11 +1355,32 @@ steps, 0 to 10).
 | 9 | `test(drills): redis outage and rebuild` | bronze unaffected by an outage; rebuild = same keys and TTLs |
 | 10 | `docs: P5 wrap-up` | README, runbook, results, learning log; P5 checkpoint |
 
+### Check answers (step 1)
+
+- **ADR 018 accepted** (Souhail).
+- (1) Why `INCR` is wrong for "events in the last hour": correct and
+  complete (not a window: only grows, a TTL wipes it all at once; counts by
+  arrival, not event time; not idempotent under replay). **Correction** of
+  the proposed fix ("per-minute buckets, SET the absolute value"): a
+  micro-batch sees only its own events, and one minute's events can span two
+  batches, so the second SET would overwrite with a partial count. An
+  absolute value needs a running total somewhere: Spark stateful aggregation
+  (window + watermark, state in the checkpoint) is a valid alternative. Ours
+  keeps the state in Redis (the set of event ids): idempotent with no Spark
+  state, exact sliding hour; costs memory per event. Buckets win at
+  thousands of events per user per hour.
+- (2) `failOnDataLoss`: correct (bronze = the only full history, a gap is
+  permanent and spreads; features = freshness). Stronger argument added:
+  Kafka deletes whole segments only once older than retention, so any
+  missing record is >= 72 h old and every feature it would have made has
+  already expired: the skip is invisible to users. Souhail's point kept:
+  the skip must be visible (Spark logs it; alert in P7).
+
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Step 1 written (ADR 018 proposed, spec v2.1, ADR 007 note): waiting for
-  Souhail's review of ADR 018 and the step-1 check questions.
-- Next: step 0 (needs the stack up) and step 2 (Redis).
+- Step 1 done, ADR 018 accepted. Next: step 2 (Redis), then step 0 when
+  the stack is up.
+- P7 idea added: alert on offsets skipped by the features stream.
 - Still pending from before: O8 (leaning B), E2 (before P6), "provisional
   days" rule, P7 ideas, P9 ideas (DNS hardening first).
 

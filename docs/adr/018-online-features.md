@@ -1,6 +1,6 @@
 # 018. Online user features: a separate stream into Redis
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-09 (P5; spec FR15, FR17; ADR 007, ADR 010)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
