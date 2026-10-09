@@ -97,7 +97,9 @@ def main() -> int:
         if found and found[0][0] != "0":
             seen = datetime.datetime.now(UTC)
             minutes = (seen - created_at).total_seconds() / 60
-            print(f"[{label}] in gold at {seen:%H:%M:%S}: {minutes:.1f} min", flush=True)
+            print(
+                f"[{label}] in gold at {seen:%H:%M:%S}: {minutes:.1f} min", flush=True
+            )
             return 0 if minutes < 60 else 1
         time.sleep(POLL)
     print(f"[{label}] not in gold after {TIMEOUT // 60} min")
