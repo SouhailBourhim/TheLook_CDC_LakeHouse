@@ -39,9 +39,14 @@ jobs:
     strategy:
       fail-fast: false
       # Each component has its own dependencies (its requirements.txt), as in
-      # its Docker image, so each is tested in its own environment.
+      # its Docker image, so each is tested in its own environment; extra
+      # adds a component's test-only requirements.
       matrix:
-        component: [onprem/generator, onprem/review-simulator]
+        include:
+          - component: onprem/generator
+          - component: onprem/review-simulator
+          - component: api
+            extra: --with-requirements requirements-test.txt
     defaults:
       run:
         working-directory: ${{ matrix.component }}
@@ -55,6 +60,7 @@ jobs:
       - run: >
           uv run --no-project --python 3.12
           --with-requirements requirements.txt --with pytest==9.1.1
+          ${{ matrix.extra }}
           python -m pytest -q
 
   spark:

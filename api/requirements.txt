@@ -1,0 +1,6 @@
+# Serving API (ADR 018). Top-level pins; requirements.lock (hashes) is what
+# the image installs. Each is the newest release at least a week old.
+fastapi==0.142.2
+pydantic==2.13.5
+redis==8.1.0
+uvicorn==0.54.0

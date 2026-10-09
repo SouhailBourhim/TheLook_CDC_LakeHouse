@@ -1,0 +1,5 @@
+# Tests only (CI and locally), on top of requirements.txt. httpx2 is what
+# Starlette's TestClient uses (it deprecates httpx).
+fakeredis==2.39.0
+httpx2==2.13.1
+pytest==9.1.1

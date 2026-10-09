@@ -1385,6 +1385,7 @@ steps, 0 to 10).
 | 3 | `lakehouse/features.py` (`feature_events`, `redis_rows`) + 14 chispa tests; 88 Spark tests pass |
 | 4 | `lakehouse/redis_writer.py` + 9 fakeredis tests (replay, either order, GT, trims, window, expiry extended never shortened, GT-on-new-key trap, chunking); the same checks repeated on the real Redis 8.10.2 as the `features` user: identical. ACL `+expireat` -> `+pexpireat` (times are in ms) |
 | 5 | `features-stream` live (core + serving only, no AWS): skipped the 1.8 M offsets retention deleted (36 empty batches of 50,000), caught up 470k records in ~10 batches of ~4.5 s, then ~200 records per 10 s batch in ~2 s. Redis: 175k keys, 35 MB; every key's expiry = its newest event + 72 h (checked). Container 1.3 GB (2.3 GB before capping CPUs) |
+| 6 | `api/` FastAPI app: `GET /users/{id}/features` (id parsed as a UUID: 422 if malformed, any case finds the same keys), 404 unknown, 503 Redis down, `/health`; 9 tests (TestClient + fakeredis, fixed clock); CI matrix gains `api`. Checked against the real Redis filled by the stream: 200 with live features, ~3.5 ms per request in-process. Pins: newest releases at least a week old (FastAPI 0.142.2, not 0.143.0 of the day before); `httpx2` for Starlette's TestClient (it deprecates `httpx`) |
 
 ### Debugging lessons (step 3)
 
@@ -1439,6 +1440,18 @@ steps, 0 to 10).
   `mem_limit`).
 - User ids are TEXT UUIDs (source schema): the API's `{id}` is a string.
 
+### Check answers (step 5)
+
+- (1) Crash loop and `None`: correct and complete, including why it
+  looped (offsets/N written before the batch, commits/N only after it
+  succeeds, so every restart re-ran the same empty batch) and why a
+  fabricated schema would be worse in bronze (tables created or appended
+  with a guessed schema).
+- (2) `cpus: 2` vs `nproc` 32: correct (a CFS quota, `cpu.max = 200000
+  100000`, not an affinity mask; the JVM's container support reads the
+  quota; glibc does not). Verified on the live JVM: `CPU: total 32
+  (initial active 2)`.
+
 ### CI was red since 2026-10-07 (found 2026-10-09, Souhail asked)
 
 - **Symptom**: every push since `52f037b` (10-07 12:09) failed the `lint`
@@ -1457,8 +1470,9 @@ steps, 0 to 10).
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Steps 1-5 done; core + serving running (no AWS cost). Next: step 6
-  (API). Step 0 (maintenance duration) still needs the stream profile.
+- Steps 1-6 done; core + serving running (no AWS cost). Next: step 7
+  (API container). Step 0 (maintenance duration) still needs the stream
+  profile.
 - To set after step 9: `mem_limit` of features-stream from the catch-up
   peak.
 - P7 idea added: alert on offsets skipped by the features stream.
