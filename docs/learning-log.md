@@ -1388,6 +1388,7 @@ steps, 0 to 10).
 | 6 | `api/` FastAPI app: `GET /users/{id}/features` (id parsed as a UUID: 422 if malformed, any case finds the same keys), 404 unknown, 503 Redis down, `/health`; 9 tests (TestClient + fakeredis, fixed clock); CI matrix gains `api`. Checked against the real Redis filled by the stream: 200 with live features, ~3.5 ms per request in-process. Pins: newest releases at least a week old (FastAPI 0.142.2, not 0.143.0 of the day before); `httpx2` for Starlette's TestClient (it deprecates `httpx`) |
 | 7 | API container (same pinned Python base as the simulators, hashed lock, non-root, `/health` healthcheck): 42 MB; 200 in ~4 ms through the container; 404, 422, `/docs` OK. A Redis outage: 503 in 1.0 s (was 59.7 s, see below); the API goes unhealthy and recovers on its own; the features stream outlived its retries, restarted from its checkpoint and caught up (5,076 records in one batch) |
 | 8 | **P5 acceptance passed**: `drills/features_freshness.py`, 10 samples 4.5-10.6 s from MongoDB commit to the API (target < 60 s); API p50 2.0 ms, p99 4.2 ms. Results in results.md |
+| 9 | Outage drill: API 503 in 1.0 s, features stream restarted 3 times and wrote again 3.2 s after Redis returned, bronze kept committing (no error, no restart). Rebuild drill: **224,587 of 224,587 servable keys identical** to the live ones, expiry to the ms; rebuild ~138 s; peak 1.4 GiB -> `mem_limit: 2g`. Bronze slower than P4 tonight (84-95 s vs 34-45 s): S3 round trips median 890 ms, a degraded link (P9) |
 
 ### Debugging lessons (step 3)
 
@@ -1500,6 +1501,24 @@ steps, 0 to 10).
   in the API, since a quiet user gets no trimming writes). Tests in Spark
   and in the API. **Lesson: a TTL bounds a key, not what is inside it.**
 
+### Debugging lessons (step 9)
+
+- **A watcher that never fired** (bronze "caught up" = a batch under 60 s):
+  bronze was steady but at ~85 s per batch, a regression against P4's
+  34-45 s. Ruled out in order: P5 (no AWS access), memory (4.5 GB free, no
+  swap), DNS (10-90 ms now; the UnknownHost errors were only at 23:23),
+  then measured the link: S3 HTTPS median 890 ms. A batch makes dozens of
+  sequential S3/Glue calls, so latency multiplies.
+- **Not overclaiming**: one slow bronze batch during the outage was
+  reported as indistinguishable from network noise, with the timeline
+  that shows the drift began before the outage.
+- Same time-zone trap as step 8, caught before running: `time.mktime`
+  reads local time; container logs are UTC (`calendar.timegm`). And
+  `docker volume rm` refuses a volume a stopped container still holds.
+- Bronze's first batch after `make down` was a replay (batch 1161): the
+  PostgreSQL tables were skipped (`skipped(replay)`), the MongoDB tables
+  appended: the P3 replay guard after a 2-day pause.
+
 ### CI was red since 2026-10-07 (found 2026-10-09, Souhail asked)
 
 - **Symptom**: every push since `52f037b` (10-07 12:09) failed the `lint`
@@ -1518,11 +1537,10 @@ steps, 0 to 10).
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Steps 1-8 done, **P5 acceptance passed**. Next: step 9 (Redis outage
-  and rebuild drills). Step 0 (maintenance duration) still needs the
-  stream profile.
-- To set after step 9: `mem_limit` of features-stream from the catch-up
-  peak.
+- Steps 1-9 done. Next: step 10 (P5 wrap-up: README, runbook, spec 5.3
+  versions; P5 checkpoint). Step 0 (Airflow maintenance duration) needs
+  the airflow profile: not started (S3 cost), Souhail to decide.
+- To approve: ADR 018 amendment (72 h window on viewed).
 - P7 idea added: alert on offsets skipped by the features stream.
 - Still pending from before: O8 (leaning B), E2 (before P6), "provisional
   days" rule, P7 ideas, P9 ideas (DNS hardening first).

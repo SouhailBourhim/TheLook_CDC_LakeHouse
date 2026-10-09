@@ -531,3 +531,52 @@ local time (UTC+1 here: every commit looked an hour old); with
 (offset -3600 s, all latencies negative, and the < 60 s check passed them).
 The drill now uses tz-aware datetimes everywhere and fails on a negative
 latency.
+
+## P5: Redis outage and rebuild drills — 2026-10-09/10
+
+### Redis stopped for 5 minutes under load (`drills/redis_outage.py`)
+
+Generator at its usual rate; core, stream and serving profiles up.
+
+| What | Result |
+|---|---|
+| API during the outage | 503 throughout, in 1.0 s per request; container unhealthy |
+| features stream | first batch failed after ~85 s (client retries, each slowed by an 8 s DNS lookup of the stopped container), then restarted every ~90 s (3 restarts, uncapped restart policy) |
+| bronze | kept committing: 3 batches, no error, no restart (95, 100, 128 s; 84-95 s just before, durations already drifting with the network, see below) |
+| after Redis restart | API healthy in 0.5 s; features stream writing again in 3.2 s |
+| freshness after recovery | 7.6-9.6 s (3 samples) |
+
+Bronze has no Redis client and runs in another process (ADR 018): its
+isolation is structural, and the drill shows it kept committing. One batch
+of four was slow (128 s), in a stretch where durations were already
+drifting up before the outage (84 s at 23:37, 94 s at 23:39); the next was
+back to 97 s. That batch cannot be told apart from network noise with this
+data.
+
+**Bronze is slower than in P4 tonight**: 84-95 s per batch against 34-45 s
+measured after the maintenance fix (2026-10-05), at similar batch sizes.
+Not P5 (the features stream and the API never reach AWS; CPU and memory
+have headroom: 4.5 GB free, no swap). The link to AWS was degraded: TCP
+connect to S3 us-east-1 median 249 ms (max 808 ms), a full HTTPS request
+median 890 ms (max 2.6 s), ping 62-172 ms. Consistent with the link, not
+proven against a baseline (P4 recorded no network latency). P9: re-measure
+in daytime and record latency next to batch durations.
+
+### Rebuild from Kafka equals the live features (`drills/features_rebuild.py`)
+
+Generator paused; live snapshot of every `user:*` key; Redis flushed and
+the checkpoint deleted; the stream re-read the whole topic (~72 h,
+~600k events); second snapshot; compared on what the API could serve at
+that moment (live keys, members inside their window).
+
+| Measure | Result |
+|---|---|
+| servable keys compared | 224,587 live, 224,587 rebuilt |
+| identical (members, scores, cart fields, expiry to the ms) | **224,587 (100 %)** |
+| rebuild time | ~138 s |
+| features-stream memory peak during the rebuild | 1,412 MiB (2 CPUs) -> `mem_limit: 2g` |
+
+Expiry from event time is what makes the TTLs match: a rebuild 15 minutes
+later writes the same `PEXPIREAT` values. The raw key counts differ (225,120
+live, 224,605 rebuilt) only by keys expired at the comparison time and
+members outside their window, which Redis still held but nothing serves.

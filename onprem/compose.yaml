@@ -610,6 +610,10 @@ services:
     # CPUs. Uncapped, it saw the VM's 32 and sized its GC, JIT and Spark
     # thread pools for them (454 threads, ~2.2 GB resident for a 768 MB heap).
     cpus: 2
+    # Measured peak 1.4 GiB during a full rebuild from Kafka (P5 step 9),
+    # 1.3 GiB steady. Above the limit the kernel kills it; the restart policy
+    # and idempotent replay recover, and the laptop's other services are safe.
+    mem_limit: 2g
     environment:
       # glibc keeps up to 8 malloc arenas per CPU, each holding memory once
       # touched; 2 is the usual setting for a JVM in a container.
