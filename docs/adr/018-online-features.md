@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-09 (P5; spec FR15, FR17; ADR 007, ADR 010)
+- Amended: 2026-10-10 (P5 step 9): a 72-hour window on `viewed` members (proposed).
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -131,6 +132,24 @@ container. Tested with TestClient and fakeredis.
   duplicate).
 - ❌ "Purchased" carts reflect how the generator writes sessions; a real
   website would see the cart fill up before the purchase.
+
+## Amendment 2026-10-10: a 72-hour window on viewed (proposed)
+
+Found while preparing the rebuild drill. A TTL belongs to a whole key, and
+every new view extends `user:{id}:viewed`, so the key of a user active
+every day never expires; its members only leave when 10 newer products push
+them out. A view could therefore stay for weeks, which breaks two claims:
+FR15's "the TTL bounds how long personal data lives" holds per key, not per
+view; and "everything Redis holds can be rebuilt from Kafka" fails for a
+view older than Kafka's 72 hours (a rebuild would not contain it).
+
+Change: `viewed` gets a 72-hour window like `events` has one hour. The
+writer trims members older than the window on every write, and the API
+reads only views of the last 72 hours (a user who goes quiet gets no more
+trimming writes, so the read-time filter keeps the answer exact). The
+other families are bounded already: `events` by its window, `session` by
+keeping one member, a cart by its session (minutes). Edge case left: a
+cart field can outlive its event by the length of its session.
 
 ## References
 

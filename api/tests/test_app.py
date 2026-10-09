@@ -131,3 +131,14 @@ def test_the_redis_client_fails_fast(monkeypatch):
     assert client.get_retry().get_retries() == 0
     kwargs = client.connection_pool.connection_kwargs
     assert kwargs["socket_timeout"] == 1 and kwargs["socket_connect_timeout"] == 1
+
+
+def test_views_older_than_72_hours_are_not_served(client, r):
+    # Present only because the user went quiet (no write trimmed it yet).
+    seed(r)
+    r.zadd(f"user:{USER}:viewed", {"9": NOW_MS - 73 * 3_600_000})
+    products = [
+        v["product_id"]
+        for v in client.get(f"/users/{USER}/features").json()["recently_viewed"]
+    ]
+    assert products == [42, 26756]

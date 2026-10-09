@@ -1489,6 +1489,17 @@ steps, 0 to 10).
   batch), so they measure close to the worst case: report the bound
   (trigger + batch + capture), not only the median.
 
+### Design flaw found before step 9 (ADR 018 amendment, proposed)
+
+- Thinking through what "rebuild = live" should mean: a key's TTL is
+  extended by every new view, so an active user's viewed key never expires,
+  and a member leaves only when 10 newer products push it out. An old view
+  could stay for weeks: FR15's "TTL bounds personal data" held per key, not
+  per view, and a view older than Kafka's 72 h cannot be rebuilt. Fix:
+  a 72 h window on `viewed` (trimmed on every write, filtered at read time
+  in the API, since a quiet user gets no trimming writes). Tests in Spark
+  and in the API. **Lesson: a TTL bounds a key, not what is inside it.**
+
 ### CI was red since 2026-10-07 (found 2026-10-09, Souhail asked)
 
 - **Symptom**: every push since `52f037b` (10-07 12:09) failed the `lint`

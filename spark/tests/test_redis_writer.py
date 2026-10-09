@@ -177,3 +177,10 @@ def test_more_rows_than_a_pipeline_chunk(r, now):
     rows = [zrow("events", f"user:{u}:events", "e", now, exp) for u in range(CHUNK + 5)]
     assert write(r, rows, now) == CHUNK + 5
     assert r.dbsize() == CHUNK + 5
+
+
+def test_a_new_view_trims_views_older_than_72_hours(r, now):
+    key, exp = "user:7:viewed", now + HOUR_MS
+    write(r, [zrow("viewed", key, "old", now - 73 * HOUR_MS, exp)], now - 2 * HOUR_MS)
+    write(r, [zrow("viewed", key, "new", now - MIN, exp)], now)
+    assert r.zrange(key, 0, -1) == [b"new"]

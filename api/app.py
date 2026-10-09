@@ -6,7 +6,8 @@ GET /products/{product_id}/recommendations (Neo4j) to the same app.
 
 Redis keys, as written by the stream (keep in step with features.py):
 
-    user:{id}:viewed           sorted set  product id -> last view (epoch ms)
+    user:{id}:viewed           sorted set  product id -> last view (epoch ms),
+                                           views of the last 72 h
     user:{id}:events           sorted set  event id -> event time (epoch ms)
     user:{id}:session          sorted set  session id -> its last event (ms)
     user:{id}:cart:{session}   hash        item:<event id> -> price,
@@ -31,6 +32,7 @@ from redis.retry import Retry
 
 RECENT = 10  # products in recently_viewed (the stream keeps 10)
 HOUR_MS = 3_600_000
+VIEWED_WINDOW_MS = 72 * HOUR_MS  # as the stream's viewed window
 
 app = FastAPI(
     title="theLook serving API",
@@ -125,7 +127,16 @@ def user_features(user_id: UUID, r: RedisDep, clock: ClockDep) -> UserFeatures:
     try:
         # One round trip for the three independent reads.
         pipe = r.pipeline(transaction=False)
-        pipe.zrevrange(f"{prefix}:viewed", 0, RECENT - 1, withscores=True)
+        # Views of the last 72 h only: the stream trims older ones when it
+        # writes, but a user who went quiet gets no more writes.
+        pipe.zrevrangebyscore(
+            f"{prefix}:viewed",
+            "+inf",
+            now_ms - VIEWED_WINDOW_MS,
+            start=0,
+            num=RECENT,
+            withscores=True,
+        )
         # Counted at read time, so the count falls as the hour passes even
         # when no new event arrives (ADR 018).
         pipe.zcount(f"{prefix}:events", now_ms - HOUR_MS, "+inf")

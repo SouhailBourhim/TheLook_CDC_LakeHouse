@@ -220,3 +220,13 @@ def test_values_do_not_depend_on_now(spark):
     later = written(rows_of(spark, docs, NOW + 2 * HOUR_MS))
     assert set(first) - set(later) == {("user:7:events", "e"), ("user:7:events", "c")}
     assert {k: first[k] for k in later} == later
+
+
+def test_views_older_than_72_hours_are_dropped_even_in_a_live_key(spark):
+    # The key lives on thanks to the recent view; the old view must not
+    # (personal data bounded per view; no longer in Kafka to rebuild it).
+    docs = [
+        event("7", "s1", "product", NOW - 73 * HOUR_MS, uri="/product/1"),
+        event("7", "s2", "product", NOW - MIN, uri="/product/2"),
+    ]
+    assert {m for _, m in written(rows_of(spark, docs), "viewed")} == {"2"}

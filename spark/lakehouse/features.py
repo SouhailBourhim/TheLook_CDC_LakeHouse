@@ -11,7 +11,7 @@ micro-batch:
 redis_rows returns one row per Redis write, in four key families (all keys
 start with user:{id}:, so erasure finds them with one pattern, P8):
 
-    viewed   sorted set  product id -> time of its last view      keep 10
+    viewed   sorted set  product id -> time of its last view      keep 10, 72 h
     events   sorted set  event _id  -> event time                 last hour
     session  sorted set  session id -> time of its last event     keep 1
     cart     hash        item:<event _id> -> price, purchased -> 1
@@ -21,6 +21,14 @@ of any batch, replayed or out of order, and reach the same state. Times are
 epoch milliseconds of the event (created_at), never of processing, and each
 key expires at its newest event time plus the family's TTL: a rebuild from
 Kafka gives the same keys and the same TTLs.
+
+A key's TTL alone does not bound its members: every new view extends the
+viewed key, so an active user's old views would stay forever (until pushed
+out of the 10). Hence a window on viewed too: no member outlives its event
+by more than 72 h, so personal data has a bound per view (FR15) and every
+member is still in Kafka, i.e. rebuildable (ADR 018 amendment). The other
+families are bounded already: events by its window, session by keep 1, a
+cart by its session (minutes).
 """
 
 from dataclasses import dataclass
@@ -44,7 +52,7 @@ class Family:
 # 72 h = Kafka retention (log.retention.hours): whatever Redis holds can
 # still be rebuilt from the topic. events: the feature is "the last hour".
 FAMILIES = {
-    "viewed": Family("zset", 72 * HOUR_MS, keep=10),
+    "viewed": Family("zset", 72 * HOUR_MS, keep=10, window_ms=72 * HOUR_MS),
     "events": Family("zset", HOUR_MS, window_ms=HOUR_MS),
     "session": Family("zset", 72 * HOUR_MS, keep=1),
     "cart": Family("hash", 72 * HOUR_MS),
@@ -119,13 +127,17 @@ def redis_rows(events: DataFrame, now_ms: int) -> DataFrame:
     Aggregated per key first (the newest view per product, the newest
     session per user...), so a backlog batch sends a bounded number of
     writes. Every row of a key carries the key's expire_at_ms; keys that
-    would already be expired at now_ms are dropped, and so are events-family
-    members older than the window: a catch-up writes nothing that Redis
-    would delete straight away. now_ms only filters; it never changes a
+    would already be expired at now_ms are dropped, and so are members older
+    than their family's window: a catch-up writes nothing that Redis would
+    delete straight away. (Dropping old views before taking the 10 newest
+    gives what Redis keeps after its two trims: if one of the 10 newest is
+    outside the window, so is every older one.) now_ms only filters; it never changes a
     value that is written.
     """
     views = events.where(
-        (F.col("event_type") == "product") & F.col("product_id").isNotNull()
+        (F.col("event_type") == "product")
+        & F.col("product_id").isNotNull()
+        & (F.col("event_ms") >= now_ms - FAMILIES["viewed"].window_ms)
     )
     viewed = _newest(
         views.groupBy("user_id", "product_id").agg(F.max("event_ms").alias("ms")),
