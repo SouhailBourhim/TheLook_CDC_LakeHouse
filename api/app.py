@@ -26,6 +26,8 @@ from uuid import UUID
 import redis
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 RECENT = 10  # products in recently_viewed (the stream keeps 10)
 HOUR_MS = 3_600_000
@@ -79,9 +81,13 @@ def get_redis() -> redis.Redis:
             username="api",
             password=os.environ["REDIS_API_PASSWORD"],
             # Fail fast: a request should get a 503 in about a second, not
-            # hang while Redis is down.
+            # hang while Redis is down. No retries either: redis-py 8 retries
+            # 10 times with backoff by default (measured: 60 s to a 503); the
+            # 503 already tells the caller to retry. The container's DNS
+            # options bound the name lookup of a stopped Redis (8 s -> 1 s).
             socket_timeout=1,
             socket_connect_timeout=1,
+            retry=Retry(NoBackoff(), 0),
             decode_responses=True,
         )
     return _client

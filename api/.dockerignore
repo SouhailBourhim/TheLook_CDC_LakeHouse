@@ -1,0 +1,4 @@
+# Only the lock and app.py are copied; keep the build context small.
+tests/
+__pycache__/
+.pytest_cache/

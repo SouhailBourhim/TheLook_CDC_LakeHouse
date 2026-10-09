@@ -9,6 +9,7 @@ import fakeredis
 import pytest
 from fastapi.testclient import TestClient
 
+import app as api
 from app import app, get_clock, get_redis
 
 USER = "6b69f59b-eb74-45da-9aae-cc31dfef1d77"
@@ -119,3 +120,14 @@ def test_openapi_documents_the_typed_response(client):
         "$ref": "#/components/schemas/UserFeatures"
     }
     assert "404" in get["responses"] and "422" in get["responses"]
+
+
+def test_the_redis_client_fails_fast(monkeypatch):
+    # No retries and 1 s timeouts: a 503 in about a second while Redis is
+    # down, not after redis-py's default 10 retries (measured: 60 s).
+    monkeypatch.setenv("REDIS_API_PASSWORD", "x")
+    monkeypatch.setattr(api, "_client", None)
+    client = get_redis()
+    assert client.get_retry().get_retries() == 0
+    kwargs = client.connection_pool.connection_kwargs
+    assert kwargs["socket_timeout"] == 1 and kwargs["socket_connect_timeout"] == 1

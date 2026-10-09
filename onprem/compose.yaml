@@ -642,6 +642,36 @@ services:
     # capped at 3 tries: a long Redis outage must not leave it down.
     restart: on-failure
 
+  api:
+    # The serving API (api/app.py, ADR 018): GET /users/{id}/features from
+    # Redis, as the read-only api ACL user. OpenAPI docs at /docs.
+    build: ../api
+    image: thelook-api:local
+    profiles: [serving]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_HOST: redis
+      REDIS_API_PASSWORD: ${REDIS_API_PASSWORD:?set REDIS_API_PASSWORD in onprem/.env}
+    # While Redis is stopped its name leaves Docker's DNS, which forwards the
+    # lookup to the host's resolver: 8 s before "Name or service not known"
+    # (measured). Names of running containers are answered locally at once,
+    # so 1 s and one attempt only cut that wait (a 503 in ~1 s, not ~9 s).
+    dns_opt:
+      - timeout:1
+      - attempts:1
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # /health answers 200 only when the API reaches Redis. The slim image
+      # has no curl: Python's urllib raises on a non-2xx status.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
   # --- monitoring profile ------------------------------------------------------
   # Start with the core stack:
   #   docker compose --profile core --profile monitoring up -d

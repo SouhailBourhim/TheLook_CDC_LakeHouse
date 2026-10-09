@@ -1386,6 +1386,7 @@ steps, 0 to 10).
 | 4 | `lakehouse/redis_writer.py` + 9 fakeredis tests (replay, either order, GT, trims, window, expiry extended never shortened, GT-on-new-key trap, chunking); the same checks repeated on the real Redis 8.10.2 as the `features` user: identical. ACL `+expireat` -> `+pexpireat` (times are in ms) |
 | 5 | `features-stream` live (core + serving only, no AWS): skipped the 1.8 M offsets retention deleted (36 empty batches of 50,000), caught up 470k records in ~10 batches of ~4.5 s, then ~200 records per 10 s batch in ~2 s. Redis: 175k keys, 35 MB; every key's expiry = its newest event + 72 h (checked). Container 1.3 GB (2.3 GB before capping CPUs) |
 | 6 | `api/` FastAPI app: `GET /users/{id}/features` (id parsed as a UUID: 422 if malformed, any case finds the same keys), 404 unknown, 503 Redis down, `/health`; 9 tests (TestClient + fakeredis, fixed clock); CI matrix gains `api`. Checked against the real Redis filled by the stream: 200 with live features, ~3.5 ms per request in-process. Pins: newest releases at least a week old (FastAPI 0.142.2, not 0.143.0 of the day before); `httpx2` for Starlette's TestClient (it deprecates `httpx`) |
+| 7 | API container (same pinned Python base as the simulators, hashed lock, non-root, `/health` healthcheck): 42 MB; 200 in ~4 ms through the container; 404, 422, `/docs` OK. A Redis outage: 503 in 1.0 s (was 59.7 s, see below); the API goes unhealthy and recovers on its own; the features stream outlived its retries, restarted from its checkpoint and caught up (5,076 records in one batch) |
 
 ### Debugging lessons (step 3)
 
@@ -1452,6 +1453,24 @@ steps, 0 to 10).
   quota; glibc does not). Verified on the live JVM: `CPU: total 32
   (initial active 2)`.
 
+### Debugging lessons (step 7)
+
+- **A 503 that took 60 s.** Stopping Redis, the API answered 503 after
+  59.7 s despite 1 s socket timeouts. Measured each suspect separately
+  instead of guessing: redis-py 8 retries **10 times** with exponential
+  backoff by default (59.9 s); and a stopped container's name leaves
+  Docker's DNS, which forwards it to the host resolver: 8.0 s before "Name
+  or service not known" (the connect timeout starts after the lookup).
+  Fixes: no retries in the API's client (the 503 tells the caller to
+  retry; retrying inside the request only hides the outage behind a slow
+  answer); `dns_opt: timeout:1, attempts:1` on the API container (names of
+  running containers are answered locally at once). Result: 1.0 s.
+- The stream keeps its retries on purpose: a background, idempotent
+  writer should ride out a blip; an API with a caller waiting should not.
+- Check answer (step 6, 503 vs 404/empty 200): correct; added that a 503
+  lets the site degrade on purpose (hide the block) instead of showing
+  generic content with confidence.
+
 ### CI was red since 2026-10-07 (found 2026-10-09, Souhail asked)
 
 - **Symptom**: every push since `52f037b` (10-07 12:09) failed the `lint`
@@ -1470,9 +1489,9 @@ steps, 0 to 10).
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Steps 1-6 done; core + serving running (no AWS cost). Next: step 7
-  (API container). Step 0 (maintenance duration) still needs the stream
-  profile.
+- Steps 1-7 done; core + serving running (no AWS cost). Next: step 8
+  (freshness drill, P5 acceptance). Step 0 (maintenance duration) still
+  needs the stream profile.
 - To set after step 9: `mem_limit` of features-stream from the catch-up
   peak.
 - P7 idea added: alert on offsets skipped by the features stream.
