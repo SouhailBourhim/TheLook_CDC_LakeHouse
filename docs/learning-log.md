@@ -1384,6 +1384,7 @@ steps, 0 to 10).
 | 2 | Redis 8.10.2 in the `serving` profile; ACLs proven (NOAUTH without login; `features` NOPERM on SET/ZRANGE/FLUSHALL/other keys; `api` NOPERM on ZADD/DEL/KEYS/CONFIG); `ZADD GT 50` on score 100 returned 0; ~15 MB empty. Added an `admin` user for operations. The image's entrypoint loads 4 bundled modules: our start script runs `redis-server` itself without them |
 | 3 | `lakehouse/features.py` (`feature_events`, `redis_rows`) + 14 chispa tests; 88 Spark tests pass |
 | 4 | `lakehouse/redis_writer.py` + 9 fakeredis tests (replay, either order, GT, trims, window, expiry extended never shortened, GT-on-new-key trap, chunking); the same checks repeated on the real Redis 8.10.2 as the `features` user: identical. ACL `+expireat` -> `+pexpireat` (times are in ms) |
+| 5 | `features-stream` live (core + serving only, no AWS): skipped the 1.8 M offsets retention deleted (36 empty batches of 50,000), caught up 470k records in ~10 batches of ~4.5 s, then ~200 records per 10 s batch in ~2 s. Redis: 175k keys, 35 MB; every key's expiry = its newest event + 72 h (checked). Container 1.3 GB (2.3 GB before capping CPUs) |
 
 ### Debugging lessons (step 3)
 
@@ -1410,6 +1411,34 @@ steps, 0 to 10).
   update that changes time, user or session leaves the old contribution
   (GT cannot lower a score; the old user's key keeps the member).
 
+### Debugging lessons (step 5)
+
+- **Startup order**: the first batch got `Connection refused` from Schema
+  Registry, still starting; `features-stream` only waited for Redis. Fix:
+  `depends_on` Kafka and the registry with `required: false` (they are in
+  another profile).
+- **The skip path we designed exposed an empty-input bug in shared code.**
+  Kafka had been down 2 days; at startup the topic still held segments
+  older than 72 h (retention runs every 5 min), so Spark planned batches on
+  them, then Kafka deleted them. `failOnDataLoss=false` skipped them and the
+  batches came back empty; `decode_by_schema` returned an untyped (VOID)
+  column and the query failed at analysis, on every restart (17). Method:
+  traceback -> "no schema id in the batch" -> the checkpoint's planned
+  offsets (2.88 M) vs the topic's earliest (4.65 M). Latent in bronze too
+  (a batch of only tombstones). Fix: `bronze_rows` returns None; a test
+  reproduces the production error on the old code (`ba7b830`).
+- Spark does not jump over a lost range: it walks it at
+  `maxOffsetsPerTrigger` per batch (36 empty batches here). Spark's own
+  warning ("Some data may be lost. Recovering from the earliest offset")
+  is the visible trace Souhail asked for.
+- **`--driver-memory` caps the heap, not the process**: 2.2 GB resident for
+  a 768 MB heap (356 MB used). The VM exposes 32 CPUs and the JVM sizes GC
+  and JIT threads by CPU count; glibc keeps up to 8 malloc arenas per CPU.
+  `cpus: 2` + `MALLOC_ARENA_MAX=2`: 1.3 GB (caveat: measured on live
+  batches, not a catch-up; step 9 measures the catch-up peak, then a
+  `mem_limit`).
+- User ids are TEXT UUIDs (source schema): the API's `{id}` is a string.
+
 ### CI was red since 2026-10-07 (found 2026-10-09, Souhail asked)
 
 - **Symptom**: every push since `52f037b` (10-07 12:09) failed the `lint`
@@ -1428,8 +1457,10 @@ steps, 0 to 10).
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Steps 1-4 done. Next: step 5 (features stream job: Dockerfile stage,
-  compose service), which needs the core profile up (step 0 with it).
+- Steps 1-5 done; core + serving running (no AWS cost). Next: step 6
+  (API). Step 0 (maintenance duration) still needs the stream profile.
+- To set after step 9: `mem_limit` of features-stream from the catch-up
+  peak.
 - P7 idea added: alert on offsets skipped by the features stream.
 - Still pending from before: O8 (leaning B), E2 (before P6), "provisional
   days" rule, P7 ideas, P9 ideas (DNS hardening first).

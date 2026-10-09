@@ -34,7 +34,7 @@ Where the features query runs:
 |---|---|
 | A. A second query inside `bronze_stream.py` (FR15 as written) | One driver. But it shares the stream's 2 cores with the bronze batches and the maintenance thread (O1 at risk), a features change restarts bronze, and a failed query needs a hand-written restart loop |
 | B. A separate application on the shared cluster | Isolated, but it needs a free core: when transform runs (2 + 2 = 4 cores taken) it waits minutes and misses the 1-minute target, unless the worker or the batch jobs are resized |
-| C. A separate application in Spark local mode, in its own container | Isolated, no core contention, no AWS identity at all; one more driver JVM (~0.7 GB) |
+| C. A separate application in Spark local mode, in its own container | Isolated, no core contention, no AWS identity at all; one more driver JVM (estimated ~0.7 GB; measured 1.3 GB, P5 step 5) |
 
 ## Decision
 
@@ -122,7 +122,9 @@ container. Tested with TestClient and fakeredis.
   not on a replay guard; a rebuild from Kafka must give the same keys and
   TTLs, which the rebuild drill checks.
 - ✅ One key prefix per user makes erasure a pattern delete.
-- ❌ One more driver JVM (~0.7 GB) and one more checkpoint to manage.
+- ❌ One more driver JVM and one more checkpoint to manage. Measured in
+  step 5: 1.3 GB resident with a 768 MB heap, once capped at 2 CPUs (2.3 GB
+  uncapped: the JVM sized its thread pools for the VM's 32 CPUs).
 - ❌ Local mode is not distributed; enough at demo volume.
 - ❌ Features older than 72 hours disappear, and "last 10 products" holds
   distinct products (a repeated view moves a product up, it does not add a

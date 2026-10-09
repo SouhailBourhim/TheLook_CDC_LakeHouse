@@ -583,6 +583,65 @@ services:
     # Lets Redis fsync the AOF and exit cleanly on `down`.
     stop_grace_period: 30s
 
+  features-stream:
+    # The features stream (spark/jobs/features_stream.py, ADR 018): its own
+    # Spark application in local mode (driver and executor in one JVM), so
+    # it takes no core from the shared worker and needs no stream profile.
+    build:
+      context: ./spark
+      target: features
+    image: thelook-spark-features:local
+    profiles: [serving]
+    init: true
+    depends_on:
+      redis:
+        condition: service_healthy
+      # In the core profile. required: false: waited for when that profile
+      # is started too, and no error when it is not (Compose otherwise
+      # rejects a dependency in an inactive profile). Without them, the first
+      # batch asked Schema Registry for a schema while it was still starting.
+      kafka:
+        condition: service_healthy
+        required: false
+      schema-registry:
+        condition: service_healthy
+        required: false
+    # local[2] uses 2 cores; the cap also makes the JVM size itself for 2
+    # CPUs. Uncapped, it saw the VM's 32 and sized its GC, JIT and Spark
+    # thread pools for them (454 threads, ~2.2 GB resident for a 768 MB heap).
+    cpus: 2
+    environment:
+      # glibc keeps up to 8 malloc arenas per CPU, each holding memory once
+      # touched; 2 is the usual setting for a JVM in a container.
+      MALLOC_ARENA_MAX: 2
+      PYTHONPATH: /opt/lakehouse
+      REDIS_HOST: redis
+      REDIS_FEATURES_PASSWORD: ${REDIS_FEATURES_PASSWORD:?set REDIS_FEATURES_PASSWORD in onprem/.env}
+      # No AWS variables: this job reads Kafka and writes Redis, nothing else.
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[2]
+      # Local mode: the driver JVM is also the executor, so this is the
+      # job's whole heap.
+      - --driver-memory
+      - 768m
+      - /opt/lakehouse/jobs/features_stream.py
+    ports:
+      # Driver UI (4040 on the host is the bronze stream's).
+      - "127.0.0.1:4041:4040"
+    volumes:
+      - ../spark:/opt/lakehouse:ro
+      # Its own checkpoint volume: a rebuild of the features (runbook) is
+      # "remove this volume, flush user:*", without touching bronze's.
+      - features-checkpoints:/opt/checkpoints
+    stop_grace_period: 30s
+    # Like the bronze stream: restarts after a crash (Redis down longer than
+    # the client's retries, Kafka unreachable) and resumes from its
+    # checkpoint; idempotent writes make the replayed batch harmless. Not
+    # capped at 3 tries: a long Redis outage must not leave it down.
+    restart: on-failure
+
   # --- monitoring profile ------------------------------------------------------
   # Start with the core stack:
   #   docker compose --profile core --profile monitoring up -d
@@ -637,3 +696,4 @@ volumes:
   kafka-data:
   prometheus-data:
   redis-data:
+  features-checkpoints:

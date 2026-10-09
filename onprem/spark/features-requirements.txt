@@ -1,0 +1,2 @@
+# The features stream (ADR 018): the Redis client, on the Spark image's Python.
+redis==8.1.0

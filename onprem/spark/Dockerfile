@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1.7
-# Two stages (ADR 011, ADR 013):
-#   spark    the cluster and job image: the Docker Official Spark image plus
-#            the jars Spark does not ship (Compose builds it with target: spark)
-#   airflow  Airflow on top of exactly that stage, so its spark-submit drivers
-#            share Python 3.10, Java 17 and the jars with the executors
+# Three stages (ADR 011, ADR 013, ADR 018):
+#   spark     the cluster and job image: the Docker Official Spark image plus
+#             the jars Spark does not ship (Compose builds it with target: spark)
+#   features  that stage plus the Redis client, for the features stream only:
+#             the cluster image (and the bronze stream) stays without it
+#   airflow   Airflow on top of the spark stage, so its spark-submit drivers
+#             share Python 3.10, Java 17 and the jars with the executors
 #
 # Spark image for the lake jobs (ADR 011): the Docker Official Spark image
 # plus the jars Spark does not ship. Each jar was verified against Maven
@@ -51,6 +53,16 @@ COPY --chmod=644 spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 # owner of the image's folder, so the spark user (uid 185) can write it;
 # otherwise the volume would be root-owned.
 RUN mkdir -p /opt/checkpoints && chown spark:spark /opt/checkpoints
+USER spark
+
+# --- Features stage (ADR 018) --------------------------------------------------------
+FROM spark AS features
+USER root
+# redis-py and its one dependency on Python 3.10, from a hashed lock file
+# (uv pip compile --generate-hashes): pip refuses anything else.
+COPY features-requirements.lock /tmp/features-requirements.lock
+RUN python3 -m pip install --no-cache-dir --require-hashes -r /tmp/features-requirements.lock \
+ && rm /tmp/features-requirements.lock
 USER spark
 
 # --- Airflow stage (ADR 013) -------------------------------------------------------
