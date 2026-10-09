@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-03 (decision D1, spec v2.0)
+- Amended: 2026-10-09 (P5): the Redis writer is a separate application, not a second query of this job (ADR 018).
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -37,7 +38,8 @@ table or collection, in the Glue catalog:
   the batch ID is written into the Iceberg snapshot summary, and a batch
   whose ID is already committed is skipped on replay.
 - The Redis feature updates run as a **separate query** with its own
-  checkpoint, so Redis being down never stops bronze.
+  checkpoint, so Redis being down never stops bronze. (Amended by ADR 018:
+  a separate Spark application in local mode, not a query of this job.)
 
 **Table format stays Iceberg** (not Delta Lake): Athena engine v3 reads
 and writes Iceberg (MERGE, OPTIMIZE, VACUUM, time travel), which the

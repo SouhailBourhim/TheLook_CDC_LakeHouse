@@ -10,9 +10,9 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 2.0                                           |
-| Date         | 3 October 2026                                |
-| Status       | In progress: P1 done, P2 to P4 must-have      |
+| Version      | 2.1                                           |
+| Date         | 9 October 2026                                |
+| Status       | In progress: P1 to P4 done, P5 started        |
 
 ### Revision history
 
@@ -29,6 +29,7 @@ governed, cost-controlled analytics lakehouse
 | 1.8         | 30/09/2026 | O8 target set from the P1 baseline run (docs/results.md): 200 change events/s. The capture side's breaking point is found in P2, end to end (the P1 load generator is latency-bound near 266 events/s). |
 | 1.9         | 30/09/2026 | Open questions A4 and C1 settled at the start of P2: the Iceberg sink creates and evolves the bronze tables, and the contracts validate them (Terraform creates only the Glue databases); the lake stays deployed between sessions, with `terraform destroy` kept as the one-command teardown. |
 | 2.0         | 03/10/2026 | Extension for Spark, NoSQL and serving (ADRs 007 to 010): MongoDB becomes a second CDC source and the new home of clickstream `events`, plus a synthetic `reviews` collection; PySpark Structured Streaming replaces the planned Iceberg sink connector as the bronze writer; PySpark batch replaces dbt for silver and gold; new serving layer (Redis online features, Neo4j co-purchase graph, FastAPI); synthetic cart product/price and basket affinity in the generator; milestones renumbered P1 to P10, CI starts in P2. |
+| 2.1         | 09/10/2026 | Online features (FR15, ADR 018): the Redis writer is a separate Spark streaming application in local mode, in its own container, instead of a second query in the bronze streaming job. It needs no AWS identity, cannot slow bronze, and does not compete with the batch jobs for the cluster's cores. |
 
 ## 1. Context and problem
 
@@ -225,8 +226,8 @@ theLook generator --> PostgreSQL (orders, users, products...) --WAL-----------+
                                           v                                    v
                    Kafka Connect [Debezium MongoDB + PostgreSQL sources]
                    --> Kafka (KRaft) + Schema Registry (Avro)
-                   --> Spark Structured Streaming --+--> bronze (below)
-                                                    +--> Redis (online user features)
+                   --> Spark Structured Streaming (bronze job) --> bronze (below)
+                   --> Spark Structured Streaming (features job) --> Redis (online user features)
 --- AWS side ---
    --> Iceberg bronze tables (S3 + Glue Catalog, one table per source table/collection)
    --> PySpark batch: silver (current state, SCD2) --> gold (star schema, marts)
@@ -261,7 +262,7 @@ DataFrames built in memory, never on a second lakehouse.
 | CDC              | Debezium on Kafka Connect         | The standard production deployment of Debezium; offsets and restarts managed by Connect; one platform for both sources | Debezium Server: simpler, but less representative of production                                         |
 | Document store   | MongoDB, single-node replica set  | Natural home for clickstream and reviews; change streams (replica set required) give Debezium a CDC log            | A second PostgreSQL schema: no NoSQL practice, no schemaless-data problem                               |
 | Schemas          | Schema Registry + Avro            | Schemas enforced when data is written; compatibility rules block breaking changes                                  | Schemaless JSON: breakage only detected downstream                                                      |
-| Delivery to lake | Spark Structured Streaming        | One engine for streaming and batch; full control of envelope parsing; the same stream also feeds Redis (ADR 007)   | Iceberg Kafka Connect sink: configuration only and exactly-once, but must be built from source and cannot feed Redis |
+| Delivery to lake | Spark Structured Streaming        | One engine for streaming and batch; full control of envelope parsing; the same engine and decoding code also feed Redis (ADR 007, ADR 018) | Iceberg Kafka Connect sink: configuration only and exactly-once, but must be built from source and cannot feed Redis |
 | Storage          | Apache Iceberg on S3              | ACID tables, row-level deletes (needed for GDPR), time travel; Athena reads and writes it (MERGE, OPTIMIZE, VACUUM); the Glue catalog makes Spark commits visible to Athena at once | Delta Lake: Athena can only read it, and open-source Spark needs a separate Glue registration step; plain Parquet: no deletes or ACID |
 | Query            | Athena                            | Serverless, pay per query                                                                                          | Redshift: fixed monthly cost                                                                            |
 | Transformation   | PySpark batch (Spark SQL MERGE on Iceberg) | Same engine as ingestion; transformations unit-tested with pytest and chispa (ADR 009)                    | dbt on Athena: strong SQL tooling, but a second engine and a second testing stack                       |
@@ -568,8 +569,10 @@ result. They are what turns the correctness claims into evidence.
 
 ### FR15: Online user features (Redis)
 
-A second query in the streaming job keeps per-user features in Redis,
-updated within a minute of the event:
+A second streaming job keeps per-user features in Redis, updated within a
+minute of the event. It is a separate Spark application with its own
+checkpoint, in local mode in its own container: it reads only the events
+topic, needs no AWS identity, and cannot slow or stop bronze (ADR 018):
 
 - the last 10 products the user viewed;
 

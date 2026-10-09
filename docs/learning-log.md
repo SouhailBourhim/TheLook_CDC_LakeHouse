@@ -1308,7 +1308,7 @@ Traced step by step:
   acceptance = reconciliation (6.16 M rows identical), all tests (CI green),
   O2 < 1 h; checkpoint passed.
 
-### Where we stopped (2026-10-07, ~20:10 UTC) — LATEST, start here
+### Where we stopped (2026-10-07, ~20:10 UTC) — superseded by session 9
 
 - P4 closed. **Next: P5** (Redis + FastAPI serving layer, ADR 010): plan it
   first, as for P4.
@@ -1318,6 +1318,50 @@ Traced step by step:
   P7 ideas, P9 ideas (DNS hardening first; facts partitioned by day,
   incremental dim_user, skip idle gold stages; a lighter first maintenance
   after downtime).
+
+## Session 9 — 2026-10-09 — P5 planned
+
+P5 plan approved (Redis online features + `GET /users/{id}/features`; 11
+steps, 0 to 10).
+
+### Decisions taken
+
+- **The features stream is its own Spark application in local mode**
+  (Souhail, option C of ADR 018), not a second query in `bronze_stream.py`
+  (FR15 as written, spec v2.1). Why: no AWS key in it at all; it cannot slow
+  bronze (O1); the worker's 4 cores are already full while a batch job runs
+  (stream 2 + batch 2), so an app on the cluster would wait minutes and miss
+  the 1-minute target. Cost: one more driver JVM (~0.7 GB).
+- **ADR 018 proposed**: key design (`user:{id}:viewed|events|session|cart:{sid}`,
+  sorted sets with `ZADD GT` and trims, read-time window count), TTLs from
+  event time (`EXPIREAT` NX then GT; 72 h = Kafka retention, 1 h for
+  events), `foreachPartition` pipelines, trigger 10 s, `failOnDataLoss=false`
+  (the opposite of bronze, and why), Redis 8 with AOF everysec, `volatile-ttl`,
+  ACL users `features` / `api`.
+
+### P5 plan (agreed)
+
+| # | Commit | Content / how we verify |
+|---|---|---|
+| 0 | none | Stack up; check the next maintenance run's duration (P4 watch item) |
+| 1 | `docs: ADR 018 online features (proposed)` | ADR 018, spec v2.1, ADR 007 amendment note |
+| 2 | `feat(serving): redis with ACL users` | `serving` profile, pinned Redis 8, AOF, maxmemory, ACLs; NOPERM proven |
+| 3 | `feat(spark): user feature rows` | `lakehouse/features.py`, chispa tests |
+| 4 | `feat(spark): idempotent redis writes` | fakeredis tests: replay, reverse order, TTL on every key, GT trap |
+| 5 | `feat(spark): features stream job` | job, Dockerfile `features` stage, compose service; live keys |
+| 6 | `feat(api): GET /users/{id}/features` | FastAPI app, tests (200/404/503), CI matrix |
+| 7 | `feat(serving): api container` | Dockerfile, compose, healthcheck, `/docs` |
+| 8 | `test(drills): feature freshness` | change stream → poll API; < 60 s per sample. **P5 acceptance** |
+| 9 | `test(drills): redis outage and rebuild` | bronze unaffected by an outage; rebuild = same keys and TTLs |
+| 10 | `docs: P5 wrap-up` | README, runbook, results, learning log; P5 checkpoint |
+
+### Where we stopped (2026-10-09) — LATEST, start here
+
+- Step 1 written (ADR 018 proposed, spec v2.1, ADR 007 note): waiting for
+  Souhail's review of ADR 018 and the step-1 check questions.
+- Next: step 0 (needs the stack up) and step 2 (Redis).
+- Still pending from before: O8 (leaning B), E2 (before P6), "provisional
+  days" rule, P7 ideas, P9 ideas (DNS hardening first).
 
 ### P1 plan (agreed)
 
