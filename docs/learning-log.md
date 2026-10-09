@@ -1383,6 +1383,7 @@ steps, 0 to 10).
 | 1 | ADR 018 accepted, spec v2.1 |
 | 2 | Redis 8.10.2 in the `serving` profile; ACLs proven (NOAUTH without login; `features` NOPERM on SET/ZRANGE/FLUSHALL/other keys; `api` NOPERM on ZADD/DEL/KEYS/CONFIG); `ZADD GT 50` on score 100 returned 0; ~15 MB empty. Added an `admin` user for operations. The image's entrypoint loads 4 bundled modules: our start script runs `redis-server` itself without them |
 | 3 | `lakehouse/features.py` (`feature_events`, `redis_rows`) + 14 chispa tests; 88 Spark tests pass |
+| 4 | `lakehouse/redis_writer.py` + 9 fakeredis tests (replay, either order, GT, trims, window, expiry extended never shortened, GT-on-new-key trap, chunking); the same checks repeated on the real Redis 8.10.2 as the `features` user: identical. ACL `+expireat` -> `+pexpireat` (times are in ms) |
 
 ### Debugging lessons (step 3)
 
@@ -1397,8 +1398,24 @@ steps, 0 to 10).
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Steps 1-3 done. Next: step 4 (idempotent Redis writer, fakeredis tests),
-  then step 0 when the stack is up.
+### Check answers (steps 3-4)
+
+- (1) One `expire_at_ms` per key: right conclusion (a TTL belongs to the
+  key). Refined: with NX then GT, per-row expiries would also converge to
+  the max, so "last write wins" is not our risk. The real reasons: a cart
+  expires with its session's newest event of any type; and the "already
+  expired" filter must judge the key, or a rebuild would drop old members
+  of a live key that the incremental stream had kept (rebuild != live).
+  Souhail wrote PEXPIREAT: correct, our times are ms (the writer uses it).
+- (2) Keeping `u` events: "inflates the counts" is wrong here (members are
+  event `_id`s, a `u` re-adds the same member). Correct and decisive: an
+  update that changes time, user or session leaves the old contribution
+  (GT cannot lower a score; the old user's key keeps the member).
+
+### Where we stopped (2026-10-09) — LATEST, start here
+
+- Steps 1-4 done. Next: step 5 (features stream job: Dockerfile stage,
+  compose service), which needs the core profile up (step 0 with it).
 - P7 idea added: alert on offsets skipped by the features stream.
 - Still pending from before: O8 (leaning B), E2 (before P6), "provisional
   days" rule, P7 ideas, P9 ideas (DNS hardening first).

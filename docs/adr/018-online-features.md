@@ -70,13 +70,13 @@ so replaying any batch, in any order, leaves the same state:
   session. It returns the value and whether the session ended in a purchase,
   since most carts arrive already checked out.
 
-**TTLs come from event time.** Each write sets `EXPIREAT` to the key's
+**TTLs come from event time.** Each write sets `PEXPIREAT` (`EXPIREAT` in milliseconds) to the key's
 newest event time plus the TTL: 72 hours for `viewed`, `session` and `cart`,
 1 hour for `events`. 72 hours equals Kafka retention, so everything Redis
 holds can still be rebuilt from Kafka. Because the expiry depends on the
 data and not on when it was written, a replay or a full rebuild gives the
 same TTLs. Events older than their TTL are dropped before writing, so a
-catch-up writes nothing that would expire at once. `EXPIREAT … GT` treats a
+catch-up writes nothing that would expire at once. `PEXPIREAT … GT` treats a
 key without a TTL as infinite and does nothing on a new key, so each write
 sends `NX` (new key) and then `GT` (extend).
 
@@ -132,7 +132,7 @@ container. Tested with TestClient and fakeredis.
 
 ## References
 
-- Redis docs: `ZADD` (GT), `EXPIREAT` (NX, GT, non-volatile keys), ACL,
+- Redis docs: `ZADD` (GT), `PEXPIREAT` (NX, GT, non-volatile keys), ACL,
   persistence (AOF), key eviction
 - Spark Structured Streaming guide: `foreachBatch`, `failOnDataLoss`
 - Cahier des charges v2.1: FR15, FR17; ADR 007, ADR 010

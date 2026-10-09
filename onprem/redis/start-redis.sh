@@ -26,7 +26,7 @@ install -d -o redis -g redis -m 700 /run/redis
   cat > "$acl" <<ACL
 user default off resetpass resetkeys resetchannels -@all
 user admin on #$(hash "$REDIS_ADMIN_PASSWORD") ~* &* +@all
-user features on #$(hash "$REDIS_FEATURES_PASSWORD") resetchannels ~user:* -@all +@connection -@dangerous +zadd +zremrangebyrank +zremrangebyscore +hset +expireat
+user features on #$(hash "$REDIS_FEATURES_PASSWORD") resetchannels ~user:* -@all +@connection -@dangerous +zadd +zremrangebyrank +zremrangebyscore +hset +pexpireat
 user api on #$(hash "$REDIS_API_PASSWORD") resetchannels %R~user:* -@all +@connection +@read -@dangerous
 ACL
 )
