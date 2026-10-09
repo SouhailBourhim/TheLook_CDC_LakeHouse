@@ -1387,6 +1387,7 @@ steps, 0 to 10).
 | 5 | `features-stream` live (core + serving only, no AWS): skipped the 1.8 M offsets retention deleted (36 empty batches of 50,000), caught up 470k records in ~10 batches of ~4.5 s, then ~200 records per 10 s batch in ~2 s. Redis: 175k keys, 35 MB; every key's expiry = its newest event + 72 h (checked). Container 1.3 GB (2.3 GB before capping CPUs) |
 | 6 | `api/` FastAPI app: `GET /users/{id}/features` (id parsed as a UUID: 422 if malformed, any case finds the same keys), 404 unknown, 503 Redis down, `/health`; 9 tests (TestClient + fakeredis, fixed clock); CI matrix gains `api`. Checked against the real Redis filled by the stream: 200 with live features, ~3.5 ms per request in-process. Pins: newest releases at least a week old (FastAPI 0.142.2, not 0.143.0 of the day before); `httpx2` for Starlette's TestClient (it deprecates `httpx`) |
 | 7 | API container (same pinned Python base as the simulators, hashed lock, non-root, `/health` healthcheck): 42 MB; 200 in ~4 ms through the container; 404, 422, `/docs` OK. A Redis outage: 503 in 1.0 s (was 59.7 s, see below); the API goes unhealthy and recovers on its own; the features stream outlived its retries, restarted from its checkpoint and caught up (5,076 records in one batch) |
+| 8 | **P5 acceptance passed**: `drills/features_freshness.py`, 10 samples 4.5-10.6 s from MongoDB commit to the API (target < 60 s); API p50 2.0 ms, p99 4.2 ms. Results in results.md |
 
 ### Debugging lessons (step 3)
 
@@ -1471,6 +1472,23 @@ steps, 0 to 10).
   lets the site degrade on purpose (hide the block) instead of showing
   generic content with confidence.
 
+### Debugging lessons (step 8)
+
+- **The drill was wrong twice before the pipeline was measured once.**
+  Run 1: "not served after 120 s", yet Redis had the view with the right
+  score. Checked the pipeline first (Redis, API by hand: `seen()` True),
+  then the timing: pymongo returns naive UTC datetimes, and `.timestamp()`
+  reads a naive datetime as *local* time (UTC+1): every commit looked an
+  hour old, the timeout fired before the first poll. Fix: `tz_aware=True`.
+  Run 2: clock offset -3600 s and every latency negative, and the drill
+  **passed** (-3590 < 60). `Database.command()` does not inherit the
+  client's `tz_aware`. Fixes: pass the client's codec options; fail on an
+  impossible (negative) latency. Lesson: a check that accepts impossible
+  values is not a check.
+- The samples are phase-locked to the trigger (each starts just after a
+  batch), so they measure close to the worst case: report the bound
+  (trigger + batch + capture), not only the median.
+
 ### CI was red since 2026-10-07 (found 2026-10-09, Souhail asked)
 
 - **Symptom**: every push since `52f037b` (10-07 12:09) failed the `lint`
@@ -1489,9 +1507,9 @@ steps, 0 to 10).
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Steps 1-7 done; core + serving running (no AWS cost). Next: step 8
-  (freshness drill, P5 acceptance). Step 0 (maintenance duration) still
-  needs the stream profile.
+- Steps 1-8 done, **P5 acceptance passed**. Next: step 9 (Redis outage
+  and rebuild drills). Step 0 (maintenance duration) still needs the
+  stream profile.
 - To set after step 9: `mem_limit` of features-stream from the catch-up
   peak.
 - P7 idea added: alert on offsets skipped by the features stream.

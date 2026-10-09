@@ -493,3 +493,41 @@ facts merged ~7 min after the slot). Bound: 30-minute schedule + one run.
   20-minute catch-up run), and the first maintenance run holds the `lake`
   pool (39 min once, before delete files were compacted first). Gold is
   stale from the downtime anyway; steady runs resume within ~1 hour.
+
+## P5: online features freshness (source commit -> API, < 1 minute) — 2026-10-09
+
+**Method:** `drills/features_freshness.py` (P5 acceptance, spec section 9):
+open a MongoDB change stream on `web.events`, take the next product view
+by a known user; its change event's `wallTime` is the commit time. Poll
+`GET /users/{id}/features` every 0.5 s until that product is in
+`recently_viewed` with the view's own time; latency = first seen - commit
+(an upper bound, +0.5 s). MongoDB's clock (Docker's VM) vs the host's:
++5 ms. Stack: core + serving only (no AWS); generator at its usual rate
+(~200 events per 10-second batch).
+
+**Result: passed.** 10 samples, every one under 11 s:
+
+| min | median | max | target |
+|---|---|---|---|
+| 4.5 s | 9.6 s | **10.6 s** | < 60 s |
+
+The samples are close to the worst case, not the average: each one takes
+the next view right after the previous one was served, i.e. right after a
+batch ran, so it waits nearly a full trigger. Only the first (random phase)
+shows a typical value. Bound: trigger (10 s) + batch time (~2 s) + capture
+(< 1 s), about 12 s.
+
+**API latency** (1,000 GETs over one kept-alive connection, from the host):
+p50 **2.0 ms**, p99 **4.2 ms**, max 9.8 ms. During a Redis outage the API
+answers 503 in 1.0 s (step 7).
+
+**Footprint:** features-stream 1.3 GB (768 MB heap, 2 CPUs), Redis 35 MB of
+data for ~175k keys (container ~45 MB), API 42 MB.
+
+**Drill bugs found before the first valid run** (no pipeline change):
+pymongo returns naive UTC datetimes and `.timestamp()` reads a naive one as
+local time (UTC+1 here: every commit looked an hour old); with
+`tz_aware=True`, `Database.command()` still decodes with pymongo's defaults
+(offset -3600 s, all latencies negative, and the < 60 s check passed them).
+The drill now uses tz-aware datetimes everywhere and fails on a negative
+latency.
