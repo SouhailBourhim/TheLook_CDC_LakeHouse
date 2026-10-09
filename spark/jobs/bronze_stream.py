@@ -134,7 +134,7 @@ def process_batch(batch: DataFrame, batch_id: int) -> None:
         for topic in sorted(per_topic):
             table = table_for(topic)
             rows = bronze_rows(batch, topic, registry, F.current_timestamp())
-            if rows.isEmpty():  # e.g. only tombstones
+            if rows is None:  # e.g. only tombstones
                 continue
             # Transient S3/Glue errors are retried inside the batch; the
             # replay check runs again on each attempt (lakehouse.bronze).

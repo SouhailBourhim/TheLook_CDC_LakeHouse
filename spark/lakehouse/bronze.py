@@ -105,11 +105,17 @@ def snapshot_summaries(spark: SparkSession, table: str) -> list[dict]:
 
 def bronze_rows(
     batch: DataFrame, topic: str, schema_for, ingested_at: Column
-) -> DataFrame:
-    """The batch's records of one topic as bronze rows."""
-    decoded = decode_by_schema(
-        split_frames(batch.where(F.col("topic") == topic)), schema_for
-    )
+) -> DataFrame | None:
+    """The batch's records of one topic as bronze rows, or None when the
+    batch holds no decodable record of it: only tombstones (a batch can end
+    between a delete and its tombstone), or nothing at all (offsets lost to
+    retention and skipped, P5). With no schema id there is no schema to
+    build the rows from: decoding would give an untyped null column, and
+    the query would fail at analysis."""
+    framed = split_frames(batch.where(F.col("topic") == topic))
+    if framed.isEmpty():
+        return None
+    decoded = decode_by_schema(framed, schema_for)
     if topic in MONGO_TOPICS:
         decoded = decode_by_schema(
             decoded, schema_for, "key_schema_id", "key_payload", "key_event"

@@ -104,6 +104,17 @@ GLUE_BLIP = Exception(
 )
 
 
+def test_bronze_rows_is_none_when_nothing_decodes(kafka_df, captured):
+    # Only a tombstone, or no record of the topic at all (an empty batch:
+    # offsets skipped after retention deleted them). Before the fix both
+    # failed at analysis: "Can't extract a value from event ... VOID".
+    reviews = captured["thelook_mongo.web.reviews"]
+    batch = kafka_df([reviews["tombstone"]])
+    now = F.current_timestamp()
+    assert bronze_rows(batch, "thelook_mongo.web.reviews", None, now) is None
+    assert bronze_rows(batch, "thelook.shop.users", None, now) is None
+
+
 def test_network_errors_are_transient_and_permissions_are_not():
     assert bronze.is_transient(GLUE_BLIP)
     assert not bronze.is_transient(Exception("AccessDeniedException: not authorized"))
