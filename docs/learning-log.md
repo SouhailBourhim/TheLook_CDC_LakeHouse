@@ -1396,8 +1396,6 @@ steps, 0 to 10).
 - In-batch pre-trimming must break ties as Redis does (equal scores ordered
   by member bytes), or Spark and Redis could keep different "10 newest".
 
-### Where we stopped (2026-10-09) — LATEST, start here
-
 ### Check answers (steps 3-4)
 
 - (1) One `expire_at_ms` per key: right conclusion (a TTL belongs to the
@@ -1411,6 +1409,22 @@ steps, 0 to 10).
   event `_id`s, a `u` re-adds the same member). Correct and decisive: an
   update that changes time, user or session leaves the old contribution
   (GT cannot lower a score; the old user's key keeps the member).
+
+### CI was red since 2026-10-07 (found 2026-10-09, Souhail asked)
+
+- **Symptom**: every push since `52f037b` (10-07 12:09) failed the `lint`
+  job; the test jobs passed. **Cause**: `drills/gold_freshness.py` (the O2
+  drill) was not `ruff format`-clean. I ran ruff on the folder I was
+  working in (`spark/`), CI runs it on the whole repository (`.`), and I
+  did not read the CI result after pushing. **Correction**: P4's closing
+  note says "all tests (CI green)": the tests were green, `lint` was not.
+  Fixed in `a644f4c`.
+- **Rule from now on**: before each commit, `uvx ruff@0.16.10 check .` and
+  `format --check .` from the repository root (what CI runs); after each
+  push, check the run (`gh run list`).
+- Separately, the last run's `alert-rules` job failed on Docker Hub's
+  unauthenticated pull rate limit (GitHub runners share IPs): not our code,
+  re-run. P9 idea: pull CI images from a registry without that limit.
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
