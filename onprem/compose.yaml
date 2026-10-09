@@ -546,6 +546,43 @@ services:
       - ../airflow/dags:/opt/airflow/dags:ro
       - airflow-logs:/opt/airflow/logs
 
+  # --- serving profile (P5): online user features (ADR 018) ----------------------
+  # Redis, the features stream (step 5) and the API (step 7). Needs the core
+  # profile (Kafka, Schema Registry); not the stream profile, and no AWS key.
+  #   make up PROFILES="core serving"
+
+  redis:
+    image: redis:8.10.2-trixie@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    profiles: [serving]
+    hostname: redis
+    # Builds the ACL file from the passwords below, then starts redis-server
+    # with redis.conf (persistence, memory cap) as the redis user.
+    entrypoint: ["/bin/bash", "/etc/redis/start-redis.sh"]
+    environment:
+      REDIS_ADMIN_PASSWORD: ${REDIS_ADMIN_PASSWORD:?set REDIS_ADMIN_PASSWORD in onprem/.env}
+      REDIS_FEATURES_PASSWORD: ${REDIS_FEATURES_PASSWORD:?set REDIS_FEATURES_PASSWORD in onprem/.env}
+      REDIS_API_PASSWORD: ${REDIS_API_PASSWORD:?set REDIS_API_PASSWORD in onprem/.env}
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      # The append-only file: features survive `down` with the checkpoint.
+      - redis-data:/data
+      # The folder, not single files (same reason as ./mongo above).
+      - ./redis:/etc/redis:ro
+    # maxmemory is 256 MB; an AOF rewrite forks the process, and pages
+    # written meanwhile are copied, so the limit leaves room for that.
+    mem_limit: 512m
+    healthcheck:
+      # Logs in as the read-only api user. REDISCLI_AUTH keeps the password
+      # off the command line ($$: expanded in the container, not by Compose).
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_API_PASSWORD\" redis-cli --user api ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    # Lets Redis fsync the AOF and exit cleanly on `down`.
+    stop_grace_period: 30s
+
   # --- monitoring profile ------------------------------------------------------
   # Start with the core stack:
   #   docker compose --profile core --profile monitoring up -d
@@ -599,3 +636,4 @@ volumes:
   mongo-config:
   kafka-data:
   prometheus-data:
+  redis-data:
