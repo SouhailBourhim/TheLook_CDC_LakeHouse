@@ -1376,10 +1376,29 @@ steps, 0 to 10).
   already expired: the skip is invisible to users. Souhail's point kept:
   the skip must be visible (Spark logs it; alert in P7).
 
+### Steps done
+
+| Step | Result |
+|---|---|
+| 1 | ADR 018 accepted, spec v2.1 |
+| 2 | Redis 8.10.2 in the `serving` profile; ACLs proven (NOAUTH without login; `features` NOPERM on SET/ZRANGE/FLUSHALL/other keys; `api` NOPERM on ZADD/DEL/KEYS/CONFIG); `ZADD GT 50` on score 100 returned 0; ~15 MB empty. Added an `admin` user for operations. The image's entrypoint loads 4 bundled modules: our start script runs `redis-server` itself without them |
+| 3 | `lakehouse/features.py` (`feature_events`, `redis_rows`) + 14 chispa tests; 88 Spark tests pass |
+
+### Debugging lessons (step 3)
+
+- **Spark 4 runs in ANSI mode**: `CAST('' AS BIGINT)` raises
+  `CAST_INVALID_INPUT` instead of returning null (Spark 3). A product URI
+  that does not match the regex gives `''`; with a plain cast, one such event
+  would fail its micro-batch on every replay (a poison record: the stream
+  never gets past it). `try_cast` returns null. Caught by a test written for
+  the malformed case.
+- In-batch pre-trimming must break ties as Redis does (equal scores ordered
+  by member bytes), or Spark and Redis could keep different "10 newest".
+
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Step 1 done, ADR 018 accepted. Next: step 2 (Redis), then step 0 when
-  the stack is up.
+- Steps 1-3 done. Next: step 4 (idempotent Redis writer, fakeredis tests),
+  then step 0 when the stack is up.
 - P7 idea added: alert on offsets skipped by the features stream.
 - Still pending from before: O8 (leaning B), E2 (before P6), "provisional
   days" rule, P7 ideas, P9 ideas (DNS hardening first).
