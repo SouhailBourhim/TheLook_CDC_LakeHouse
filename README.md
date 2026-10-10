@@ -4,11 +4,12 @@ Real-time change data capture from an operational PostgreSQL database and a
 MongoDB document store into a governed, cost-controlled Apache Iceberg
 lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 
-> **Status:** P1 to P5 are built and tested: capture from PostgreSQL and
+> **Status:** P1 to P5 are built and accepted: capture from PostgreSQL and
 > MongoDB, bronze/silver/gold on AWS with Spark and Airflow, and online
-> user features in Redis served by FastAPI. Next is P6 (Neo4j co-purchase
-> recommendations). This is a learning project; the full specification is
-> the [cahier des charges](docs/cahier-des-charges.md) (v2.1), the
+> user features in Redis served by FastAPI. P6 (Neo4j co-purchase
+> recommendations, `GET /products/{id}/recommendations`) is built; its
+> acceptance run is pending. This is a learning project; the full
+> specification is the [cahier des charges](docs/cahier-des-charges.md) (v2.2), the
 > reasoning is in the [ADRs](docs/adr/), measured results in
 > [results](docs/results.md).
 
@@ -16,7 +17,6 @@ lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 
 ## Architecture
 
-Solid boxes are built; dashed ones are planned (phase in brackets).
 More diagrams, from deployment down to single mechanisms (CDC sequence,
 exactly-once bronze, gold star schema, orchestration, Redis and Neo4j
 serving): [docs/architecture.md](docs/architecture.md).
@@ -32,17 +32,17 @@ flowchart LR
     connect -->|Avro| kafka[(Kafka 4 KRaft)]
     connect <--> sr[Schema Registry]
     spark[Spark Structured Streaming<br/>+ hourly bronze upkeep]
-    batch[Spark batch jobs<br/>silver, gold, upkeep]
-    airflow[Airflow<br/>transform 30 min, maintenance daily] -->|spark-submit| batch
+    batch[Spark batch jobs<br/>silver, gold, upkeep, graph]
+    airflow[Airflow<br/>transform 30 min, maintenance and graph daily] -->|spark-submit| batch
     features[Features stream<br/>Spark local mode]
     redis[(Redis 8)]
-    neo[(Neo4j P6)]:::planned
-    api["FastAPI<br/>GET /users/{id}/features"]
+    neo[(Neo4j 2026.08<br/>co-purchase graph)]
+    api["FastAPI<br/>/users/{id}/features<br/>/products/{id}/recommendations"]
     kafka --> spark
     kafka -->|events topic| features
     features -->|idempotent writes| redis
     redis --> api
-    neo -.-> api
+    neo --> api
   end
   subgraph aws["AWS (S3, Glue, Athena only)"]
     bronze[(Iceberg bronze<br/>+ batch ledger)]
@@ -55,8 +55,7 @@ flowchart LR
   batch -->|MERGE| silver
   batch -->|SCD2, facts, marts| gold
   gold --> athena
-  gold -.->|co-purchases| neo
-  classDef planned stroke-dasharray: 5 5
+  gold -->|graph job, daily| neo
 ```
 
 | Component | Built in | Topics / location |
@@ -69,11 +68,13 @@ flowchart LR
 | Bronze: Spark Structured Streaming -> 7 Iceberg tables (S3 + Glue), queryable in Athena | P3 | `lake.thelook_bronze.<database>_<table>` |
 | Silver: incremental MERGE, latest version per key (batch IAM user) | P4 | `lake.thelook_silver.<table>`, `make spark-run JOB=jobs/silver.py` |
 | Gold: star schema (dim_user SCD2, facts, marts) | P4 | `lake.thelook_gold.*`, `make spark-run JOB=jobs/gold.py` |
-| Orchestration: `transform` (silver -> gold, every 30 min), `maintenance` (silver/gold upkeep, daily), one-slot pool `lake` | P4 | `airflow/dags/`, UI `http://localhost:8088` |
+| Orchestration: `transform` (silver -> gold, every 30 min), `maintenance` (silver/gold upkeep, daily), `graph` (daily, P6), one-slot pool `lake` | P4 | `airflow/dags/`, UI `http://localhost:8088` |
 | Table upkeep: bronze by the stream (hourly expiry, rotating compaction and orphan removal), silver/gold by the `maintenance` DAG | P4 | `spark/lakehouse/upkeep.py` |
 | Durability: Kafka fsyncs every write; verify drill + key-filtered re-snapshot after an unclean shutdown | P4 | `drills/verify_silver.py`, `drills/resnapshot.py` |
 | Online user features: last 10 products viewed (72 h), current cart, events in the last hour; a separate Spark stream into Redis (ACL users, AOF) | P5 | `spark/jobs/features_stream.py`, keys `user:{id}:*` |
 | Serving API: `GET /users/{id}/features` (404 unknown, 503 Redis down), OpenAPI docs | P5 | `api/`, `http://localhost:8000/docs` |
+| Co-purchase graph: pairs from gold order items, weight = orders holding both; full idempotent rebuild into Neo4j, never empty | P6 | `spark/jobs/graph.py`, `(:Product)-[:BOUGHT_WITH]->(:Product)` |
+| `GET /products/{id}/recommendations` (top N by weight, 404 / `[]` / 422 / 503); `/health` liveness, `/ready` both stores | P6 | `api/`, Neo4j Browser `http://localhost:7474` |
 
 ## Repository layout
 
@@ -86,13 +87,13 @@ Folders are added in the commit that first needs them.
 | `onprem/review-simulator/` | Synthetic reviews in MongoDB | P2 |
 | `onprem/mongo/` | Replica set keyfile wrapper and idempotent setup (users, collections) | P2 |
 | `infra/terraform/` | AWS resources: S3, Glue, Athena, budgets (IAM in P3) | P2 |
-| `spark/` | PySpark jobs (streaming bronze, silver, gold, features) and their tests | P3, P4, P5 |
-| `api/` | Serving API (FastAPI) and its tests | P5 |
+| `spark/` | PySpark jobs (streaming bronze, silver, gold, features, graph) and their tests | P3 to P6 |
+| `api/` | Serving API (FastAPI) and its tests | P5, P6 |
 | `onprem/redis/` | Redis configuration and ACL users | P5 |
 | `drills/` | Reconciliation and failure drills | P1 onwards |
 | `scripts/` | Helpers (cost report, one-off event history copy) | P1 onwards |
 | `.github/workflows/` | CI | P2 onwards |
-| `docs/` | Specification, ADRs, learning log, runbook, results, source schema | All |
+| `docs/` | Specification, ADRs, learning log, runbook, results, source schema, architecture diagrams, command reference | All |
 
 ## Run it
 
@@ -106,7 +107,7 @@ counts page cache for Kafka and MongoDB, so it is an upper bound):
 | `monitoring` | postgres-exporter, prometheus, alertmanager | ~0.1 GB (Prometheus grows with its 7-day history) |
 | `stream` | spark-master, spark-worker | ~0.5 GB idle; executors up to the worker's 3 GB cap, plus ~1 GB per driver |
 | `airflow` | airflow-db, -apiserver, -scheduler, -dag-processor | ~0.9 GB idle; the scheduler (capped at 3 GB) hosts the Spark drivers |
-| `serving` | redis, features-stream, api | ~1.5 GB (features-stream 1.3-1.4 GB, capped at 2 GB; Redis ~60 MB; API ~45 MB); needs `core`, not `stream`; no AWS access |
+| `serving` | redis, features-stream, neo4j, api | ~2.4 GB (features-stream 1.3-1.4 GB, capped at 2 GB; Neo4j 0.8 GB idle, 0.9 GB while the graph loads, capped at 1.5 GB; Redis ~60 MB; API ~45 MB); needs `core`, not `stream`; no AWS access |
 
 ```bash
 cp onprem/.env.example onprem/.env     # then set every password
@@ -119,13 +120,13 @@ make up PROFILES="core stream"         # adds the Spark cluster (UI http://local
 make spark-run JOB=jobs/smoke_test.py  # Kafka, Avro and Glue catalog checks on the cluster
 make up PROFILES="core stream airflow" # adds Airflow: UI http://localhost:8088 (user admin, AIRFLOW_ADMIN_PASSWORD)
 make snapshot-postgres                 # P3: blocking re-snapshot so bronze starts complete
-make up PROFILES="core serving"        # P5: Redis, features stream, API (http://localhost:8000/docs)
+make up PROFILES="core serving"        # P5, P6: Redis, features stream, Neo4j, API (http://localhost:8000/docs)
 # bronze-stream (stream profile) appends every CDC topic to lake.thelook_bronze.* every 60 s
 make ps                                # what is running
 make down                              # stop everything, keep the data
 ```
 
-The `transform` and `maintenance` DAGs start paused on a fresh Airflow
+The `transform`, `maintenance` and `graph` DAGs start paused on a fresh Airflow
 database: unpause them in the UI. **Data transfer:** Spark on the laptop
 reads S3 over the internet, ~0.8 GB per hour with `stream` and `airflow` up
 (the free allowance covers ~125 hours a month): run those profiles while
@@ -146,6 +147,8 @@ role exists. After a reboot, rerun `make up` (no restart policy on purpose).
 | Connector state | `make connector-status`, Connect REST `http://localhost:8083` |
 | MongoDB | `mongodb://localhost:27017/?directConnection=true` (`directConnection`: the replica set member is named `mongo`, which only resolves inside Compose) |
 | Metrics and alerts | Prometheus `http://localhost:9090`, Alertmanager `http://localhost:9093` |
+| Co-purchase graph | Neo4j Browser `http://localhost:7474` (user `neo4j`, `NEO4J_PASSWORD`) |
+| Every command, by task | [docs/commands.md](docs/commands.md) |
 
 Checks and drills: `uv run drills/verify_cdc.py [source ...]` (Kafka vs
 both databases, with the generator and review simulator stopped),
@@ -232,6 +235,37 @@ same expiries; a TTL bounds a key, not its members (the 72 h window on
 viewed); why `failOnDataLoss=false` here and `true` for bronze; the 503 that
 took 60 s (redis-py's default retries and DNS for a stopped container).
 
+## How to demo P6 (about 3 minutes)
+
+With `core serving` up, and a graph built by the `graph` DAG (it needs
+`stream` and `airflow` to have run; serving the graph does not):
+
+```bash
+# 1. The most popular product's neighbours, heaviest first:
+curl -s "localhost:8000/products/27809/recommendations?limit=5" | python3 -m json.tool
+#    -> its 5 companion products, weights ~100, nothing else close
+# 2. The same in Neo4j Browser (http://localhost:7474):
+#    MATCH (p:Product {id: 27809})-[r:BOUGHT_WITH]-(o) RETURN p, r, o
+#    ORDER BY r.weight DESC LIMIT 5
+# 3. Acceptance: top 20 most-purchased products have >= 4 companions in
+#    their top 5, and same-category recommendations beat the random baseline:
+uv run drills/recommendations_affinity.py
+# 4. Failure: stop Neo4j; recommendations answer 503 in 1 s, the features
+#    endpoint keeps working, /health stays 200 and /ready names neo4j:
+docker compose -f onprem/compose.yaml stop neo4j
+curl -s localhost:8000/ready; curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/products/27809/recommendations
+docker compose -f onprem/compose.yaml start neo4j   # 200 again ~9 s later, no API restart
+```
+
+Talking points: why a full rebuild and not `weight += n` (weights must go
+down after an erasure; a replayed batch would count twice); write first,
+delete stale after, so the API never sees an empty graph; one writer
+because parallel `MERGE`s on popular products deadlock; why companions
+come from a sha256 rule (any tool can recompute them, so the acceptance is
+exact); liveness vs readiness, and why a readiness probe on shared stores
+turns a partial outage into a total one; the 500 a fake could not find
+(Neo4j reports a query timeout as a `ClientError`).
+
 ## Design decisions
 
 Each has an ADR with the alternatives and consequences.
@@ -255,6 +289,7 @@ Each has an ADR with the alternatives and consequences.
 | Kafka fsyncs every write (single broker) | No silent loss of acknowledged records on a crash (one happened) | [016](docs/adr/016-kafka-fsync-single-broker.md) |
 | Each layer maintained by its writer | No key that can delete bronze ever enters Airflow | [017](docs/adr/017-table-maintenance.md) |
 | Features: a separate Spark stream in local mode; max/union values in Redis; TTLs from event time | No AWS key, cannot slow bronze; replays and rebuilds give the same state | [018](docs/adr/018-online-features.md) |
+| Graph: companion products in the generator, full rebuild stamped with a run id, one writer, liveness `/health` + readiness `/ready` | Exact acceptance; idempotent and erasure-proof; never an empty graph; a store outage never restarts the API | [019](docs/adr/019-co-purchase-graph.md) |
 
 ## After cloning
 
@@ -273,6 +308,7 @@ git config core.hooksPath .githooks
 - [Learning log](docs/learning-log.md)
 - [Source schema](docs/source-schema.md)
 - [Results](docs/results.md) and [runbook](docs/runbook.md)
+- [Architecture in diagrams](docs/architecture.md) and [command reference](docs/commands.md)
 
 ## License
 

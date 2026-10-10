@@ -455,6 +455,8 @@ Each is a sequence of the commands above; follow the runbook section, in order.
 | API 503, `features-stream` restarting | The API answers 503, or features-stream keeps restarting |
 | Redis lost data, or the features logic changed | Rebuild the features |
 | Rotate a Redis password | Rotate a Redis password |
+| Recommendations answer 503 | Recommendations answer 503 |
+| Rebuild the graph, check a weight, change the Neo4j password | Co-purchase graph (Neo4j, P6) |
 
 ## 14. Ports and UIs
 

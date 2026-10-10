@@ -580,3 +580,83 @@ Expiry from event time is what makes the TTLs match: a rebuild 15 minutes
 later writes the same `PEXPIREAT` values. The raw key counts differ (225,120
 live, 224,605 rebuilt) only by keys expired at the comparison time and
 members outside their window, which Redis still held but nothing serves.
+
+## P6: co-purchase graph and recommendations — 2026-10-10
+
+### The generator's affinity (step 2, ADR 019)
+
+Measured in PostgreSQL on the first ~2,700 orders after the change, with
+companions and the popularity ranking recomputed **in SQL** from their
+sha256 rule (same top product as Python: 27809):
+
+| Measure | Measured | Expected |
+|---|---|---|
+| 2-item orders whose second item is a companion of the first | 0.574 | 0.6 (± 0.021) |
+| top product's share of 1-item orders | 2.70 % | 2.9 % (± 0.39) |
+| order rate | ~12,100 orders/h | (18,000 assumed in the first draft of ADR 019, corrected) |
+
+Same-category rate of 2-item orders by day: **0.05 from 09-29 to 10-01**
+(P1, upstream generator, no affinity: the random baseline), **0.59-0.63
+since 10-03** (P2 affinity; model 0.6 + 0.4 x 0.051 = 0.62). The ~50,000
+uniform P1 orders keep diluting any same-category figure computed over all
+orders.
+
+### Neo4j resources (step 3)
+
+| Setting | Memory | Threads |
+|---|---|---|
+| idle, CPUs uncapped (32 visible) | 1.02 GiB | 119 |
+| idle, `cpus: 2` | 0.8 GiB | 60 |
+| peak while loading 491,014 pairs | 926 MiB | |
+
+`mem_limit` 1.5 GB kept. The JVM sizes its thread pools from the CPUs it
+sees: the P5 lesson again.
+
+### Graph build (steps 5-7)
+
+| Run | Pairs | Max weight | Products | Time (pairs + load) |
+|---|---|---|---|---|
+| first, 04:37 (~2.7 h of companion orders in gold) | 491,014 | 43 | 29,120 | 55 s (21.8 + 33.0) |
+| rerun, then the DAG's first run | same fingerprint, 0 stale | | | DAG 64 s |
+| preview, 18:51 (~6 h) | 513,400 | 123 | 29,120 | 123.5 s (89.5 + 34.0) |
+
+Writer tests on a throwaway Neo4j: a rerun gives the same fingerprint; a
+crash mid-run keeps the old graph and the next run converges; weights go
+down when orders disappear (disabling the stale delete fails 2 tests).
+**Correctness against the source**: for 27809 and its companion 13561, the
+graph's weight (100) equals the number of PostgreSQL orders holding both
+before the gold cut (100). Pair computation took 89.5 s at 18:51 against
+21.8 s at 04:37 for a similar input: not investigated (S3 link or memory,
+3.6 GB free); P9.
+
+### API (steps 8-9), through the container
+
+| Case | Result |
+|---|---|
+| warm recommendations request (curl from the host) | 15-45 ms |
+| first query after Neo4j restarts (cold caches) | 1.99 s (server-side timeout 2 s) |
+| API restarted, Neo4j warm | 27 ms: connecting is cheap, the cold cost is Neo4j's |
+| Neo4j stopped | 503 in 1.0 s (the first one in 4.5 ms: dead pooled connection); `/ready` 503 naming neo4j; `/health` 200; container healthy; features 200 in 4 ms |
+| Neo4j started again | 200 after 8.5 s, no API restart, no 500 in the API log |
+
+A query past the 2 s timeout used to be a **500**: Neo4j reports it as a
+`ClientError` (like a syntax error), which the API did not catch; found by
+forcing a 0.2 s timeout in the container. It is now a 503 (`GraphTimeout`),
+tested on a real Neo4j.
+
+### Acceptance (spec section 9): `drills/recommendations_affinity.py`
+
+**Method** (decided before any official result): (1) for the 20
+most-purchased products (distinct orders in PostgreSQL), at least 4 of the
+API's top 5 are the product's companions, recomputed from the sha256 rule;
+(2) over a fixed sample of 1,000 products, the share of same-category
+recommendations is at least **5x** the random baseline
+(n_category - 1) / (n - 1). The drill fails with a wrong companion rule
+(0/20, exit 1). **Which run counts** was fixed before running: a preview at
+~6 h of companion orders, the official run after a rebuild at ~22:00 UTC
+(~10 h), whatever its outcome.
+
+| Run | (1) companions in the top 5 | (2) same-category share |
+|---|---|---|
+| preview, 18:52, ~6 h (does not count) | 20/20, every product 5/5; weakest companion weight 4 | 30.1 % vs 5.1 % = 5.9x |
+| **official, ~22:00, ~10 h** | **pending** | **pending** |

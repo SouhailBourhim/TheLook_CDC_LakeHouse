@@ -405,6 +405,90 @@ to expiring (`volatile-ttl`): features would go missing, not stale. Raise
 `maxmemory` in `onprem/redis/redis.conf` (and the container's 512 MB limit,
 which leaves room for the AOF rewrite's fork).
 
+## Co-purchase graph (Neo4j, P6)
+
+Profile `serving`: `neo4j` (Community 2026.08.1, one database, one user)
+holds `(:Product)-[:BOUGHT_WITH {weight}]->(:Product)`, one relationship per
+pair, rebuilt from gold by the `graph` DAG (daily 04:00 UTC, pool `lake`;
+ADR 019). The API reads it. Browser `http://localhost:7474`; a shell:
+
+```bash
+docker compose -f onprem/compose.yaml exec neo4j sh -c 'cypher-shell -u neo4j -p "${NEO4J_AUTH#neo4j/}"'
+```
+
+### Recommendations answer 503
+
+`curl -s localhost:8000/ready` says whether Neo4j is the store that is
+down; `/health` stays 200 (liveness only). `make ps`: is `neo4j` up and
+healthy? The API answers 503 within about a second while Neo4j is down (1 s
+connect timeout, no retries, the container's 1 s DNS timeout) and recovers
+on its own: measured 200 again 8.5 s after `start neo4j`, with no API
+restart. Two expected one-offs:
+
+- the first request after Neo4j restarts can be a 503 in a few ms: the
+  pooled connection died with the old server, and the API does not retry;
+- a cold Neo4j's first query took 1.99 s, near the API's 2 s server-side
+  query timeout. A query past it is a 503 too (`GraphTimeout`), not a 500.
+  Repeated timeouts on a warm server mean a slow query: profile it in
+  cypher-shell (`PROFILE MATCH ...`).
+
+### Rebuild the graph now
+
+```bash
+docker compose -f onprem/compose.yaml exec -T airflow-scheduler airflow dags trigger graph
+```
+
+or by hand (only the Airflow image has the Neo4j client):
+`docker compose -f onprem/compose.yaml exec airflow-scheduler spark-submit --master spark://spark-master:7077 /opt/lakehouse/jobs/graph.py`.
+Needs `stream` and `airflow` up. A run is idempotent: same gold, same
+graph. The task log ends with
+`run <id> loaded: {'nodes': ..., 'pairs': ..., 'pairs_skipped': 0, 'stale_pairs': ..., 'stale_nodes': ...}`
+(measured: 513,400 pairs, 29,120 products, ~2 min). If a run dies midway,
+the previous graph stays readable (new rows are written before old ones
+are deleted, each 10,000-row batch in one transaction); the next run
+converges. The graph reflects gold as of the last `transform` run: rebuild
+after a transform has finished, not during one (the pool queues it anyway).
+
+### Recommendations look wrong
+
+Run `uv run drills/recommendations_affinity.py` (P6 acceptance). To check
+one pair against the source, count the orders holding both products in
+PostgreSQL and compare with the relationship's weight (equal up to the
+orders placed after the last transform run's cut):
+
+```sql
+WITH a AS (SELECT DISTINCT order_id FROM shop.order_items WHERE product_id = 27809),
+     b AS (SELECT DISTINCT order_id FROM shop.order_items WHERE product_id = 13561)
+SELECT count(*) FROM a JOIN b USING (order_id);
+```
+
+### Memory
+
+Heap 512 MB and page cache 256 MB (`NEO4J_server_memory_*` in
+`compose.yaml`), `mem_limit` 1.5 GB, `cpus: 2` (the JVM sizes its thread
+pools from the CPUs it sees). Measured: 0.8 GB idle, 926 MiB at the peak of
+a load. If `docker stats` shows it near the limit as orders grow, raise the
+page cache and the limit together.
+
+### Change the Neo4j password
+
+`NEO4J_AUTH` is read only when `/data` holds no user (the first start), so
+editing `.env` alone changes nothing. Not yet exercised:
+
+1. In cypher-shell, on the `system` database (`-d system`):
+   `ALTER CURRENT USER SET PASSWORD FROM '<old>' TO '<new>'`.
+2. Set `NEO4J_PASSWORD` in `onprem/.env` to the new value.
+3. Recreate the readers: `docker compose -f onprem/compose.yaml up -d api airflow-scheduler`.
+
+Community has no roles: every user is an administrator, so there is no
+read-only user for the API to switch to (ADR 019).
+
+### Tests that wipe the database
+
+`make test-graph` runs the graph writer and API query tests against a
+throwaway Neo4j on port 17687 and removes it afterwards. They delete every
+node: never point `NEO4J_TEST_URI` at the serving Neo4j (7687).
+
 ## Spark AWS credentials
 
 The streaming job authenticates as IAM user `thelook-spark-stream`

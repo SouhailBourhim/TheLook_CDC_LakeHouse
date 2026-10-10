@@ -2003,6 +2003,19 @@ P6 plan approved (Neo4j co-purchase graph +
   3.5 h. Measured pace for that pair: 47 before 04:30 (~17/h), 38 since
   16:00 (~15/h).
 
+### Step 11 written (before the official run, Souhail's choice)
+
+- README: status (P6 built, acceptance pending; spec v2.2), architecture
+  diagram (Neo4j built, both endpoints, graph job), component rows, serving
+  profile RAM with Neo4j (~2.4 GB), "How to demo P6", ADR 019 row, links to
+  the diagrams and the command reference.
+- Runbook: "Co-purchase graph (Neo4j, P6)": 503s and their two expected
+  one-offs, rebuild, checking a weight against PostgreSQL, memory, password
+  change (the compose comment already pointed to it; not yet exercised),
+  tests that wipe the database.
+- results.md: P6 section with every measured figure of steps 2-9 and the
+  preview; the official acceptance row says **pending** until ~22:00.
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
