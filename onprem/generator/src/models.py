@@ -1,8 +1,11 @@
 # Modified in thelook-cdc-lakehouse (see NOTICE): synthetic additions (spec
 # 4.3) - cart events carry product_id and price; OrderItem.new accepts a
-# chosen product (basket affinity, see pick_affinity_product).
+# chosen product (basket affinity and popularity, see pick_order_products).
 import datetime
 import dataclasses
+import functools
+import hashlib
+import itertools
 import random
 import logging
 import inspect
@@ -21,20 +24,82 @@ logging.basicConfig(
 
 PRODUCT_MAP = get_product_map("products.csv")
 
-# Synthetic (spec 4.3): product ids per category, for basket affinity.
+# Synthetic (spec 4.3): product ids, all and per category, for basket affinity.
+PRODUCT_IDS = tuple(PRODUCT_MAP)
 PRODUCTS_BY_CATEGORY: dict = {}
 for _pid, _product in PRODUCT_MAP.items():
     PRODUCTS_BY_CATEGORY.setdefault(_product["category"], []).append(_pid)
 
 
-def pick_affinity_product(first_product_id: str, exclude: set) -> Optional[str]:
-    """Synthetic (spec 4.3): a product from the same category as the order's
-    first item, not already in the order. None if the category has no other
-    product. Without this, products are uniform at random and co-purchase
-    pairs almost never repeat."""
-    category = PRODUCT_MAP[str(first_product_id)]["category"]
-    candidates = [p for p in PRODUCTS_BY_CATEGORY[category] if p not in exclude]
+def _hash(text: str) -> bytes:
+    return hashlib.sha256(text.encode()).digest()
+
+
+@functools.lru_cache(maxsize=None)
+def companion_products(product_id, n: int) -> tuple:
+    """Synthetic (spec 4.3, ADR 019): the product's n companions, the other
+    products of its category with the smallest sha256("<id>:<candidate>").
+
+    A hash rather than a seeded random.Random: Python only guarantees that
+    random() repeats across versions, not sample() or choice(). The same
+    product always has the same companions, after any restart and in any
+    language, so the P6 drill can recompute them."""
+    pid = str(product_id)
+    category = PRODUCT_MAP[pid]["category"]
+    others = [p for p in PRODUCTS_BY_CATEGORY[category] if p != pid]
+    return tuple(sorted(others, key=lambda c: _hash(f"{pid}:{c}"))[:n])
+
+
+def pick_affinity_product(
+    first_product_id: str, exclude: set, companions: int = 0
+) -> Optional[str]:
+    """Synthetic (spec 4.3): a product that goes with the order's first item,
+    not already in the order: one of its companions, or, with companions=0,
+    any product of its category. None if no candidate is left. Without this,
+    products are uniform at random and co-purchase pairs almost never
+    repeat."""
+    if companions > 0:
+        pool = companion_products(first_product_id, companions)
+    else:
+        pool = PRODUCTS_BY_CATEGORY[PRODUCT_MAP[str(first_product_id)]["category"]]
+    candidates = [p for p in pool if p not in exclude]
     return random.choice(candidates) if candidates else None
+
+
+@functools.lru_cache(maxsize=None)
+def popularity_ranking(skew: float) -> tuple:
+    """Synthetic (spec 4.3, ADR 019): products ordered by
+    sha256("popularity:<id>") (a fixed, arbitrary ranking) and the cumulative
+    Zipf weights 1 / rank^skew used to draw an order's first item."""
+    ranked = sorted(PRODUCT_MAP, key=lambda p: _hash(f"popularity:{p}"))
+    cum_weights = list(
+        itertools.accumulate(rank**-skew for rank in range(1, len(ranked) + 1))
+    )
+    return tuple(ranked), cum_weights
+
+
+def pick_order_products(
+    num_items: int, affinity_prob: float, companions: int, skew: float
+) -> list:
+    """Synthetic (spec 4.3): the product ids of a new order's items.
+
+    The first item follows the popularity skew (uniform when skew is 0);
+    each later item is, with probability affinity_prob, a product that goes
+    with the first one (pick_affinity_product), otherwise uniform as
+    upstream. Ids are PRODUCT_MAP keys (strings)."""
+    products: list = []
+    for _ in range(num_items):
+        product_id = None
+        if not products:
+            if skew > 0:
+                ranked, cum_weights = popularity_ranking(skew)
+                product_id = random.choices(ranked, cum_weights=cum_weights)[0]
+        elif random.random() < affinity_prob:
+            product_id = pick_affinity_product(products[0], set(products), companions)
+        if product_id is None:
+            product_id = random.choice(PRODUCT_IDS)
+        products.append(product_id)
+    return products
 
 
 def get_additional_ddls(schema: str):

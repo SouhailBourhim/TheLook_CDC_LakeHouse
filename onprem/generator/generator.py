@@ -1,7 +1,8 @@
 # Modified in thelook-cdc-lakehouse (see NOTICE): --db-password defaults to
 # the DB_PASSWORD environment variable; the password is redacted in the logs.
 # Clickstream events go to MongoDB (src/mongo_writer.py) instead of
-# PostgreSQL; synthetic basket affinity (--basket-affinity-prob, spec 4.3).
+# PostgreSQL; synthetic basket affinity and popularity (--basket-affinity-prob,
+# --companions, --popularity-skew; spec 4.3, ADR 019).
 import argparse
 import asyncio
 import os
@@ -21,7 +22,7 @@ from src.models import (
     Event,
     OrderStatus,
     EventCategory,
-    pick_affinity_product,
+    pick_order_products,
 )
 from src.utils import generate_from_csv
 
@@ -137,14 +138,14 @@ class TheLookECommSimulator:
         order = Order.new(user=random_user, fake=self.fake)
         order_items = []
         purchase_events = []
-        for _ in range(order.num_of_items):
-            # Synthetic basket affinity (spec 4.3): later items may come from
-            # the first item's category.
-            product_id = None
-            if order_items and random.random() < self.args.basket_affinity_prob:
-                product_id = pick_affinity_product(
-                    order_items[0].product_id, {i.product_id for i in order_items}
-                )
+        # Synthetic (spec 4.3, ADR 019): a popular first item, then companions.
+        product_ids = pick_order_products(
+            order.num_of_items,
+            affinity_prob=self.args.basket_affinity_prob,
+            companions=self.args.companions,
+            skew=self.args.popularity_skew,
+        )
+        for product_id in product_ids:
             order_item = OrderItem.new(
                 order=order, fake=self.fake, product_id=product_id
             )
@@ -357,7 +358,9 @@ def main():
     ## --- Ghost Event Arguments ---
     parser.add_argument("--ghost-create-prob", type=float, default=0.2, help="Probability of generating a ghost event. Default is 0.2. Set to 0 to disable.")
     ## --- Synthetic additions (thelook-cdc-lakehouse, spec 4.3) ---
-    parser.add_argument("--basket-affinity-prob", type=float, default=0.6, help="Probability that each item after the first comes from the first item's category. Set to 0 for upstream behaviour.")
+    parser.add_argument("--basket-affinity-prob", type=float, default=0.6, help="Probability that each item after the first goes with the first item (one of its companions, or its category with --companions 0). Set to 0 for upstream behaviour.")
+    parser.add_argument("--companions", type=int, default=5, help="Number of fixed companion products per product for basket affinity. 0 = any product of the first item's category.")
+    parser.add_argument("--popularity-skew", type=float, default=0.8, help="Zipf exponent for an order's first item over a fixed product ranking. 0 = uniform (upstream).")
     ## --- Database Arguments ---
     parser.add_argument("--db-host", default="localhost", help="Database host.")
     parser.add_argument("--db-user", default="db_user", help="Database user.")

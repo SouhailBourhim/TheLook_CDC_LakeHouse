@@ -1,13 +1,27 @@
 # Added in thelook-cdc-lakehouse: tests for our changes to the vendored
-# generator (MongoDB documents, cart product/price, basket affinity).
+# generator (MongoDB documents, cart product/price, basket affinity,
+# companions and popularity).
 # Run from onprem/generator:  python -m pytest
+import collections
 import datetime
+import hashlib
+import random
 
 import pytest
 from faker import Faker
 
 from src import models
-from src.models import PRODUCT_MAP, Event, Order, OrderItem, User, pick_affinity_product
+from src.models import (
+    PRODUCT_MAP,
+    Event,
+    Order,
+    OrderItem,
+    User,
+    companion_products,
+    pick_affinity_product,
+    pick_order_products,
+    popularity_ranking,
+)
 from src.mongo_writer import event_to_document
 
 fake = Faker()
@@ -103,3 +117,72 @@ def test_affinity_returns_none_when_the_category_is_exhausted(monkeypatch):
 
     assert pick_affinity_product(1, {"1"}) == "2"  # int id accepted
     assert pick_affinity_product("1", {"1", "2"}) is None
+
+
+# --- companions and popularity (ADR 019) ---------------------------------------
+
+
+def test_companions_are_fixed_and_follow_the_documented_hash_rule():
+    # The P6 drill recomputes companions from this rule: pin it. Changing it
+    # silently would make every past pair weight point at other products.
+    assert companion_products("1", 5) == ("16717", "17020", "691", "17049", "661")
+    category = PRODUCT_MAP["1"]["category"]
+    by_rule = sorted(
+        (p for p, v in PRODUCT_MAP.items() if v["category"] == category and p != "1"),
+        key=lambda c: hashlib.sha256(f"1:{c}".encode()).digest(),
+    )[:5]
+    assert list(companion_products(1, 5)) == by_rule  # int id accepted
+
+
+def test_companions_come_from_the_category_and_exclude_the_product_itself():
+    for pid in random.Random(1).sample(sorted(PRODUCT_MAP), 200):
+        companions = companion_products(pid, 5)
+        assert len(set(companions)) == 5
+        assert pid not in companions
+        assert {PRODUCT_MAP[c]["category"] for c in companions} == {
+            PRODUCT_MAP[pid]["category"]
+        }
+
+
+def test_affinity_with_companions_picks_an_unused_companion_or_none():
+    companions = set(companion_products("1", 5))
+    chosen = {"1", *sorted(companions)[:4]}
+    assert (
+        pick_affinity_product("1", chosen, companions=5) == (companions - chosen).pop()
+    )
+    assert pick_affinity_product("1", chosen | companions, companions=5) is None
+
+
+def test_first_items_follow_the_zipf_shares():
+    # 1/rank^0.8 over 29,120 products: top product 2.9 %, top 20 13.6 %.
+    random.seed(7)
+    ranked, _ = popularity_ranking(0.8)
+    draws = collections.Counter(
+        pick_order_products(1, affinity_prob=0.6, companions=5, skew=0.8)[0]
+        for _ in range(100_000)
+    )
+    assert 0.026 < draws[ranked[0]] / 100_000 < 0.032
+    assert 0.128 < sum(draws[p] for p in ranked[:20]) / 100_000 < 0.144
+
+
+def test_later_items_are_companions_at_the_affinity_rate():
+    random.seed(7)
+    hits = later = 0
+    for _ in range(5_000):
+        first, *rest = pick_order_products(4, affinity_prob=0.6, companions=5, skew=0.8)
+        later += len(rest)
+        hits += sum(p in companion_products(first, 5) for p in rest)
+    assert 0.58 < hits / later < 0.62  # uniform picks are almost never companions
+
+
+def test_skew_zero_and_affinity_zero_give_the_upstream_behaviour():
+    # Uniform first item: no product above a few draws in 20,000.
+    random.seed(7)
+    orders = [
+        pick_order_products(2, affinity_prob=0.0, companions=5, skew=0.0)
+        for _ in range(20_000)
+    ]
+    assert max(collections.Counter(o[0] for o in orders).values()) < 8
+    # Second item uniform: a companion by chance in ~0.03 % of orders
+    # (companions are computed per product, so only 2,000 are checked).
+    assert sum(o[1] in companion_products(o[0], 5) for o in orders[:2_000]) < 3

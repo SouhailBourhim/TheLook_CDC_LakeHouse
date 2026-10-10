@@ -74,9 +74,10 @@ synthetic and can be switched off (`0` gives the previous behaviour):
   top product 2.9 % of orders, top 20 13.6 %, top 100 23.5 %. An exponent of
   1 would give the top product 9.2 %, too much for the marts; 0.6 gives the
   20th product too few orders per hour to separate in a session.
-- Expected separation at 5 iterations/s (~18,000 orders/h, 0.45 later items
-  per order): the 20th product anchors ~47 orders/h, so each of its
-  companion pairs gains ~1.3 per hour while any other pair stays near 1.
+- Expected separation at the measured ~12,100 orders/h (P6 step 2; not one
+  order per iteration at 5 iterations/s, as first assumed) and 0.45 later
+  items per order: the 20th product anchors ~32 orders/h, so each of its
+  companion pairs gains ~0.9 per hour while any other pair stays near 1.
 
 **Pairs (Spark, `lakehouse/graph.py`).** Read `fct_order_items`, keep
 distinct `(order_id, product_id)`, self-join on `order_id` with

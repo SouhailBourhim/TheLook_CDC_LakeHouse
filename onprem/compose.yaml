@@ -74,9 +74,12 @@ services:
       - --user-update-prob=0.1
       - --order-update-prob=0.4
       - --ghost-create-prob=0.2
-      # Synthetic (spec 4.3): later items of an order come from the first
-      # item's category 60 % of the time, so co-purchase pairs repeat.
+      # Synthetic (spec 4.3, ADR 019): the first item of an order follows a
+      # Zipf popularity skew; 60 % of later items are one of its 5 fixed
+      # companion products, so co-purchase pairs repeat and can rank.
       - --basket-affinity-prob=0.6
+      - --companions=5
+      - --popularity-skew=0.8
       - --mongo-host=mongo
       - --mongo-db=web
       - --mongo-user=generator
