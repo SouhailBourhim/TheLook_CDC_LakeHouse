@@ -1893,13 +1893,28 @@ P6 plan approved (Neo4j co-purchase graph +
   slow would get a 503 on every retry, a performance bug that only logs and
   query metrics reveal.
 
+### Step 10 drill written (acceptance run pending)
+
+- `drills/recommendations_affinity.py`: top 20 of the generator's ranking,
+  companions recomputed from the sha256 rule (products' ids and categories
+  from PostgreSQL; the generator is not imported: the pipeline under test
+  shares no code with it), each product's top 5 from the API; pass if every
+  one has >= 4 companions. Exit 1 on failure.
+- **Preview on the 04:37 graph (3.5 h of companion orders): 20/20 PASS**,
+  18 at 5/5. Margins thin at the bottom: 21336's last companions at
+  weight 2, 2797's at 3, 3, 2, against noise pairs at 1-2 (ties broken by
+  id). Not the acceptance run: that one after the rebuild at ~10 h.
+- The drill can fail: with the wrong rule (`<id>-<c>` instead of
+  `<id>:<c>`), 0/20 and exit 1.
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
   since 16:05 UTC: the generator writes companion orders again (3.5 h this
   morning, 01:46-05:20).
-- **Next**: step 10 (acceptance drill: top 20 products, >= 4 of top 5 are
-  companions). Needs several more hours of companion orders, then `stream`
+- **Next**: step 10 acceptance run (`uv run drills/recommendations_affinity.py`,
+  drill committed). Rebuild the graph at ~22:00 UTC (~10 h of companion
+  orders: ~8-9 per companion pair of the 20th product): `stream`
   (bronze catches up from Kafka, within its 3 days) and `airflow`
   (transform, then a graph rebuild). Then step 11 (README, runbook,
   results.md P6 section with today's step 9 figures, P6 checkpoint).
