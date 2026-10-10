@@ -155,6 +155,10 @@ both databases, with the generator and review simulator stopped),
 [docs/results.md](docs/results.md), procedures in
 [docs/runbook.md](docs/runbook.md).
 
+Every command of the project, grouped by task (stack, capture, Spark,
+Airflow, queries, serving, drills, tests, AWS), with ports and UIs:
+[docs/commands.md](docs/commands.md).
+
 ## How to demo P2 (about 3 minutes)
 
 ```bash

@@ -522,9 +522,9 @@ flowchart TD
   end
   count --> collect["driver: one writer, batches of 10,000"]
   subgraph NEO["Neo4j"]
-    upsert["MERGE nodes and relationships<br/>SET weight, run_id = this run"]
-    stale_r["delete BOUGHT_WITH with older run_id<br/>IN TRANSACTIONS"]
-    stale_n["delete Product nodes with older run_id"]
+    upsert["MERGE nodes and relationships<br/>SET weight, run = this run"]
+    stale_r["delete BOUGHT_WITH with an older run<br/>IN TRANSACTIONS"]
+    stale_n["delete Product nodes with an older run"]
     upsert --> stale_r --> stale_n
   end
   collect --> upsert
