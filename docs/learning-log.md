@@ -1696,6 +1696,7 @@ P6 plan approved (Neo4j co-purchase graph +
 | 5 | `lakehouse/graph_writer.py` (`load_graph`: constraint, UNWIND upserts stamped with the run id, stale pairs then stale nodes deleted `IN TRANSACTIONS`) + 7 tests on a **throwaway** Neo4j (`make test-graph`, `NEO4J_TEST_URI`: the tests wipe the database, and Community has only one). Rerun = same fingerprint; crash keeps the old graph, rerun = clean load; weights go down; unknown product skipped. Disabling the stale delete fails 2 tests |
 | 6 | `jobs/graph.py`; Neo4j client in the airflow stage's system Python (drivers run there; the cluster image stays clean); scheduler gets `NEO4J_*`. First run on real gold: **491,014 pairs (max weight 43), 29,120 nodes, 0 skipped, 55 s** (21.8 s pairs, 33.0 s load). Top product 27809: 5 Swim neighbours at weights 34-43, next one 2, and they are **exactly** its `companion_products`. Second run: same fingerprint, 0 stale. Neo4j peak 926 MiB -> 1.5 GB limit kept |
 | 7 | `graph` DAG (04:00 UTC, pool `lake`, 2 retries); triggered: success in 64 s, same fingerprint (third run) |
+| 8 | `GET /products/{id}/recommendations` (limit 1-20, ties by id, 404 / `[]` / 422 / 503), `GraphStore` + `get_graph` (1 s connect, 1 s pool wait, no retries; driver defaults 30 / 60 / 30 s, read in its source), 2 s query timeout, `/health` names the store that is down. 8 tests on a fake (CI) + 5 on the real query (`make test-graph`). Removing the `CASE ... null` fails only the real-query test: a fake reproduces what I think the query does, not what it does |
 
 ### Debugging lessons (step 2)
 
