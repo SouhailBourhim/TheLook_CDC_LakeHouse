@@ -2,7 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-10-09 (P5; spec FR15, FR17; ADR 007, ADR 010)
-- Amended: 2026-10-10 (P5 step 9): a 72-hour window on `viewed` members (proposed).
+- Amended: 2026-10-10 (P5 step 9): a 72-hour window on `viewed` members
+  (accepted by Souhail on 2026-10-10).
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -133,7 +134,7 @@ container. Tested with TestClient and fakeredis.
 - ❌ "Purchased" carts reflect how the generator writes sessions; a real
   website would see the cart fill up before the purchase.
 
-## Amendment 2026-10-10: a 72-hour window on viewed (proposed)
+## Amendment 2026-10-10: a 72-hour window on viewed (accepted)
 
 Found while preparing the rebuild drill. A TTL belongs to a whole key, and
 every new view extends `user:{id}:viewed`, so the key of a user active

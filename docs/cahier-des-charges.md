@@ -10,9 +10,9 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 2.1                                           |
-| Date         | 9 October 2026                                |
-| Status       | In progress: P1 to P5 built, P6 next          |
+| Version      | 2.2                                           |
+| Date         | 10 October 2026                               |
+| Status       | In progress: P1 to P5 built, P6 in progress   |
 
 ### Revision history
 
@@ -30,6 +30,7 @@ governed, cost-controlled analytics lakehouse
 | 1.9         | 30/09/2026 | Open questions A4 and C1 settled at the start of P2: the Iceberg sink creates and evolves the bronze tables, and the contracts validate them (Terraform creates only the Glue databases); the lake stays deployed between sessions, with `terraform destroy` kept as the one-command teardown. |
 | 2.0         | 03/10/2026 | Extension for Spark, NoSQL and serving (ADRs 007 to 010): MongoDB becomes a second CDC source and the new home of clickstream `events`, plus a synthetic `reviews` collection; PySpark Structured Streaming replaces the planned Iceberg sink connector as the bronze writer; PySpark batch replaces dbt for silver and gold; new serving layer (Redis online features, Neo4j co-purchase graph, FastAPI); synthetic cart product/price and basket affinity in the generator; milestones renumbered P1 to P10, CI starts in P2. |
 | 2.1         | 09/10/2026 | Online features (FR15, ADR 018): the Redis writer is a separate Spark streaming application in local mode, in its own container, instead of a second query in the bronze streaming job. It needs no AWS identity, cannot slow bronze, and does not compete with the batch jobs for the cluster's cores. FR15: the recently viewed products are those of the last 72 hours (a key's TTL alone did not bound the views inside it). Redis, redis-py and FastAPI versions pinned (5.3). |
+| 2.2         | 10/10/2026 | Co-purchase graph (FR16, ADR 019), decision E2: basket affinity now picks among 5 fixed companion products per product, and the first item of an order follows a popularity skew, so co-purchase weights repeat and can rank (4.3). FR16: pairs counted over all orders, one relationship per pair, full idempotent rebuild without an empty graph. FR17: `limit` parameter and 503. P6 acceptance made exact (companions in the top 5). Neo4j and its Python driver pinned (5.3). |
 
 ## 1. Context and problem
 
@@ -202,9 +203,13 @@ marked as synthetic in the documentation.
 
 - **Basket affinity** (generator patch): the generator picks every product
   uniformly at random, so almost no product pair is bought together twice
-  and co-purchase recommendations (FR16) would be noise. With a set
-  probability, the second and later items of an order come from the same
-  category as the first.
+  and co-purchase recommendations (FR16) would be noise. Each product has 5
+  fixed **companion products** from its own category (chosen by a hash, so
+  they never change); with a set probability, each later item of an order is
+  a companion of the first item. The first item follows a **popularity
+  skew** (Zipf weights, exponent 0.8), so popular products are bought often
+  enough for their pairs to repeat within hours (ADR 019; until v2.2 the
+  partner was any product of the category and weights stayed at 1).
 
 - **Reviews** (review simulator): a small service writes reviews for
   delivered order items (real users and products), edits some, adds
@@ -291,7 +296,7 @@ recorded in the phase's ADR or commit.
 | Apache Airflow       | 3.x (3.3 released July 2026)       | Asset-aware scheduling; OpenLineage provider                       |
 | Redis                | 8.10 (8.10.2)                      | Pinned in P5 by digest; core data structures only (bundled modules not loaded); ACL users, AOF (ADR 018) |
 | redis-py, FastAPI    | redis-py 8.1, FastAPI 0.142, pydantic 2.13, uvicorn 0.54 | Pinned in P5 from hashed lock files; the newest release at least a week old |
-| Neo4j                | Current stable line                | Pinned when introduced (P6)                                         |
+| Neo4j                | 2026.08 (2026.08.1) Community      | Pinned in P6 by digest; calendar-versioned line (5.26 is the LTS); Python driver `neo4j` 6.3 (ADR 019) |
 
 ## 6. Functional requirements
 
@@ -593,7 +598,17 @@ from the stream, never a source of truth.
 
 A batch job builds `(:Product)-[:BOUGHT_WITH {weight}]->(:Product)` from
 gold order items, where the weight is the number of orders containing both
-products. It is rebuilt idempotently, so a rerun gives the same graph.
+products. It is rebuilt idempotently, so a rerun gives the same graph
+(ADR 019):
+
+- every order counts, whatever its status (the basket is chosen when the
+  order is placed);
+
+- one relationship per pair of products, read in both directions;
+
+- all pairs are recomputed on every run, so erased orders (FR9) leave the
+  weights; the new weights are written next to the old ones and the old
+  relationships are deleted last, so the API never sees an empty graph.
 
 ### FR17: Serving API (FastAPI)
 
@@ -603,7 +618,9 @@ products. It is rebuilt idempotently, so a rerun gives the same graph.
 | GET /products/{id}/recommendations  | Neo4j      | Top-N products bought together, by weight       |
 
 Unknown ids return 404; responses are typed models with OpenAPI
-documentation.
+documentation. Recommendations take a `limit` (default 5, at most 20) and
+are ordered by weight, then by product id. An unreachable store returns 503
+within about a second.
 
 ### FR18: Tests and continuous integration
 
@@ -701,7 +718,7 @@ and a "how to demo" note.
 | P3             | Bronze on AWS with Spark Structured Streaming: Terraform IAM for the Spark jobs, Spark cluster, streaming job with checkpointing, envelope parsing and Avro decoding                            | A changed row is queryable in Athena in \< 5 minutes; a killed and restarted streaming job appends no duplicates                         |
 | P4             | PySpark silver (MERGE, deletes, SCD2) and gold (star schema, marts); Airflow DAG running them with spark-submit                                                                                  | Row counts reconcile with the sources; all unit tests pass; scheduled runs keep gold \< 1 hour old                                       |
 | P5             | Redis online features from the streaming job; FastAPI `GET /users/{id}/features`                                                                                                                 | A product view appears in the user's features within 1 minute; endpoint tests pass                                                       |
-| P6             | Neo4j co-purchase graph from gold; FastAPI `GET /products/{id}/recommendations`                                                                                                                  | Recommendations follow the synthetic basket affinity (same-category products ranked first); endpoint tests pass                          |
+| P6             | Neo4j co-purchase graph from gold; FastAPI `GET /products/{id}/recommendations`                                                                                                                  | For the 20 most-purchased products, at least 4 of the top 5 recommendations are their companion products (4.3), and same-category recommendations far exceed the random baseline; endpoint tests pass |
 | P7             | ODCS contracts with datacontract-cli, quality checks, alerting, schema evolution drills                                                                                                           | An injected schema break is caught and an alert is raised; a compatible column addition flows end to end                                 |
 | P8             | GDPR erasure and backfill, both as Airflow DAGs; failure drills (FR14)                                                                                                                            | Erasure verified in every layer and store, including clickstream, Redis and time travel; backfill leaves no duplicates; every drill passes reconciliation |
 | P9             | Hardening: optimisation, load test, CI/CD completed (terraform validate, OIDC), ADRs, documentation; optional OpenLineage lineage                                                                 | Scan cost reduction and throughput limit measured; README, ADRs and runbook complete                                                     |

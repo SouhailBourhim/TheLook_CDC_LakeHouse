@@ -1617,6 +1617,67 @@ steps, 0 to 10).
   entirely different batches (50,000 per batch vs ~200 per 10 s), so the
   equality proves order independence across batch boundaries.
 
+## Session 10 — 2026-10-10 (night) — P6 planned
+
+P6 plan approved (Neo4j co-purchase graph +
+`GET /products/{id}/recommendations`; 12 steps, 0 to 11).
+
+### Decisions taken
+
+- **E2 closed (Souhail)**: companion products + popularity skew (spec v2.2,
+  4.3). Each product gets 5 fixed companions in its category; the first
+  item of an order follows Zipf weights (exponent 0.8). Rejected: companions
+  only (weights stay at 1-3 for days), no change (the ranking is never
+  shown).
+- **ADR 018 amendment accepted** (Souhail): the 72 h window on `viewed`.
+- **ADR 019 proposed**: pairs over all orders (any status), one relationship
+  per unordered pair, full recompute every run (erasure-proof; `+=` is not
+  idempotent), upsert tagged with the run id then delete older runs (no
+  empty graph; Community has one database, so no swap), one writer from the
+  Spark driver (parallel `MERGE`s on shared nodes deadlock), daily `graph`
+  DAG in the `lake` pool, Neo4j 2026.08.1 Community, one database user.
+- **Versions** (newest at least a week old): Neo4j 2026.08.1 (2026.09.0 was
+  4 days old), driver `neo4j` 6.3.1 (6.4.0 was 5 days old).
+
+### Concepts covered
+
+- **Reproducible randomness**: Python guarantees only that `random()`
+  repeats across versions, not `sample()` or `choice()`. Companions come
+  from `sha256("<id>:<candidate>")`, so the drill (or Spark SQL) can
+  recompute them anywhere.
+- **Neo4j Community has no roles**: every user is an implied
+  administrator, so a second "read-only" user would add a password, not a
+  boundary. `execute_read` in the API guards against mistakes only.
+- **Sizing a synthetic skew**: exponent 1 gives the top product 9.2 % of
+  all orders; 0.8 gives 2.9 % and still ~1.3 companion-pair hits per hour
+  for the 20th product.
+
+### P6 plan (agreed)
+
+| # | Commit | Content / how we verify |
+|---|---|---|
+| 0 | none | Daytime: P5 step 0 (bronze baseline, maintenance duration, S3 latency) |
+| 1 | `docs: ADR 019 co-purchase graph (proposed)` | ADR 019, ADR 018 accepted, spec v2.2, versions |
+| 2 | `feat(generator): companion products and popularity skew` | Tests; restart early so data accumulates; companion share ~0.6 and top product ~3 % in Postgres |
+| 3 | `feat(serving): neo4j` | Compose service, volume, `.env`; RAM measured; login / wrong password |
+| 4 | `feat(spark): co-purchase pairs` | `lakehouse/graph.py` + chispa tests |
+| 5 | `feat(spark): idempotent graph load` | `lakehouse/graph_writer.py`; real-Neo4j tests: rerun identical, crash then rerun converges, weights go down |
+| 6 | `feat(spark): graph job` | `jobs/graph.py`, driver in the airflow image; one manual run |
+| 7 | `feat(airflow): graph dag` | Daily, pool `lake`; DAG tests; one triggered run |
+| 8 | `feat(api): GET /products/{id}/recommendations` | 200 / `[]` / 404 / 422 / 503 tests, `/health` both stores |
+| 9 | `feat(serving): api reaches neo4j` | Through the container; 503 time with Neo4j stopped |
+| 10 | `test(drills): recommendations follow the affinity` | Top 20 products: >= 4 of top 5 are companions. **P6 acceptance** |
+| 11 | `docs: P6 wrap-up` | README, runbook, results, log; P6 checkpoint |
+
+### Where we stopped (2026-10-10, ~02:45) — LATEST, start here
+
+- Step 1 written (ADR 019 proposed, spec v2.2, ADR 018 amendment accepted);
+  waiting for Souhail's review of ADR 019 and the step 1 check questions.
+- Step 0 carried again: it is night, the link measured ~4x slower at night.
+- Next: step 2 (generator), as early as possible so companion pairs build
+  weight while the rest of P6 is built.
+- Still pending: O8 (leaning B), "provisional days" rule, P7 and P9 ideas.
+
 ### P1 plan (agreed)
 
 | # | Commit | Content / how we verify | What Souhail learns |
