@@ -527,6 +527,10 @@ services:
       # Airflow's virtualenv.
       PYSPARK_PYTHON: /usr/bin/python3
       PYSPARK_DRIVER_PYTHON: /usr/bin/python3
+      # The graph job's driver loads Neo4j (ADR 019; serving profile). The
+      # transform jobs ignore these.
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:?set NEO4J_PASSWORD in onprem/.env}
     command: ["airflow", "scheduler"]
     # Bounded resources (ADR 013): the scheduler hosts the Spark drivers.
     mem_limit: 3g
@@ -716,8 +720,9 @@ services:
     # As for the features stream (P5): the JVM sizes its GC and worker
     # thread pools from the CPUs it sees (32 in the VM); 2 is plenty here.
     # Measured idle: 1.02 GiB and 119 threads uncapped, 0.8 GiB and 60
-    # threads with 2 CPUs. The limit is provisional until measured under the
-    # graph load (P6 step 6).
+    # threads with 2 CPUs; 926 MiB at peak while the graph job loads 29,120
+    # products and 491,014 pairs (P6 step 6). The limit leaves room for the
+    # graph to grow with the orders.
     cpus: 2
     mem_limit: 1536m
     # Lets Neo4j checkpoint its transaction log and stop cleanly on `down`.

@@ -5,7 +5,8 @@
 #   features  that stage plus the Redis client, for the features stream only:
 #             the cluster image (and the bronze stream) stays without it
 #   airflow   Airflow on top of the spark stage, so its spark-submit drivers
-#             share Python 3.10, Java 17 and the jars with the executors
+#             share Python 3.10, Java 17 and the jars with the executors;
+#             plus the Neo4j client for the graph job's driver (ADR 019)
 #
 # Spark image for the lake jobs (ADR 011): the Docker Official Spark image
 # plus the jars Spark does not ship. Each jar was verified against Maven
@@ -98,6 +99,14 @@ RUN sed -E "/^($(grep -v '^#' /opt/airflow/overrides.txt | cut -d= -f1 | paste -
       --override /opt/airflow/overrides.txt \
  && mkdir -p /opt/airflow/logs /opt/airflow/dags \
  && chown -R spark:spark /opt/airflow
+
+# The graph job's driver (ADR 019) writes to Neo4j. Drivers run on the
+# system Python (PYSPARK_DRIVER_PYTHON), not in Airflow's virtualenv, so the
+# client goes there, from a hashed lock file. The cluster image stays
+# without it: executors never import it.
+COPY graph-requirements.lock /tmp/graph-requirements.lock
+RUN python3 -m pip install --no-cache-dir --require-hashes -r /tmp/graph-requirements.lock \
+ && rm /tmp/graph-requirements.lock
 
 ENV AIRFLOW_HOME=/opt/airflow \
     PATH=/opt/airflow/venv/bin:$PATH

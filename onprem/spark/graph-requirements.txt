@@ -1,0 +1,4 @@
+# The graph job's driver (ADR 019): the Neo4j client, on the Spark image's Python,
+# airflow stage only (the driver runs in the scheduler; executors never
+# import it). The newest release at least a week old.
+neo4j==6.3.1

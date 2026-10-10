@@ -1734,6 +1734,24 @@ P6 plan approved (Neo4j co-purchase graph +
   commands are atomic on one thread with no locks held across commands, so
   even overlapping writes to one key would be safe.
 
+### Session 10, continued (2026-10-10, ~02:40 UTC): steps 0 and 6 started
+
+- Souhail: the network is good now. Measured, not assumed: TCP connect to
+  `s3.us-east-1` median 192 ms (max 993), Glue 153 ms (max 746), vs
+  418 ms on the degraded night of 10-09. `core stream airflow` up (8 GB
+  free); `features-stream` left off (not needed for P6, 2 GB).
+- Bronze: batch 1185 was a replay (every table `skipped(replay)`, the P3
+  guard), 1186 the backlog (155 s).
+- Airflow: the transform run of 10-07 21:00, cut by `make down`, resumed
+  its `silver` task at start-up; `max_active_runs=1` makes later runs wait
+  for it. Maintenance (step 0) queued behind it in the `lake` pool.
+- **Repeated a logged mistake**: `pkill -f <pattern>` matched my own shell
+  (exit 144), as in P1 and P2. Stop background tasks by their task id or by
+  PID, never by pattern.
+- My first watcher grepped a log format that does not exist (it would
+  have waited 40 min for nothing): checked one real line first the second
+  time.
+
 ### Where we stopped (2026-10-10, ~03:45) — LATEST, start here
 
 - Steps 1-5 done and pushed (CI green); check questions after steps 1 and
