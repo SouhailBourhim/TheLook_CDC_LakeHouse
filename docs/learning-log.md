@@ -1944,6 +1944,25 @@ P6 plan approved (Neo4j co-purchase graph +
   affinity; model 0.6 + 0.4 x 0.051 = 0.62). ~50,000 uniform P1 orders
   dilute the share; every new hour raises it. Threshold kept.
 
+### Architecture diagrams (Souhail's request)
+
+- `docs/architecture.md`: 10 Mermaid diagrams (spec deliverable: Mermaid in
+  the repo, versioned with the code, rendered by GitHub), each with "how to
+  read it" and "what to remember": whole system, deployment by profile and
+  AWS identity, one change commit -> Athena (sequence), exactly-once bronze,
+  medallion tables, gold star schema (ER), orchestration + the `lake` pool
+  (gantt), Redis features, Neo4j build and request outcomes, roadmap.
+  Linked from the README.
+- **Valid is not readable**: every diagram syntax-checked (Mermaid
+  validator), the large ones rendered to PNG (headless Chrome) and looked
+  at. Two redrawn: the whole system (batch jobs became labelled arrows
+  between layers: a job *is* the arrow between two tables; no more loops)
+  and the deployment (real edges inside each profile, so the layout engine
+  can place the nodes).
+- Mermaid traps met: `graph` is a reserved node id; `;` ends a statement in
+  a sequence diagram; in a gantt task the first `:` separates title from
+  metadata, so `transform 03:00` broke the line.
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
