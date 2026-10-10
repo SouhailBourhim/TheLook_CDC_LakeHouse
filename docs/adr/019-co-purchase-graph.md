@@ -1,6 +1,6 @@
 # 019. Co-purchase graph: companion products, full rebuild into Neo4j
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-10 (P6; spec FR16, FR17, 4.3; ADR 010)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 

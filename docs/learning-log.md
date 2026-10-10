@@ -1669,10 +1669,26 @@ P6 plan approved (Neo4j co-purchase graph +
 | 10 | `test(drills): recommendations follow the affinity` | Top 20 products: >= 4 of top 5 are companions. **P6 acceptance** |
 | 11 | `docs: P6 wrap-up` | README, runbook, results, log; P6 checkpoint |
 
+### Check answers (step 1)
+
+- **ADR 019 accepted** (Souhail).
+- (a) Why not add each order's pairs to the weights: right conclusion
+  (weights must go down; `+=` counts a replayed batch twice; a rebuild from
+  gold handles retries and deletions for free). **Corrections**: cancellations
+  and returns do not lower our weights (ADR 019 counts every status), and
+  items are never removed from an order (the generator never deletes; only
+  erasure does). The decisive reasons are erasure (P8) and idempotence. The
+  rebuild is cheap because of its input (~1 M gold rows, one self-join),
+  not because the graph is small.
+- (b) Write before delete: correct and complete. Added: each 10k batch is
+  one transaction, so the API sees whole batches; a half-done run can
+  briefly reorder a top 5, and pairs of erased orders stay until the next
+  successful run (no personal data in them).
+
 ### Where we stopped (2026-10-10, ~02:45) — LATEST, start here
 
-- Step 1 written (ADR 019 proposed, spec v2.2, ADR 018 amendment accepted);
-  waiting for Souhail's review of ADR 019 and the step 1 check questions.
+- Step 1 done (ADR 019 accepted, spec v2.2, ADR 018 amendment accepted);
+  check questions answered.
 - Step 0 carried again: it is night, the link measured ~4x slower at night.
 - Next: step 2 (generator), as early as possible so companion pairs build
   weight while the rest of P6 is built.
