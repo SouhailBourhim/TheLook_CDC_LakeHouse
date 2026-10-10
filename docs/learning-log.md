@@ -1717,13 +1717,34 @@ P6 plan approved (Neo4j co-purchase graph +
   The final graph was right; the test now asserts that, and "skipped" is
   tested with a product that never existed.
 
-### Where we stopped (2026-10-10, ~02:45) — LATEST, start here
+### Check answers (steps 4-5)
 
-- Step 1 done (ADR 019 accepted, spec v2.2, ADR 018 amendment accepted);
-  check questions answered.
-- Step 0 carried again: it is night, the link measured ~4x slower at night.
-- Next: step 2 (generator), as early as possible so companion pairs build
-  weight while the rest of P6 is built.
+- (1) Dedup and `<`: correct (weight = orders, not item combinations; `<`
+  gives one canonical pair and excludes (A, A)). **Precision**: only
+  separate item rows of the same product multiply in the join; `quantity`
+  is a column of one row, so it never does. My own comment in `graph.py`
+  said "(or quantity > 1)": wrong, fixed. With `<>`, our `groupBy` on
+  ordered columns gives two rows (A, B, w) and (B, A, w), each with the
+  right weight; weights double only if then grouped by unordered pair.
+- (2) Driver writer vs Redis executors: lock contention on hub products is
+  correct and decisive. **Weaker point**: "only one coordinator knows when
+  to delete". `foreachPartition` is an action that returns only after
+  every task finished, so the driver could delete afterwards; the leftover
+  risk is a speculative attempt being killed mid-transaction. Added: Redis
+  commands are atomic on one thread with no locks held across commands, so
+  even overlapping writes to one key would be safe.
+
+### Where we stopped (2026-10-10, ~03:45) — LATEST, start here
+
+- Steps 1-5 done and pushed (CI green); check questions after steps 1 and
+  4-5 answered.
+- The generator runs the companion version since 01:46 UTC (core profile
+  up, plus Neo4j); bronze stream off, so Kafka holds the backlog (catch up
+  within 72 h).
+- Next (daytime, needs `stream` + AWS): step 0 (P5 carry-over: bronze
+  baseline, maintenance duration, S3 latency), then step 6 (graph job on
+  real gold data: counts, duration, Neo4j memory under load -> final
+  `mem_limit`).
 - Still pending: O8 (leaning B), "provisional days" rule, P7 and P9 ideas.
 
 ### P1 plan (agreed)

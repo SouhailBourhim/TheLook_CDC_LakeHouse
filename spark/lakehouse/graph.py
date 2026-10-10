@@ -33,8 +33,9 @@ def co_purchase_pairs(items: DataFrame) -> DataFrame:
     lower id first): the graph stores one relationship per pair and is read
     in both directions.
     """
-    # One row per product per order: two items of the same product (or
-    # quantity > 1) must not make a pair with itself or count an order twice.
+    # One row per product per order: two item rows of the same product would
+    # otherwise count the order twice for each of its pairs. (quantity is a
+    # column of one row, so it never creates rows.)
     baskets = (
         items.where(F.col("order_id").isNotNull() & F.col("product_id").isNotNull())
         .select("order_id", "product_id")
