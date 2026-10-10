@@ -2028,7 +2028,48 @@ P6 plan approved (Neo4j co-purchase graph +
 - Remaining before P7: the P6 checkpoint (rule 8) and the two open check
   questions (diagram 4 replay; Prometheus `for: 30m`).
 
-### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
+### P6 checkpoint (passed) and the two open check questions
+
+- (1) End to end: correct, every re-run guarantee named. Added: silver reads
+  bronze at the ledger's consistent cut, then MERGEs only newer log
+  positions (LSN for PostgreSQL, another position for MongoDB); the graph
+  job reads one Iceberg snapshot of gold.
+- (2) Full rebuild: correct; the per-order contribution table is a good
+  scale answer (retractions on erasure). **Correction (a repeat of step 1)**:
+  no "corrections" lower weights here: items are never removed and every
+  status counts. Decisive: erasure (P8) and idempotence.
+- (3) Honest acceptance: correct. Added: on a failure, first tell a pipeline
+  bug (a weight differs from PostgreSQL's count) from too little data
+  (weights right, margin thin); only the first has a cause to fix.
+- (4) Liveness vs readiness: correct and complete. Added: with every pod
+  unready the Service has no endpoints, so callers get refused connections
+  or load balancer timeouts, not a clean 503.
+- (5) The 500: correct. Precision: `GRAPH_ERRORS` held three exceptions,
+  none a `ClientError`; only the one timeout code maps to 503. Souhail's
+  `docker pause` fault (open connection, no answer) is untested: candidate
+  for the P8 drills. Running the same tests on the fake and a real Neo4j
+  stops the fake from drifting.
+- (6) Crash before the ledger row: correct and complete (batch N's rows sit
+  in `shop_orders`, invisible: silver reads it at ledger row N-1's snapshot).
+- (7) `for: 30m`: correct. **Measured** 3.4 MiB of WAL per minute (~100 MiB
+  per 30 min, ~50 h to the 10 GB cap); P1's baseline ~500 MB/h gives ~20 h:
+  the window depends on the rate, hence the NearInvalidation alert on bytes
+  left, not time. (I nearly corrected Souhail from the P1 figure: measure
+  first.)
+
+### Where we stopped (2026-10-10, ~23:45 UTC) — LATEST, start here
+
+- **P6 accepted and checkpoint passed.** Everything pushed, CI green.
+- Next session: **P7 plan** (data contracts with datacontract-cli, quality
+  checks, alerting, schema evolution drills; spec section 9: an injected
+  schema break is caught and alerts; a compatible column addition flows end
+  to end). Bring in the pending items: O8 (leaning B), "provisional days"
+  rule, P7 ideas; the `docker pause` fault for P8.
+- P9 list: per-table retries in `jobs/maintenance.py`, DNS hardening, the
+  link's variability (transform runs 25-27 min on 10-10 evening, pairs once
+  89.5 s), maybe the API's Redis `depends_on` to `service_started`.
+
+### Where we stopped (2026-10-10, ~16:30 UTC)
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
   since 16:05 UTC: the generator writes companion orders again (3.5 h this
