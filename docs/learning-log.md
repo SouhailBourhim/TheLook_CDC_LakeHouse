@@ -1777,6 +1777,12 @@ P6 plan approved (Neo4j co-purchase graph +
   attempt (tables done earlier report 0 files rewritten). Fix: retry per
   table. Kept for P9 with DNS hardening (outside P6), unless Souhail wants
   it now.
+- **Then the clean figures**: the retry of that run succeeded in 7 min 15 s
+  (04:40-04:47, most of silver already compacted); **today's daily run:
+  2 min 36 s** (silver 68.6 s, gold 62.7 s; S3 connect 282 ms), against
+  3.5 min on 10-07. It waited 04:47-05:16 for the `lake` slot (transform).
+  **Step 0 closed.** S3 connect samples, 10 min apart: 208, 169, 2,232,
+  217, 283 ms (04:03-04:53): spikes come and go within minutes.
 - Ordering decision (Souhail approved): pause `maintenance` and `transform`
   once no task ran, recreate the scheduler (new image), run the graph job,
   unpause. A paused DAG's running task finishes; its next tasks wait.
@@ -1797,17 +1803,21 @@ P6 plan approved (Neo4j co-purchase graph +
   marks the container unhealthy. **Open for step 9**: `/health` (liveness,
   process only) + `/ready` (stores), which amends ADR 019; Souhail decides.
 
-### Where we stopped (2026-10-10, ~04:40 UTC) — LATEST, start here
+### Where we stopped (2026-10-10, ~05:20 UTC) — LATEST, start here
 
-- Steps 1-5 done and pushed (CI green); check questions after steps 1 and
-  4-5 answered.
-- The generator runs the companion version since 01:46 UTC (core profile
-  up, plus Neo4j); bronze stream off, so Kafka holds the backlog (catch up
-  within 72 h).
-- Steps 6-7 done (~04:40 UTC). Maintenance retry and transform unpaused.
-- Next: step 8 (API endpoint), 9 (container), 10 (acceptance drill), 11.
-- Step 0 still owes a clean figure: a normal daily maintenance run on a
-  good link.
+- **P6 steps 0-8 done** and pushed (CI green); check questions after steps
+  1, 4-5 and 8 answered. `make down` at the end of the session (Souhail).
+- The generator ran the companion version 01:46-05:20 UTC (~3.5 h): the
+  graph (built 04:37) already ranks the top product's companions first.
+- **Next session**: start with the decision on `/health` (liveness) vs
+  `/ready` (readiness), which amends ADR 019; then step 9 (API container
+  reaches Neo4j; 503 time with Neo4j stopped), step 10 (acceptance drill:
+  top 20 products, >= 4 of top 5 are companions; rebuild the graph first,
+  with more hours of companion orders by then), step 11 (wrap-up + P6
+  checkpoint).
+- Kept for P9: per-table retries in `jobs/maintenance.py` (a DNS blip
+  re-runs a whole database and the report hides earlier attempts), DNS
+  hardening, the link's variability.
 - Still pending: O8 (leaning B), "provisional days" rule, P7 and P9 ideas.
 
 ### P1 plan (agreed)
