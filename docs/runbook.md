@@ -341,6 +341,68 @@ crash window); orders, products, dist_centers and reviews intact.
 Snapshots: 10 + 96 rows in 46 ms (PostgreSQL), 314 documents in 41 ms
 (MongoDB).
 
+## Online features (Redis, P5)
+
+Profile `serving`: `redis`, `features-stream`, `api` (ADR 018). Redis is a
+cache rebuilt from Kafka, never a source of truth. An admin shell:
+
+```bash
+docker compose -f onprem/compose.yaml exec redis sh -c \
+  'REDISCLI_AUTH="$REDIS_ADMIN_PASSWORD" redis-cli --user admin'
+```
+
+### The API answers 503, or `features-stream` keeps restarting
+
+Redis is unreachable. `make ps`: is `redis` up and healthy? The API answers
+503 within a second while Redis is down and recovers on its own. The stream
+retries for ~90 s, then fails its batch and restarts (uncapped restart
+policy); once Redis is back it resumes from its checkpoint and catches up,
+and the replayed batch changes nothing (idempotent writes). Nothing to
+repair (drill: `uv run drills/redis_outage.py`, results.md P5).
+
+If the stream restarts with Redis healthy, read its log: an
+`OutOfMemory`/exit 137 means the 2 GB `mem_limit` (measured peak 1.4 GB);
+a Schema Registry or Kafka error means the core profile is not up.
+
+### Rebuild the features (Redis lost data, or after a logic change)
+
+A hard crash can lose up to one second of writes (AOF `everysec`), and
+Redis would then lag its checkpoint silently. Rebuild from Kafka (~2-3 min
+for 72 hours of events):
+
+```bash
+uv run drills/features_rebuild.py   # pauses the generator, rebuilds, compares
+```
+
+or by hand: `docker compose -f onprem/compose.yaml rm -s -f features-stream`,
+`FLUSHDB` as admin, `docker volume rm thelook_features-checkpoints`, then
+`docker compose -f onprem/compose.yaml up -d features-stream`. It reads the
+topic from the earliest offset; features older than Kafka's retention have
+expired anyway (TTLs = 72 h).
+
+### "Some data may have been lost" in the features stream log
+
+Expected after a long downtime: offsets that Kafka's retention deleted are
+skipped (`failOnDataLoss=false`, unlike bronze), and empty batches are
+logged as "nothing to decode" until the stream reaches the earliest
+offset still kept. Everything skipped is older than 72 hours, so its
+features would have expired. No action.
+
+### Rotate a Redis password
+
+Change it in `onprem/.env`, then recreate the services that use it:
+`docker compose -f onprem/compose.yaml up -d redis features-stream api`.
+`start-redis.sh` writes the ACL file from `.env` on every start, so the old
+password stops working when Redis restarts.
+
+### Memory
+
+`INFO memory` as admin: `used_memory_human` against `maxmemory` (256 MB;
+~35 MB for ~200k keys measured). Above the cap Redis evicts the keys closest
+to expiring (`volatile-ttl`): features would go missing, not stale. Raise
+`maxmemory` in `onprem/redis/redis.conf` (and the container's 512 MB limit,
+which leaves room for the AOF rewrite's fork).
+
 ## Spark AWS credentials
 
 The streaming job authenticates as IAM user `thelook-spark-stream`

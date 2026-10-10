@@ -12,7 +12,7 @@ governed, cost-controlled analytics lakehouse
 | Project type | Personal portfolio project (data engineering) |
 | Version      | 2.1                                           |
 | Date         | 9 October 2026                                |
-| Status       | In progress: P1 to P4 done, P5 started        |
+| Status       | In progress: P1 to P5 built, P6 next          |
 
 ### Revision history
 
@@ -29,7 +29,7 @@ governed, cost-controlled analytics lakehouse
 | 1.8         | 30/09/2026 | O8 target set from the P1 baseline run (docs/results.md): 200 change events/s. The capture side's breaking point is found in P2, end to end (the P1 load generator is latency-bound near 266 events/s). |
 | 1.9         | 30/09/2026 | Open questions A4 and C1 settled at the start of P2: the Iceberg sink creates and evolves the bronze tables, and the contracts validate them (Terraform creates only the Glue databases); the lake stays deployed between sessions, with `terraform destroy` kept as the one-command teardown. |
 | 2.0         | 03/10/2026 | Extension for Spark, NoSQL and serving (ADRs 007 to 010): MongoDB becomes a second CDC source and the new home of clickstream `events`, plus a synthetic `reviews` collection; PySpark Structured Streaming replaces the planned Iceberg sink connector as the bronze writer; PySpark batch replaces dbt for silver and gold; new serving layer (Redis online features, Neo4j co-purchase graph, FastAPI); synthetic cart product/price and basket affinity in the generator; milestones renumbered P1 to P10, CI starts in P2. |
-| 2.1         | 09/10/2026 | Online features (FR15, ADR 018): the Redis writer is a separate Spark streaming application in local mode, in its own container, instead of a second query in the bronze streaming job. It needs no AWS identity, cannot slow bronze, and does not compete with the batch jobs for the cluster's cores. |
+| 2.1         | 09/10/2026 | Online features (FR15, ADR 018): the Redis writer is a separate Spark streaming application in local mode, in its own container, instead of a second query in the bronze streaming job. It needs no AWS identity, cannot slow bronze, and does not compete with the batch jobs for the cluster's cores. FR15: the recently viewed products are those of the last 72 hours (a key's TTL alone did not bound the views inside it). Redis, redis-py and FastAPI versions pinned (5.3). |
 
 ## 1. Context and problem
 
@@ -289,7 +289,9 @@ recorded in the phase's ADR or commit.
 | Apache Spark         | 4.x                                | Standalone master + one worker; Python API                         |
 | Apache Iceberg       | Spark runtime and AWS bundle matching the Spark line | GlueCatalog and S3FileIO                         |
 | Apache Airflow       | 3.x (3.3 released July 2026)       | Asset-aware scheduling; OpenLineage provider                       |
-| Redis, Neo4j, FastAPI | Current stable lines              | Pinned when introduced (P5, P6)                                     |
+| Redis                | 8.10 (8.10.2)                      | Pinned in P5 by digest; core data structures only (bundled modules not loaded); ACL users, AOF (ADR 018) |
+| redis-py, FastAPI    | redis-py 8.1, FastAPI 0.142, pydantic 2.13, uvicorn 0.54 | Pinned in P5 from hashed lock files; the newest release at least a week old |
+| Neo4j                | Current stable line                | Pinned when introduced (P6)                                         |
 
 ## 6. Functional requirements
 
@@ -574,7 +576,8 @@ minute of the event. It is a separate Spark application with its own
 checkpoint, in local mode in its own container: it reads only the events
 topic, needs no AWS identity, and cannot slow or stop bronze (ADR 018):
 
-- the last 10 products the user viewed;
+- the last 10 products the user viewed, within the last 72 hours (the
+  Kafka retention, so every view is still rebuildable from the stream);
 
 - the value of the current session's cart (cart events carry the price,
   4.3);

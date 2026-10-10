@@ -1389,6 +1389,7 @@ steps, 0 to 10).
 | 7 | API container (same pinned Python base as the simulators, hashed lock, non-root, `/health` healthcheck): 42 MB; 200 in ~4 ms through the container; 404, 422, `/docs` OK. A Redis outage: 503 in 1.0 s (was 59.7 s, see below); the API goes unhealthy and recovers on its own; the features stream outlived its retries, restarted from its checkpoint and caught up (5,076 records in one batch) |
 | 8 | **P5 acceptance passed**: `drills/features_freshness.py`, 10 samples 4.5-10.6 s from MongoDB commit to the API (target < 60 s); API p50 2.0 ms, p99 4.2 ms. Results in results.md |
 | 9 | Outage drill: API 503 in 1.0 s, features stream restarted 3 times and wrote again 3.2 s after Redis returned, bronze kept committing (no error, no restart). Rebuild drill: **224,587 of 224,587 servable keys identical** to the live ones, expiry to the ms; rebuild ~138 s; peak 1.4 GiB -> `mem_limit: 2g`. Bronze slower than P4 tonight (84-95 s vs 34-45 s): S3 round trips median 890 ms, a degraded link (P9) |
+| 10 | README (status, diagram, components, layout, RAM, run and demo P5, ADR 018), runbook (online features: 503/restarts, rebuild, skipped offsets, password rotation, memory), spec v2.1 (5.3 versions pinned, FR15 72 h window) |
 
 ### Debugging lessons (step 3)
 
@@ -1537,10 +1538,54 @@ steps, 0 to 10).
 
 ### Where we stopped (2026-10-09) — LATEST, start here
 
-- Steps 1-9 done. Next: step 10 (P5 wrap-up: README, runbook, spec 5.3
-  versions; P5 checkpoint). Step 0 (Airflow maintenance duration) needs
-  the airflow profile: not started (S3 cost), Souhail to decide.
-- To approve: ADR 018 amendment (72 h window on viewed).
+### Decisions taken under Souhail's delegation ("go with the decisions you deem right")
+
+- **Step 0 carried forward**, with a measured reason: tonight the whole
+  link is degraded (TCP connect to S3: us-east-1 median 418 ms, Paris
+  99 ms, Spain 195 ms, Ireland 269 ms with a 1.4 s spike), so a
+  maintenance duration measured now would mostly measure the network.
+  Next daytime session: bronze baseline + maintenance run + latency.
+- **Stream profile stopped** after step 9 (bronze committed batch 1184
+  cleanly); **`make down`** at the end of the session (laptop sleep killed
+  the VM twice in P4).
+- **Not taken**: ADR 018 amendment acceptance. The working agreement says
+  Souhail approves each ADR; the fix stays deployed (it corrects an FR15
+  violation) and its approval is part of the P5 checkpoint.
+
+### Ideas kept
+
+- P7: alert on offsets skipped by the features stream; a shared key
+  contract between the features writer and the API (today a docstring
+  copied in both); alert on features-stream restarts.
+- P9: daytime network + bronze baseline (record latency with durations);
+  Paris (eu-west-3) is ~4x closer than us-east-1 from here (a region move
+  would be a spec change, budget priced in us-east-1); CI images from a
+  registry without Docker Hub's anonymous pull limit; DNS hardening.
+
+### Where we stopped (2026-10-10, ~00:30 UTC) — LATEST, start here
+
+- **P5 built**: steps 1-10 done, acceptance passed (freshness 4.5-10.6 s,
+  target < 60 s; endpoint tests pass), outage and rebuild drills passed.
+  Stack down (`make down`).
+- **Next: P5 checkpoint** (questions below, answered without the code) and
+  Souhail's decision on the ADR 018 amendment; then P6 (plan it first).
+- Carried: step 0 (Airflow maintenance duration, daytime); step 8 and 9
+  check questions (folded into the checkpoint); O8 (leaning B), E2 (before
+  P6), "provisional days" rule.
+
+### P5 checkpoint questions (asked 2026-10-10)
+
+1. A user views a product: walk every hop to the API's answer, and name
+   the mechanism that keeps each hop correct.
+2. The features stream dies after writing half of a batch's partitions to
+   Redis. Why is nothing lost or counted twice? How does bronze reach the
+   same result, and why does it need a different mechanism?
+3. Why a separate Spark application in local mode rather than a second
+   query in the bronze job? What did that choice cost?
+4. "TTLs are 72 hours, so personal data lives at most 72 hours in Redis."
+   True? What had to change, and what still escapes that bound?
+5. The rebuild drill found 224,587 of 224,587 keys identical, expiry
+   included. Which design choices make exact equality possible?
 - P7 idea added: alert on offsets skipped by the features stream.
 - Still pending from before: O8 (leaning B), E2 (before P6), "provisional
   days" rule, P7 ideas, P9 ideas (DNS hardening first).

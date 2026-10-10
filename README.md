@@ -4,11 +4,13 @@ Real-time change data capture from an operational PostgreSQL database and a
 MongoDB document store into a governed, cost-controlled Apache Iceberg
 lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 
-> **Status:** P1 (Postgres capture) and P2 (MongoDB as a second CDC source)
-> are built and tested; next is P3, Spark Structured Streaming into the
-> Iceberg bronze layer on AWS. This is a learning project; the full
-> specification is the [cahier des charges](docs/cahier-des-charges.md)
-> (v2.0), the reasoning is in the [ADRs](docs/adr/).
+> **Status:** P1 to P5 are built and tested: capture from PostgreSQL and
+> MongoDB, bronze/silver/gold on AWS with Spark and Airflow, and online
+> user features in Redis served by FastAPI. Next is P6 (Neo4j co-purchase
+> recommendations). This is a learning project; the full specification is
+> the [cahier des charges](docs/cahier-des-charges.md) (v2.1), the
+> reasoning is in the [ADRs](docs/adr/), measured results in
+> [results](docs/results.md).
 
 ![ci](https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml/badge.svg)
 
@@ -29,12 +31,14 @@ flowchart LR
     spark[Spark Structured Streaming<br/>+ hourly bronze upkeep]
     batch[Spark batch jobs<br/>silver, gold, upkeep]
     airflow[Airflow<br/>transform 30 min, maintenance daily] -->|spark-submit| batch
-    redis[(Redis P5)]:::planned
+    features[Features stream<br/>Spark local mode]
+    redis[(Redis 8)]
     neo[(Neo4j P6)]:::planned
-    api[FastAPI P5/P6]:::planned
+    api["FastAPI<br/>GET /users/{id}/features"]
     kafka --> spark
-    spark -.->|features| redis
-    redis -.-> api
+    kafka -->|events topic| features
+    features -->|idempotent writes| redis
+    redis --> api
     neo -.-> api
   end
   subgraph aws["AWS (S3, Glue, Athena only)"]
@@ -65,6 +69,8 @@ flowchart LR
 | Orchestration: `transform` (silver -> gold, every 30 min), `maintenance` (silver/gold upkeep, daily), one-slot pool `lake` | P4 | `airflow/dags/`, UI `http://localhost:8088` |
 | Table upkeep: bronze by the stream (hourly expiry, rotating compaction and orphan removal), silver/gold by the `maintenance` DAG | P4 | `spark/lakehouse/upkeep.py` |
 | Durability: Kafka fsyncs every write; verify drill + key-filtered re-snapshot after an unclean shutdown | P4 | `drills/verify_silver.py`, `drills/resnapshot.py` |
+| Online user features: last 10 products viewed (72 h), current cart, events in the last hour; a separate Spark stream into Redis (ACL users, AOF) | P5 | `spark/jobs/features_stream.py`, keys `user:{id}:*` |
+| Serving API: `GET /users/{id}/features` (404 unknown, 503 Redis down), OpenAPI docs | P5 | `api/`, `http://localhost:8000/docs` |
 
 ## Repository layout
 
@@ -77,7 +83,9 @@ Folders are added in the commit that first needs them.
 | `onprem/review-simulator/` | Synthetic reviews in MongoDB | P2 |
 | `onprem/mongo/` | Replica set keyfile wrapper and idempotent setup (users, collections) | P2 |
 | `infra/terraform/` | AWS resources: S3, Glue, Athena, budgets (IAM in P3) | P2 |
-| `spark/` | PySpark jobs (streaming bronze, silver, gold) and their tests | P3, P4 |
+| `spark/` | PySpark jobs (streaming bronze, silver, gold, features) and their tests | P3, P4, P5 |
+| `api/` | Serving API (FastAPI) and its tests | P5 |
+| `onprem/redis/` | Redis configuration and ACL users | P5 |
 | `drills/` | Reconciliation and failure drills | P1 onwards |
 | `scripts/` | Helpers (cost report, one-off event history copy) | P1 onwards |
 | `.github/workflows/` | CI | P2 onwards |
@@ -95,6 +103,7 @@ counts page cache for Kafka and MongoDB, so it is an upper bound):
 | `monitoring` | postgres-exporter, prometheus, alertmanager | ~0.1 GB (Prometheus grows with its 7-day history) |
 | `stream` | spark-master, spark-worker | ~0.5 GB idle; executors up to the worker's 3 GB cap, plus ~1 GB per driver |
 | `airflow` | airflow-db, -apiserver, -scheduler, -dag-processor | ~0.9 GB idle; the scheduler (capped at 3 GB) hosts the Spark drivers |
+| `serving` | redis, features-stream, api | ~1.5 GB (features-stream 1.3-1.4 GB, capped at 2 GB; Redis ~60 MB; API ~45 MB); needs `core`, not `stream`; no AWS access |
 
 ```bash
 cp onprem/.env.example onprem/.env     # then set every password
@@ -107,6 +116,7 @@ make up PROFILES="core stream"         # adds the Spark cluster (UI http://local
 make spark-run JOB=jobs/smoke_test.py  # Kafka, Avro and Glue catalog checks on the cluster
 make up PROFILES="core stream airflow" # adds Airflow: UI http://localhost:8088 (user admin, AIRFLOW_ADMIN_PASSWORD)
 make snapshot-postgres                 # P3: blocking re-snapshot so bronze starts complete
+make up PROFILES="core serving"        # P5: Redis, features stream, API (http://localhost:8000/docs)
 # bronze-stream (stream profile) appends every CDC topic to lake.thelook_bronze.* every 60 s
 make ps                                # what is running
 make down                              # stop everything, keep the data
@@ -189,6 +199,32 @@ the batch ledger and consistent cut; why silver's watermark is an
 not optional (a 487 KB metadata file slowed the stream); what each run
 costs in S3 transfer and why it does not go lower (random keys).
 
+## How to demo P5 (about 3 minutes)
+
+With `core serving` up (no AWS cost):
+
+```bash
+# 1. A user's features, typed and documented (http://localhost:8000/docs):
+curl -s localhost:8000/users/<user id>/features | python3 -m json.tool
+#    (a user id: redis-cli as admin, SCAN 0 MATCH user:*:viewed)
+# 2. Freshness: the next product view by a real user is served within
+#    ~10 s of its MongoDB commit (target < 1 minute), API p99 ~4 ms:
+uv run drills/features_freshness.py 5
+# 3. Correctness by construction: rebuild everything from Kafka and compare
+#    with what the live stream built, key by key, expiry to the millisecond:
+uv run drills/features_rebuild.py           # 224,587 / 224,587 identical
+# 4. Isolation: stop Redis for 5 minutes; the API answers 503 in 1 s, the
+#    stream restarts and catches up, bronze never notices:
+uv run drills/redis_outage.py 300
+```
+
+Talking points: why sorted sets with `ZADD GT` and not list pushes (a
+replayed batch must change nothing); "events in the last hour" counted at
+read time, not with `INCR`; TTLs from event time, so a rebuild gives the
+same expiries; a TTL bounds a key, not its members (the 72 h window on
+viewed); why `failOnDataLoss=false` here and `true` for bronze; the 503 that
+took 60 s (redis-py's default retries and DNS for a stopped container).
+
 ## Design decisions
 
 Each has an ADR with the alternatives and consequences.
@@ -211,6 +247,7 @@ Each has an ADR with the alternatives and consequences.
 | Gold: star schema, dim_user SCD2 rebuilt each run, unknown member, written metric definitions | Orders keep the address of their time; inner joins drop nothing | [015](docs/adr/015-gold-model.md) |
 | Kafka fsyncs every write (single broker) | No silent loss of acknowledged records on a crash (one happened) | [016](docs/adr/016-kafka-fsync-single-broker.md) |
 | Each layer maintained by its writer | No key that can delete bronze ever enters Airflow | [017](docs/adr/017-table-maintenance.md) |
+| Features: a separate Spark stream in local mode; max/union values in Redis; TTLs from event time | No AWS key, cannot slow bronze; replays and rebuilds give the same state | [018](docs/adr/018-online-features.md) |
 
 ## After cloning
 
@@ -228,6 +265,7 @@ git config core.hooksPath .githooks
 - [Architecture decision records](docs/adr/)
 - [Learning log](docs/learning-log.md)
 - [Source schema](docs/source-schema.md)
+- [Results](docs/results.md) and [runbook](docs/runbook.md)
 
 ## License
 
