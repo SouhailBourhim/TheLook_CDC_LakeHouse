@@ -1984,6 +1984,25 @@ P6 plan approved (Neo4j co-purchase graph +
   had appended nothing before the shutdown, so the replay guard skipped
   nothing and nothing was written twice.
 
+### Preview run (18:52, does not count)
+
+- Transform runs: 17:30 (17:42-18:11; its silver cut was batch 1279, read
+  at 17:42:41, one minute before batch 1280 brought the backlog, so it
+  held almost none of it), 18:00 (18:11-18:31, the backlog), 18:30
+  (18:31-18:48). Graph triggered 18:49: **513,400 pairs (max weight 123),
+  29,120 nodes, 0 skipped, 0 stale, 123.5 s** (pairs 89.5 s vs 21.8 s this
+  morning: not investigated, link or memory with 3.6 GB free; P9 list).
+- Drill: **(1) 20/20, every product 5/5**, nothing else in any top 5;
+  weakest companion weight 4 (20893), most >= 7. **(2) 30.1 % vs 5.1 % =
+  5.9x** (5.7x this morning: rises slowly, as the P1 dilution predicts).
+- **Check the surprise, not the pass**: max weight 123 vs the ~75 I
+  expected. Postgres, orders holding 27809 and 13561 before the cut:
+  **100 = the graph's weight for that pair exactly**; 123 is another
+  companion (13422). My estimate was wrong, not the graph: the morning
+  graph (built 04:37, gold cut ~04:30) held ~2.7 h of companion orders, not
+  3.5 h. Measured pace for that pair: 47 before 04:30 (~17/h), 38 since
+  16:00 (~15/h).
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
