@@ -1685,6 +1685,26 @@ P6 plan approved (Neo4j co-purchase graph +
   briefly reorder a top 5, and pairs of erased orders stay until the next
   successful run (no personal data in them).
 
+### Steps done
+
+| Step | Result |
+|---|---|
+| 1 | ADR 019 accepted, spec v2.2, ADR 018 amendment accepted; Neo4j 2026.08.1, driver 6.3.1 |
+| 2 | Generator: `companion_products` (sha256 rule), `popularity_ranking` (Zipf 0.8), `pick_order_products`; 6 new tests (12 pass), the rule pinned by a literal. Live, 2,700 orders since the restart (01:46 UTC): companion share 0.574 in 2-item orders (expected 0.6, ±0.021), top product 2.70 % of 1-item orders (expected 2.9 %, ±0.39); companions and ranking recomputed **in SQL** (`sha256(convert_to(...))`): same top product (27809) as Python. Rate ~12,100 orders/h, not the 18,000 assumed (ADR 019 corrected: ~0.9 companion hits/h for the 20th product) |
+
+### Debugging lessons (step 2)
+
+- **Check the check (again)**: my first SQL took each order's first item
+  by `ctid` (physical row position). A status update rewrites a row at a
+  new `ctid`, so for updated orders the "first" item could be any item.
+  Fixed by measuring on 2-item orders, where "one is the other's
+  companion" needs no order (the P2 method).
+- **A CTE inside a correlated `EXISTS` re-runs per row**: PostgreSQL inlines
+  a CTE used once, so the ~1 M-hash companion computation ran for every
+  order (cancelled after 2 min). Materialised in a temp table: 8 s.
+- A test that measured 20,000 uniform orders spent 7 s hashing companions
+  for 20,000 distinct products; checking 2,000 of them proves the same.
+
 ### Where we stopped (2026-10-10, ~02:45) — LATEST, start here
 
 - Step 1 done (ADR 019 accepted, spec v2.2, ADR 018 amendment accepted);

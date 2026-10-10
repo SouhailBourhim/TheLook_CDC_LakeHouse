@@ -549,9 +549,10 @@ services:
       - ../airflow/dags:/opt/airflow/dags:ro
       - airflow-logs:/opt/airflow/logs
 
-  # --- serving profile (P5): online user features (ADR 018) ----------------------
-  # Redis, the features stream (step 5) and the API (step 7). Needs the core
-  # profile (Kafka, Schema Registry); not the stream profile, and no AWS key.
+  # --- serving profile (P5, P6): online features and recommendations ------------
+  # Redis, the features stream and the API (ADR 018); Neo4j (ADR 019). The
+  # features stream needs the core profile (Kafka, Schema Registry); nothing
+  # here needs the stream profile or an AWS key.
   #   make up PROFILES="core serving"
 
   redis:
@@ -679,6 +680,49 @@ services:
       retries: 6
       start_period: 10s
 
+  neo4j:
+    # The co-purchase graph (FR16, ADR 019): products and BOUGHT_WITH
+    # relationships, rebuilt daily from gold by the graph job (Airflow); the
+    # API reads it. Community edition: one database and no roles (every user
+    # is an administrator), so a single user, reachable only on the Compose
+    # network and localhost.
+    image: neo4j:2026.08.1-community-trixie@sha256:d8f4c156caa3af76499134947deb11d13042e471d9733060449f2a01eb7a248e
+    profiles: [serving]
+    hostname: neo4j
+    environment:
+      # Read only when /data holds no user yet (first start); later changes
+      # go through ALTER USER (runbook). Neo4j wants at least 8 characters.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in onprem/.env}
+      # Settings as NEO4J_<name>: dots become _, underscores become __.
+      # Fixed heap (no resizing pauses); the page cache holds the store
+      # files, tens of MB here.
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+      NEO4J_dbms_usage__report_enabled: "false"
+    ports:
+      - "127.0.0.1:7474:7474" # HTTP: Neo4j Browser
+      - "127.0.0.1:7687:7687" # Bolt: the drivers and cypher-shell
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      # The HTTP endpoint answers once the server is up. wget, not
+      # cypher-shell: a JVM per check every 10 s would cost more than Neo4j.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7474"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # As for the features stream (P5): the JVM sizes its GC and worker
+    # thread pools from the CPUs it sees (32 in the VM); 2 is plenty here.
+    # Measured idle: 1.02 GiB and 119 threads uncapped, 0.8 GiB and 60
+    # threads with 2 CPUs. The limit is provisional until measured under the
+    # graph load (P6 step 6).
+    cpus: 2
+    mem_limit: 1536m
+    # Lets Neo4j checkpoint its transaction log and stop cleanly on `down`.
+    stop_grace_period: 60s
+
   # --- monitoring profile ------------------------------------------------------
   # Start with the core stack:
   #   docker compose --profile core --profile monitoring up -d
@@ -734,3 +778,4 @@ volumes:
   prometheus-data:
   redis-data:
   features-checkpoints:
+  neo4j-data:
