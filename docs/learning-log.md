@@ -1694,6 +1694,8 @@ P6 plan approved (Neo4j co-purchase graph +
 | 3 | Neo4j 2026.08.1 Community in `serving`: login OK, wrong password denied, unauthenticated HTTP 401. Idle 1.02 GiB / 119 threads -> `cpus: 2`: 0.8 GiB / 60 threads (the P5 JVM lesson again); `mem_limit` 1.5 GB provisional until the load (step 6) |
 | 4 | `lakehouse/graph.py` (`product_nodes`, `co_purchase_pairs`) + 6 chispa tests; removing the `distinct` fails the "same product twice" test |
 | 5 | `lakehouse/graph_writer.py` (`load_graph`: constraint, UNWIND upserts stamped with the run id, stale pairs then stale nodes deleted `IN TRANSACTIONS`) + 7 tests on a **throwaway** Neo4j (`make test-graph`, `NEO4J_TEST_URI`: the tests wipe the database, and Community has only one). Rerun = same fingerprint; crash keeps the old graph, rerun = clean load; weights go down; unknown product skipped. Disabling the stale delete fails 2 tests |
+| 6 | `jobs/graph.py`; Neo4j client in the airflow stage's system Python (drivers run there; the cluster image stays clean); scheduler gets `NEO4J_*`. First run on real gold: **491,014 pairs (max weight 43), 29,120 nodes, 0 skipped, 55 s** (21.8 s pairs, 33.0 s load). Top product 27809: 5 Swim neighbours at weights 34-43, next one 2, and they are **exactly** its `companion_products`. Second run: same fingerprint, 0 stale. Neo4j peak 926 MiB -> 1.5 GB limit kept |
+| 7 | `graph` DAG (04:00 UTC, pool `lake`, 2 retries); triggered: success in 64 s, same fingerprint (third run) |
 
 ### Debugging lessons (step 2)
 
@@ -1752,17 +1754,43 @@ P6 plan approved (Neo4j co-purchase graph +
   have waited 40 min for nothing): checked one real line first the second
   time.
 
-### Where we stopped (2026-10-10, ~03:45) — LATEST, start here
+### Step 0 (P5 carry-over): a measured failure, not a baseline
+
+- Maintenance (3 days of commits to compact) ran 60 min and was **killed by
+  its own `execution_timeout`** (03:09 -> 04:09). Silver: 1,861 s,
+  including two `UnknownHostException` on the bucket's S3 hostname (DNS),
+  each re-running the whole silver pass; gold stuck on one
+  `fct_order_items` compaction task (4th and last attempt), reading S3 at
+  a trickle: a socket timeout fires only when *nothing* arrives.
+- The link fell during the session: S3 connect 192 ms (02:43) -> 2.2 s,
+  general download 73 KB/s (03:57), then back to ~170-210 ms (04:03-04:13).
+  Bronze batches 62 s -> 442 s at worst (O1 exceeded for that batch), back
+  to 75-100 s.
+- Method: the stack dump showed the task in `S3InputStream.readFully`, so
+  "slow", not "hung"; the worker's receive rate (~100 KiB/s) and a plain
+  download test pointed at the link, not Spark. The first dump was the
+  wrong executor (bronze's): one executor per application on the worker,
+  pick it by application id.
+- **Weakness found**: `jobs/maintenance.py` retries a whole database, so one
+  DNS blip repeats every table, and the final report shows only the last
+  attempt (tables done earlier report 0 files rewritten). Fix: retry per
+  table. Kept for P9 with DNS hardening (outside P6), unless Souhail wants
+  it now.
+- Ordering decision (Souhail approved): pause `maintenance` and `transform`
+  once no task ran, recreate the scheduler (new image), run the graph job,
+  unpause. A paused DAG's running task finishes; its next tasks wait.
+
+### Where we stopped (2026-10-10, ~04:40 UTC) — LATEST, start here
 
 - Steps 1-5 done and pushed (CI green); check questions after steps 1 and
   4-5 answered.
 - The generator runs the companion version since 01:46 UTC (core profile
   up, plus Neo4j); bronze stream off, so Kafka holds the backlog (catch up
   within 72 h).
-- Next (daytime, needs `stream` + AWS): step 0 (P5 carry-over: bronze
-  baseline, maintenance duration, S3 latency), then step 6 (graph job on
-  real gold data: counts, duration, Neo4j memory under load -> final
-  `mem_limit`).
+- Steps 6-7 done (~04:40 UTC). Maintenance retry and transform unpaused.
+- Next: step 8 (API endpoint), 9 (container), 10 (acceptance drill), 11.
+- Step 0 still owes a clean figure: a normal daily maintenance run on a
+  good link.
 - Still pending: O8 (leaning B), "provisional days" rule, P7 and P9 ideas.
 
 ### P1 plan (agreed)
