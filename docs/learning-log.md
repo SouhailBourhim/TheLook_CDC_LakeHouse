@@ -1875,6 +1875,24 @@ P6 plan approved (Neo4j co-purchase graph +
 - Kafka retention is 3 days (`retention.ms` 259,200,000): with only `core`
   running, companion orders accumulate and bronze can catch up later.
 
+### Check answers (step 9)
+
+- (1) 4.5 ms then 1.0 s: first part right in substance (a dead pooled
+  connection, no retries, immediate 503). **Precision**: not a new connect
+  refused, but an open socket that Neo4j closed when it stopped, found dead
+  on first use. **Wrong setting for the 1.0 s**: it is the DNS lookup, capped
+  by compose's `dns_opt` (`timeout:1 attempts:1` in the container's
+  `/etc/resolv.conf`; a lookup of an unknown name fails in 1.02 s, shown
+  live), not the driver's `connection_timeout=1` (in `app.py`, not in
+  compose). The driver never reaches the connect: the name does not resolve.
+  Without `dns_opt` the lookup goes to the host resolver: 8 s (P5), ~9 s per
+  request. Both are 1 s, so the timing alone could not tell them apart.
+- (2) 503 vs 500: correct and complete (by code, not class; catching every
+  `ClientError` would make a bad deploy look like a database outage).
+  Nuance added: a timeout is not always transient; a query that is always
+  slow would get a 503 on every retry, a performance bug that only logs and
+  query metrics reveal.
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
