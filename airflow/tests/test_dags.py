@@ -51,8 +51,17 @@ def test_maintenance_runs_daily_without_replaying_missed_days(bag):
     assert "0 3 * * *" in repr(dag.timetable)
 
 
+def test_graph_rebuilds_daily_after_maintenance(bag):
+    dag = bag.dags["graph"]
+    assert dag.task_ids == ["rebuild_graph"]
+    assert dag.max_active_runs == 1 and not dag.catchup
+    assert "0 4 * * *" in repr(dag.timetable)  # maintenance runs at 03:00
+    assert dag.get_task("rebuild_graph").retries == 2
+
+
 def test_every_spark_task_shares_the_one_slot_lake_pool(bag):
-    # A compaction must never commit at the same time as a MERGE (ADR 017).
-    for dag_id in ("transform", "maintenance"):
+    # A compaction must never commit at the same time as a MERGE (ADR 017);
+    # the graph job only reads, but must not take the worker's last cores.
+    for dag_id in ("transform", "maintenance", "graph"):
         for task in bag.dags[dag_id].tasks:
             assert task.pool == "lake", f"{dag_id}.{task.task_id}"
