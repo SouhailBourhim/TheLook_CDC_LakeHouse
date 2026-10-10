@@ -575,8 +575,8 @@ flowchart LR
   P3["P3 bronze on AWS<br/>Spark streaming, Iceberg"]:::done
   P4["P4 silver, gold, Airflow"]:::done
   P5["P5 Redis features, API"]:::done
-  P6["P6 Neo4j recommendations"]:::active
-  P7["P7 data contracts, quality,<br/>schema evolution"]:::planned
+  P6["P6 Neo4j recommendations"]:::done
+  P7["P7 data contracts, quality,<br/>schema evolution"]:::active
   P8["P8 GDPR erasure, backfill,<br/>failure drills"]:::planned
   P9["P9 hardening, load test,<br/>CI/CD, docs"]:::planned
   P10["P10 optional: Kinesis,<br/>Managed Flink"]:::optional
@@ -587,6 +587,5 @@ flowchart LR
   classDef optional fill:#ffffff,stroke:#bbbbbb,stroke-dasharray: 2 4,color:#777777
 ```
 
-Green: built and accepted. Yellow: in progress (P6 acceptance run pending).
-Dashed: planned. P1 to P4 form the core project; P5 and P6 add serving; P10
+Green: built and accepted. Yellow: next (P7). Dashed: planned. P1 to P4 form the core project; P5 and P6 add serving; P10
 only makes sense after P9 (spec section 9).

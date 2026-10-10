@@ -2016,6 +2016,18 @@ P6 plan approved (Neo4j co-purchase graph +
 - results.md: P6 section with every measured figure of steps 2-9 and the
   preview; the official acceptance row says **pending** until ~22:00.
 
+### P6 acceptance: passed (official run, 22:19)
+
+- 22:00 transform run: silver cut 22:00:00, done 22:17 (runs took 25-27 min
+  this evening, against 6-7 normally: S3 connect 0.2-0.5 s, likely the
+  link, not proven; P9). Graph rebuilt 22:18: 533,430 pairs, max weight
+  184, 29,120 products, 0 skipped, 65.6 s (pairs 27.2 s).
+- Drill, run once: **(1) 20/20, every product 5/5, weakest companion 10;
+  (2) 31.4 % vs 5.1 % = 6.2x. PASS.** Output kept locally in
+  `drills/logs/` (git-ignored), figures in results.md.
+- Remaining before P7: the P6 checkpoint (rule 8) and the two open check
+  questions (diagram 4 replay; Prometheus `for: 30m`).
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up

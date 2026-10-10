@@ -659,4 +659,13 @@ recommendations is at least **5x** the random baseline
 | Run | (1) companions in the top 5 | (2) same-category share |
 |---|---|---|
 | preview, 18:52, ~6 h (does not count) | 20/20, every product 5/5; weakest companion weight 4 | 30.1 % vs 5.1 % = 5.9x |
-| **official, ~22:00, ~10 h** | **pending** | **pending** |
+| **official, 22:19, ~9.5 h** | **20/20, every product 5/5; weakest companion weight 10; nothing else in any top 5** | **31.4 % vs 5.1 % = 6.2x** |
+
+**Result: passed.** Official run on the graph rebuilt at 22:18 from the
+22:00 transform run (silver cut 22:00:00): 533,430 pairs, max weight 184,
+29,120 products, 0 skipped, 65.6 s (pairs 27.2 s: the 89.5 s of 18:51 was
+transient). The top product's five companions weigh 159-184. The
+same-category share rises slowly (5.7x, 5.9x, 6.2x over the day) because
+the P1 uniform orders still weigh on every product with few orders.
+API tests: 21 in CI (fakeredis and a fake graph store), 7 more on a real
+Neo4j (`make test-graph`).

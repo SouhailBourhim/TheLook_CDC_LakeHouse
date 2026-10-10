@@ -4,11 +4,11 @@ Real-time change data capture from an operational PostgreSQL database and a
 MongoDB document store into a governed, cost-controlled Apache Iceberg
 lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 
-> **Status:** P1 to P5 are built and accepted: capture from PostgreSQL and
-> MongoDB, bronze/silver/gold on AWS with Spark and Airflow, and online
-> user features in Redis served by FastAPI. P6 (Neo4j co-purchase
-> recommendations, `GET /products/{id}/recommendations`) is built; its
-> acceptance run is pending. This is a learning project; the full
+> **Status:** P1 to P6 are built and accepted: capture from PostgreSQL and
+> MongoDB, bronze/silver/gold on AWS with Spark and Airflow, online user
+> features in Redis and co-purchase recommendations from Neo4j, both
+> served by FastAPI. Next is P7 (data contracts, quality, schema
+> evolution). This is a learning project; the full
 > specification is the [cahier des charges](docs/cahier-des-charges.md) (v2.2), the
 > reasoning is in the [ADRs](docs/adr/), measured results in
 > [results](docs/results.md).
@@ -243,7 +243,7 @@ With `core serving` up, and a graph built by the `graph` DAG (it needs
 ```bash
 # 1. The most popular product's neighbours, heaviest first:
 curl -s "localhost:8000/products/27809/recommendations?limit=5" | python3 -m json.tool
-#    -> its 5 companion products, weights ~100, nothing else close
+#    -> its 5 companion products (weights 159-184 on 2026-10-10), nothing else close
 # 2. The same in Neo4j Browser (http://localhost:7474):
 #    MATCH (p:Product {id: 27809})-[r:BOUGHT_WITH]-(o) RETURN p, r, o
 #    ORDER BY r.weight DESC LIMIT 5
