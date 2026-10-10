@@ -17,6 +17,9 @@ lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 ## Architecture
 
 Solid boxes are built; dashed ones are planned (phase in brackets).
+More diagrams, from deployment down to single mechanisms (CDC sequence,
+exactly-once bronze, gold star schema, orchestration, Redis and Neo4j
+serving): [docs/architecture.md](docs/architecture.md).
 
 ```mermaid
 flowchart LR
