@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-10-10 (P6; spec FR16, FR17, 4.3; ADR 010)
+- Amended: 2026-10-10 (P6 step 9): `/health` is liveness only; `/ready`
+  reports each store.
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -132,7 +134,7 @@ name, category and weight. 404 when the product is not in the graph; `[]`
 when it has no co-purchase yet; 503 when Neo4j is unreachable, within about
 a second (driver `connection_timeout=1`, `max_transaction_retry_time=0`; the
 defaults retry for 30 s, the P5 Redis lesson). `/health` checks both stores
-and names the one that is down.
+and names the one that is down (amended below: `/health` + `/ready`).
 
 **Tests.** Pair logic with chispa (CI). The writer against a real Neo4j
 (pytest marker `neo4j`, skipped without `NEO4J_URI`; CI does not pull the
@@ -160,11 +162,44 @@ The API with a fake graph dependency (CI), as with fakeredis.
 - ❌ Orders placed before the change carry the old, diluted affinity; their
   pairs sit at weight 1 below the companions.
 
+## Amendment 2026-10-10: liveness `/health`, readiness `/ready`
+
+`/health` pinged Redis, then Neo4j, and answered 503 naming the first store
+down; the container's healthcheck called it. That mixes two questions.
+**Liveness**: is the process alive? A failure means "restart it" (a
+Kubernetes liveness probe restarts the pod; Docker Swarm replaces an
+unhealthy task). **Readiness**: can it serve? A failure means "send no
+traffic for now". With the stores in the healthcheck, a Neo4j outage would
+get a working API restarted (which repairs nothing), and with it the user
+features, which Redis still serves.
+
+- `GET /health`: liveness, calls no store, 200 while the process answers.
+  The Compose healthcheck uses it, so `make up --wait` no longer waits on
+  the stores' reachability.
+- `GET /ready`: pings both stores, **always reports both**
+  (`{"redis": "ok", "neo4j": "down"}`; a failed check does not skip the
+  next one, so one outage never hides another), 503 if either is down. About a second per
+  store at worst (the fail-fast clients). Drills and people use it.
+- Each data endpoint already degrades on its own store only (503 from the
+  store it needs), unchanged.
+
+Rejected: keep one `/health` (wrong meaning under any orchestrator);
+liveness only (loses the one-call view of both stores that the drills read).
+
+**Caveat** for a real orchestrator with several replicas: a readiness probe
+on shared dependencies fails on every replica at once, so the load balancer
+removes them all and a partial outage (graph down, features fine) becomes a
+total one. `/ready` would be wired as a readiness probe only if a replica
+could be unready on its own (warming up, its own connection pool broken);
+otherwise it stays a status endpoint for monitoring. With one container and
+no orchestrator, nothing acts on it here.
+
 ## References
 
 - Neo4j Operations Manual: managing users (Community has no roles), memory
   configuration, Docker
 - Cypher manual: `MERGE`, constraints, `CALL { … } IN TRANSACTIONS`
 - Neo4j Python driver manual: transactions, configuration (timeouts, retries)
+- Kubernetes docs: configure liveness, readiness and startup probes
 - Python `random` docs: notes on reproducibility
 - Cahier des charges v2.2: 4.3, FR16, FR17; ADR 010, ADR 013, ADR 017

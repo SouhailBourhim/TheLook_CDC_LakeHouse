@@ -676,8 +676,10 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
-      # /health answers 200 only when the API reaches Redis. The slim image
-      # has no curl: Python's urllib raises on a non-2xx status.
+      # Liveness (ADR 019 amendment): /health answers 200 while the process
+      # does, whatever the stores' state, so an outage never marks a working
+      # API unhealthy. Store status: GET /ready. The slim image has no curl:
+      # Python's urllib raises on a non-2xx status.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s

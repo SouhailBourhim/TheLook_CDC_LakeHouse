@@ -1,6 +1,7 @@
 # Run from api/:  python -m pytest
 """GET /users/{id}/features on fakeredis with a fixed clock, GET
-/products/{id}/recommendations on a fake graph store, and /health.
+/products/{id}/recommendations on a fake graph store, /health (liveness)
+and /ready (both stores).
 
 Keys are seeded as the features stream writes them
 (spark/lakehouse/redis_writer.py). The real Cypher query runs against a
@@ -164,11 +165,33 @@ def test_redis_down_is_503(client, server):
     server.connected = False
     response = client.get(f"/users/{USER}/features")
     assert response.status_code == 503
-    assert client.get("/health").status_code == 503
+    ready = client.get("/ready")
+    assert ready.status_code == 503
+    assert ready.json() == {"redis": "down", "neo4j": "ok"}
 
 
-def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+def test_ready_when_both_stores_answer(client):
+    ready = client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json() == {"redis": "ok", "neo4j": "ok"}
+
+
+def test_ready_reports_both_stores_when_both_are_down(client, server, graph):
+    # Checking the second store even when the first failed: one outage must
+    # not hide another.
+    server.connected = False
+    graph.down = True
+    assert client.get("/ready").json() == {"redis": "down", "neo4j": "down"}
+
+
+def test_health_is_liveness_only(client, server, graph):
+    # The process answers: 200 even with both stores down, so a store outage
+    # never gets a working API restarted.
+    server.connected = False
+    graph.down = True
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
 
 
 # --- recommendations (Neo4j) -----------------------------------------------------
@@ -216,14 +239,14 @@ def test_malformed_or_out_of_range_product_id_is_422(client):
         assert client.get(f"/products/{bad}/recommendations").status_code == 422
 
 
-def test_neo4j_down_is_503_and_health_names_it(client, graph):
+def test_neo4j_down_is_503_and_ready_names_it(client, graph):
     graph.down = True
     response = client.get("/products/27809/recommendations")
     assert response.status_code == 503
     assert response.json() == {"detail": "graph store unavailable"}
-    health = client.get("/health")
-    assert health.status_code == 503
-    assert health.json() == {"detail": "graph store unavailable"}
+    ready = client.get("/ready")
+    assert ready.status_code == 503
+    assert ready.json() == {"redis": "ok", "neo4j": "down"}
     # The features keep working: each endpoint degrades on its own store.
     assert client.get(f"/users/{USER}/features").status_code == 404
 

@@ -18,6 +18,9 @@ Redis keys, as written by the stream (keep in step with features.py):
     user:{id}:cart:{session}   hash        item:<event id> -> price,
                                            purchased -> 1
 
+GET /health is liveness (the process answers, no store called); GET /ready
+reports each store (503 if one is down).
+
 Redis: logs in as the read-only api ACL user. Neo4j Community has no roles,
 so the API only opens read transactions (a guard against mistakes, not a
 security boundary). Run:  uvicorn app:app
@@ -28,12 +31,12 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 import neo4j
 import redis
-from fastapi import Depends, FastAPI, HTTPException, Path, Query
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Response
 from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
 from pydantic import BaseModel, Field
 from redis.backoff import NoBackoff
@@ -96,6 +99,14 @@ class ProductRecommendations(BaseModel):
 
 class Health(BaseModel):
     status: str
+
+
+StoreStatus = Literal["ok", "down"]
+
+
+class Readiness(BaseModel):
+    redis: StoreStatus = Field(description="Feature store (user features)")
+    neo4j: StoreStatus = Field(description="Graph store (recommendations)")
 
 
 # --- dependencies (replaced in tests) ------------------------------------------
@@ -287,20 +298,33 @@ def product_recommendations(
     return ProductRecommendations(product_id=product_id, **found)
 
 
+@app.get("/health", response_model=Health)
+def health() -> Health:
+    """Liveness, for the container's healthcheck: the process answers. Calls
+    no store, so a store outage never marks a working API unhealthy (an
+    orchestrator would restart it for nothing). Store status: /ready."""
+    return Health(status="ok")
+
+
 @app.get(
-    "/health",
-    response_model=Health,
-    responses={503: {"description": "Redis or Neo4j down (named in detail)"}},
+    "/ready",
+    response_model=Readiness,
+    responses={503: {"model": Readiness, "description": "A store is down"}},
 )
-def health(r: RedisDep, graph: GraphDep) -> Health:
-    """For the container's healthcheck: the API is up and reaches both
-    stores. The 503 names the store that is down."""
+def ready(r: RedisDep, graph: GraphDep, response: Response) -> Readiness:
+    """Readiness: can the API reach each store? Checks both (about a second
+    each at worst) and reports both, so one outage does not hide another.
+    503 if either is down; each data endpoint still works on its own store."""
     try:
         r.ping()
-    except (redis.ConnectionError, redis.TimeoutError) as error:
-        raise UNAVAILABLE from error
+        redis_status = "ok"
+    except (redis.ConnectionError, redis.TimeoutError):
+        redis_status = "down"
     try:
         graph.ping()
-    except GRAPH_ERRORS as error:
-        raise GRAPH_UNAVAILABLE from error
-    return Health(status="ok")
+        neo4j_status = "ok"
+    except GRAPH_ERRORS:
+        neo4j_status = "down"
+    if "down" in (redis_status, neo4j_status):
+        response.status_code = 503
+    return Readiness(redis=redis_status, neo4j=neo4j_status)

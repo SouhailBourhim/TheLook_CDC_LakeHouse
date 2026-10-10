@@ -6,12 +6,14 @@
 seconds while the generator writes as usual.
 
 Expected: bronze never notices (a separate application, ADR 018); the API
-answers 503 and its container goes unhealthy; the features stream fails
-its batch once its client's retries run out, restarts from its checkpoint
-(restart policy) and, once Redis is back, catches up; new views are served
-again (checked with drills/features_freshness.py, 3 samples).
+answers 503 and /ready reports Redis down, while /health (liveness) stays
+200 and the container healthy; the features stream fails its batch once its
+client's retries run out, restarts from its checkpoint (restart policy) and,
+once Redis is back, catches up; new views are served again (checked with
+drills/features_freshness.py, 3 samples).
 
-Needs the core, stream and serving profiles up, bronze caught up. Usage:
+Needs the core, stream and serving profiles up (serving includes Neo4j,
+which /ready checks too), bronze caught up. Usage:
   uv run drills/redis_outage.py [outage seconds, default 300]
 """
 
@@ -36,9 +38,9 @@ def compose(*args: str) -> str:
     return sh(*COMPOSE, *args)
 
 
-def health() -> int:
+def status(path: str) -> int:
     try:
-        with urllib.request.urlopen("http://localhost:8000/health", timeout=3) as r:
+        with urllib.request.urlopen(f"http://localhost:8000{path}", timeout=3) as r:
             return r.status
     except urllib.error.HTTPError as e:
         return e.code
@@ -71,7 +73,10 @@ def batches(service: str, since: float) -> list[tuple[int, str, float]]:
 def main() -> int:
     outage = int(sys.argv[1]) if len(sys.argv) > 1 else 300
     restarts_before = restarts("features-stream")
-    print(f"before: API health {health()}, features-stream {state('features-stream')}")
+    print(
+        f"before: API /ready {status('/ready')}, "
+        f"features-stream {state('features-stream')}"
+    )
 
     start = time.time()
     compose("stop", "-t", "10", "redis")
@@ -79,7 +84,8 @@ def main() -> int:
     while time.time() - start < outage:
         time.sleep(SAMPLE)
         print(
-            f"  t+{time.time() - start:4.0f} s  API {health()}  "
+            f"  t+{time.time() - start:4.0f} s  API /ready {status('/ready')} "
+            f"/health {status('/health')} ({state('api')})  "
             f"features-stream: {state('features-stream')}, "
             f"restarts +{restarts('features-stream') - restarts_before}",
             flush=True,
@@ -89,7 +95,7 @@ def main() -> int:
 
     compose("start", "redis")
     back = time.time()
-    while health() != 200:
+    while status("/ready") != 200:
         time.sleep(0.5)
     api_back = time.time() - back
     while not any(
@@ -104,7 +110,7 @@ def main() -> int:
         print(f"  batch {batch_id}: {summary[:90]} in {seconds:.1f} s")
     print(f"features-stream restarts: {restarts('features-stream') - restarts_before}")
     print(
-        f"after Redis restart: API healthy in {api_back:.1f} s, "
+        f"after Redis restart: API ready in {api_back:.1f} s, "
         f"features stream writing again in {features_back:.1f} s"
     )
     for batch_id, summary, seconds in batches("features-stream", back)[:3]:

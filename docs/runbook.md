@@ -353,7 +353,9 @@ docker compose -f onprem/compose.yaml exec redis sh -c \
 
 ### The API answers 503, or `features-stream` keeps restarting
 
-Redis is unreachable. `make ps`: is `redis` up and healthy? The API answers
+Redis is unreachable. `curl -s localhost:8000/ready` names the store that
+is down (`/health` is liveness only: it stays 200 and the container healthy
+during a store outage). `make ps`: is `redis` up and healthy? The API answers
 503 within a second while Redis is down and recovers on its own. The stream
 retries for ~90 s, then fails its batch and restarts (uncapped restart
 policy); once Redis is back it resumes from its checkpoint and catches up,
