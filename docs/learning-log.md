@@ -1691,6 +1691,9 @@ P6 plan approved (Neo4j co-purchase graph +
 |---|---|
 | 1 | ADR 019 accepted, spec v2.2, ADR 018 amendment accepted; Neo4j 2026.08.1, driver 6.3.1 |
 | 2 | Generator: `companion_products` (sha256 rule), `popularity_ranking` (Zipf 0.8), `pick_order_products`; 6 new tests (12 pass), the rule pinned by a literal. Live, 2,700 orders since the restart (01:46 UTC): companion share 0.574 in 2-item orders (expected 0.6, ±0.021), top product 2.70 % of 1-item orders (expected 2.9 %, ±0.39); companions and ranking recomputed **in SQL** (`sha256(convert_to(...))`): same top product (27809) as Python. Rate ~12,100 orders/h, not the 18,000 assumed (ADR 019 corrected: ~0.9 companion hits/h for the 20th product) |
+| 3 | Neo4j 2026.08.1 Community in `serving`: login OK, wrong password denied, unauthenticated HTTP 401. Idle 1.02 GiB / 119 threads -> `cpus: 2`: 0.8 GiB / 60 threads (the P5 JVM lesson again); `mem_limit` 1.5 GB provisional until the load (step 6) |
+| 4 | `lakehouse/graph.py` (`product_nodes`, `co_purchase_pairs`) + 6 chispa tests; removing the `distinct` fails the "same product twice" test |
+| 5 | `lakehouse/graph_writer.py` (`load_graph`: constraint, UNWIND upserts stamped with the run id, stale pairs then stale nodes deleted `IN TRANSACTIONS`) + 7 tests on a **throwaway** Neo4j (`make test-graph`, `NEO4J_TEST_URI`: the tests wipe the database, and Community has only one). Rerun = same fingerprint; crash keeps the old graph, rerun = clean load; weights go down; unknown product skipped. Disabling the stale delete fails 2 tests |
 
 ### Debugging lessons (step 2)
 
@@ -1704,6 +1707,15 @@ P6 plan approved (Neo4j co-purchase graph +
   order (cancelled after 2 min). Materialised in a temp table: 8 s.
 - A test that measured 20,000 uniform orders spent 7 s hashing companions
   for 20,000 distinct products; checking 2,000 of them proves the same.
+
+### Debugging lessons (step 5)
+
+- **A wrong test expectation, not a wrong writer**: "a pair with a product
+  that left dim_product is skipped" failed (skipped = 0). The product was
+  still a node while the pairs were written (stale nodes are deleted last),
+  so the pair was written, then removed by `DETACH DELETE` with its node.
+  The final graph was right; the test now asserts that, and "skipped" is
+  tested with a product that never existed.
 
 ### Where we stopped (2026-10-10, ~02:45) — LATEST, start here
 

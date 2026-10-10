@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: up down ps spark-run test-spark signal-topic snapshot-postgres register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+.PHONY: up down ps spark-run test-spark test-graph signal-topic snapshot-postgres register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
 
 # --- On-prem stack (Docker Compose) ------------------------------------------
 # Profiles group services so a laptop runs only what a task needs (RAM per
@@ -37,6 +37,21 @@ spark-run:
 # PySpark unit tests on the image's versions (Java 17 must be installed).
 test-spark:
 	cd spark && uv run --no-project --python 3.10 --with-requirements requirements-test.txt python -m pytest -q
+
+# Graph writer tests (spark/tests/test_graph_writer.py) on a throwaway Neo4j
+# from the pinned image: they delete every node, so never the serving one
+# (Community has a single database). Removed afterwards, pass or fail.
+NEO4J_IMAGE := $(shell sed -n 's/^ *image: \(neo4j:.*\)$$/\1/p' onprem/compose.yaml)
+test-graph:
+	docker run -d --rm --name neo4j-test --cpus 2 -p 127.0.0.1:17687:7687 \
+	  -e NEO4J_AUTH=neo4j/test-password -e NEO4J_dbms_usage__report_enabled=false \
+	  $(NEO4J_IMAGE) >/dev/null
+	@for i in $$(seq 60); do \
+	  docker exec neo4j-test wget -q --spider http://localhost:7474 2>/dev/null && break; sleep 2; \
+	done
+	cd spark && NEO4J_TEST_URI=bolt://localhost:17687 NEO4J_TEST_PASSWORD=test-password \
+	  uv run --no-project --python 3.10 --with-requirements requirements-test.txt \
+	  python -m pytest -q -m neo4j; status=$$?; docker stop neo4j-test >/dev/null; exit $$status
 
 # Create or update every connector. PUT /connectors/<name>/config is
 # idempotent: it creates the connector if missing, otherwise replaces its
