@@ -1536,7 +1536,7 @@ steps, 0 to 10).
   unauthenticated pull rate limit (GitHub runners share IPs): not our code,
   re-run. P9 idea: pull CI images from a registry without that limit.
 
-### Where we stopped (2026-10-09) — LATEST, start here
+### Where we stopped (2026-10-09)
 
 ### Decisions taken under Souhail's delegation ("go with the decisions you deem right")
 
@@ -1562,7 +1562,7 @@ steps, 0 to 10).
   would be a spec change, budget priced in us-east-1); CI images from a
   registry without Docker Hub's anonymous pull limit; DNS hardening.
 
-### Where we stopped (2026-10-10, ~00:30 UTC) — LATEST, start here
+### Where we stopped (2026-10-10, ~00:30 UTC)
 
 - **P5 built**: steps 1-10 done, acceptance passed (freshness 4.5-10.6 s,
   target < 60 s; endpoint tests pass), outage and rebuild drills passed.
@@ -1803,7 +1803,7 @@ P6 plan approved (Neo4j co-purchase graph +
   marks the container unhealthy. **Open for step 9**: `/health` (liveness,
   process only) + `/ready` (stores), which amends ADR 019; Souhail decides.
 
-### Where we stopped (2026-10-10, ~05:20 UTC) — LATEST, start here
+### Where we stopped (2026-10-10, ~05:20 UTC)
 
 - **P6 steps 0-8 done** and pushed (CI green); check questions after steps
   1, 4-5 and 8 answered. `make down` at the end of the session (Souhail).
@@ -1818,6 +1818,76 @@ P6 plan approved (Neo4j co-purchase graph +
 - Kept for P9: per-table retries in `jobs/maintenance.py` (a DNS blip
   re-runs a whole database and the report hides earlier attempts), DNS
   hardening, the link's variability.
+- Still pending: O8 (leaning B), "provisional days" rule, P7 and P9 ideas.
+
+## Session 11 — 2026-10-10 (afternoon) — health split, P6 step 9
+
+### Decisions taken
+
+- **`/health` + `/ready`** (Souhail, amends ADR 019): `/health` is
+  liveness (the process answers, no store called; the Compose healthcheck
+  uses it), `/ready` pings both stores, always reports both
+  (`{"redis": "ok", "neo4j": "down"}`), 503 if either is down; the Redis
+  drill reads `/ready`. Rejected: one `/health` (a store outage would get
+  a working API restarted under Swarm or Kubernetes), liveness only (loses
+  the one-call view of both stores).
+- **`depends_on: neo4j` with `service_started`**, not `service_healthy`:
+  Neo4j starts first, but the API does not wait for it, so features come up
+  even if the graph store cannot. Redis keeps `service_healthy` (P5); the
+  same argument would relax it, not changed.
+- **Neo4j's query timeout is a 503**, not a 500 (found while measuring, see
+  below). Only that error code; any other `ClientError` is a bug (500).
+
+### Concepts covered
+
+- **Liveness vs readiness**: liveness failure means "restart me",
+  readiness failure means "send me no traffic". Docker's healthcheck acts
+  as liveness (Swarm replaces unhealthy tasks). A readiness probe on a
+  *shared* dependency fails on every replica at once: the load balancer
+  removes all of them, and a partial outage (graph down, features fine)
+  becomes total. So `/ready` stays a status endpoint here.
+- **Cold start cost is server-side**: API restarted with Neo4j warm, first
+  query 27 ms (connecting is cheap); Neo4j restarted, first query 1.99 s
+  (empty query-plan cache, cold JVM), then 15-45 ms.
+- **Error classes vs error codes**: the Neo4j driver has no timeout class;
+  a timeout and a syntax error are both `ClientError`, only `error.code`
+  tells them apart.
+
+### Steps done
+
+| Step | Result |
+|---|---|
+| - | `/health` liveness + `/ready` (ADR 019 amendment); 4 tests, 2 mutations each caught by its own test (stop at the first failing store; `/health` pinging Redis) |
+| 9 | API container reaches Neo4j: product 27809 -> its 5 companions (weights 43-34), unknown -> 404. **Neo4j stopped**: 503 in 1.0 s (first one 4.5 ms: dead pooled connection), `/ready` 503 names neo4j, `/health` 200, container stays healthy, features 200 in 4 ms. **Neo4j restarted**: 200 again 8.5 s after `start`, no API restart, no 500 in its log. Query timeout -> `GraphTimeout` -> 503, tested on a real Neo4j (slow query raises it, a syntax error does not); disabling the translation fails that test |
+
+### Debugging lesson (step 9)
+
+- **Symptom**: the first request after `make up` took 2.29 s. **Method**:
+  vary one thing at a time. API restarted alone: 27 ms, so not the driver.
+  Neo4j restarted alone: 1.99 s, so Neo4j's cold caches, and just under the
+  2 s query timeout. **Question that found the bug**: what happens just
+  over it? Forced with a slow query and `timeout=0.2` inside the API
+  container: `ClientError`, code
+  `Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration`,
+  not in `GRAPH_ERRORS`, so a 500. The step 8 fake raised only
+  `ServiceUnavailable`: a fake fails only in the ways I imagined (the step 8
+  lesson, again).
+- Kafka retention is 3 days (`retention.ms` 259,200,000): with only `core`
+  running, companion orders accumulate and bronze can catch up later.
+
+### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
+
+- Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
+  since 16:05 UTC: the generator writes companion orders again (3.5 h this
+  morning, 01:46-05:20).
+- **Next**: step 10 (acceptance drill: top 20 products, >= 4 of top 5 are
+  companions). Needs several more hours of companion orders, then `stream`
+  (bronze catches up from Kafka, within its 3 days) and `airflow`
+  (transform, then a graph rebuild). Then step 11 (README, runbook,
+  results.md P6 section with today's step 9 figures, P6 checkpoint).
+- Kept for P9: per-table retries in `jobs/maintenance.py`, DNS hardening,
+  the link's variability; maybe relax the API's Redis `depends_on` to
+  `service_started`.
 - Still pending: O8 (leaning B), "provisional days" rule, P7 and P9 ideas.
 
 ### P1 plan (agreed)
