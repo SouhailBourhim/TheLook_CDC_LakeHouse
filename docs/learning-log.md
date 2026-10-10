@@ -1781,6 +1781,22 @@ P6 plan approved (Neo4j co-purchase graph +
   once no task ran, recreate the scheduler (new image), run the graph job,
   unpause. A paused DAG's running task finishes; its next tasks wait.
 
+### Check answers (step 8)
+
+- (1) 404 vs `[]` in one query: correct and complete (MATCH the product,
+  then OPTIONAL MATCH its pairs; a plain pattern match needs a
+  relationship, so both cases give zero rows). Added: `collect()` skips an
+  element only if it is null; a map of nulls is not, hence the `CASE`
+  (the bug the mutation check found).
+- (2) Neo4j down: endpoints correct (features 200, recommendations 503).
+  **Wrong on `/health`**: it checks both stores, so it returns 503 "graph
+  store unavailable" (ADR 019, decision 9). Souhail's reasoning is a good
+  design argument though: liveness ("is the process alive?") vs readiness
+  ("can it serve?"). Under Kubernetes, a liveness probe that depends on a
+  store would restart healthy pods during a store outage; Compose only
+  marks the container unhealthy. **Open for step 9**: `/health` (liveness,
+  process only) + `/ready` (stores), which amends ADR 019; Souhail decides.
+
 ### Where we stopped (2026-10-10, ~04:40 UTC) — LATEST, start here
 
 - Steps 1-5 done and pushed (CI green); check questions after steps 1 and
