@@ -1567,6 +1567,12 @@ steps, 0 to 10).
 - **P5 built**: steps 1-10 done, acceptance passed (freshness 4.5-10.6 s,
   target < 60 s; endpoint tests pass), outage and rebuild drills passed.
   Stack down (`make down`).
+- `make down` first failed: "failed to read onprem/.env: line 1: key cannot
+  contain a space". A VS Code database extension had prepended
+  `-- Active: <connection>@@localhost@5432@thelook` to `.env` (opened with
+  a PostgreSQL connection active). Removed that one line; nothing else had
+  changed (32 lines, as after the Redis passwords). Avoid opening `.env`
+  while that extension has an active connection.
 - **Next: P5 checkpoint** (questions below, answered without the code) and
   Souhail's decision on the ADR 018 amendment; then P6 (plan it first).
 - Carried: step 0 (Airflow maintenance duration, daytime); step 8 and 9
