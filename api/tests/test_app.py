@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from neo4j.exceptions import ServiceUnavailable
 
 import app as api
-from app import app, get_clock, get_graph, get_redis
+from app import GraphTimeout, app, get_clock, get_graph, get_redis
 
 USER = "6b69f59b-eb74-45da-9aae-cc31dfef1d77"
 NOW = 1_791_400_000.0  # seconds, as time.time()
@@ -47,10 +47,13 @@ class FakeGraph:
     def __init__(self, products):
         self.products = products
         self.down = False
+        self.slow = False
 
     def recommendations(self, product_id, limit):
         if self.down:
             raise ServiceUnavailable("connection refused")
+        if self.slow:
+            raise GraphTimeout("query ran past 2 s")
         if product_id not in self.products:
             return None
         name, category, neighbours = self.products[product_id]
@@ -249,6 +252,15 @@ def test_neo4j_down_is_503_and_ready_names_it(client, graph):
     assert ready.json() == {"redis": "ok", "neo4j": "down"}
     # The features keep working: each endpoint degrades on its own store.
     assert client.get(f"/users/{USER}/features").status_code == 404
+
+
+def test_a_query_timeout_is_503(client, graph):
+    # GraphStore turns Neo4j's timeout (a ClientError) into GraphTimeout:
+    # tested on a real Neo4j in test_graph_store.py.
+    graph.slow = True
+    response = client.get("/products/27809/recommendations")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "graph store unavailable"}
 
 
 def test_the_neo4j_driver_fails_fast(monkeypatch):

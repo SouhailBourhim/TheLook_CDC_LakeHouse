@@ -37,7 +37,12 @@ from uuid import UUID
 import neo4j
 import redis
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Response
-from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
+from neo4j.exceptions import (
+    ClientError,
+    ServiceUnavailable,
+    SessionExpired,
+    TransientError,
+)
 from pydantic import BaseModel, Field
 from redis.backoff import NoBackoff
 from redis.retry import Retry
@@ -151,6 +156,14 @@ RETURN p.name AS name, p.category AS category,
 """
 
 
+QUERY_TIMEOUT = 2  # seconds; a cold Neo4j's first query took 1.99 s (P6 step 9)
+TIMED_OUT = "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration"
+
+
+class GraphTimeout(Exception):
+    """A query ran past its server-side timeout."""
+
+
 class GraphStore:
     """Read access to the co-purchase graph (replaced by a fake in tests)."""
 
@@ -159,16 +172,29 @@ class GraphStore:
 
     def recommendations(self, product_id: int, limit: int) -> dict | None:
         """The product's name, category and top neighbours; None if unknown."""
-        records, _, _ = self._driver.execute_query(
-            # Server-side limit: a stuck query fails instead of holding a
-            # thread of the API's pool.
-            neo4j.Query(RECOMMENDATIONS, timeout=2),
-            id=product_id,
-            limit=limit,
-            routing_=neo4j.RoutingControl.READ,  # a read transaction
-            database_="neo4j",
-        )
+        records = self._read(RECOMMENDATIONS, {"id": product_id, "limit": limit})
         return records[0].data() if records else None
+
+    def _read(
+        self, cypher: str, params: dict, timeout: float = QUERY_TIMEOUT
+    ) -> list[neo4j.Record]:
+        try:
+            records, _, _ = self._driver.execute_query(
+                # Server-side limit: a stuck query fails instead of holding a
+                # thread of the API's pool.
+                neo4j.Query(cypher, timeout=timeout),
+                params,
+                routing_=neo4j.RoutingControl.READ,  # a read transaction
+                database_="neo4j",
+            )
+        except ClientError as error:
+            # Neo4j reports its timeout as a ClientError, as it does a broken
+            # query; only the code tells them apart. A timeout is the store
+            # failing to answer (503); anything else is a bug (500).
+            if error.code == TIMED_OUT:
+                raise GraphTimeout(f"query ran past {timeout} s") from error
+            raise
+        return records
 
     def ping(self) -> None:
         self._driver.verify_connectivity()
@@ -206,8 +232,8 @@ ClockDep = Annotated[Callable[[], float], Depends(get_clock)]
 
 UNAVAILABLE = HTTPException(status_code=503, detail="feature store unavailable")
 GRAPH_UNAVAILABLE = HTTPException(status_code=503, detail="graph store unavailable")
-# The driver's errors when Neo4j cannot be reached or gives up on a query.
-GRAPH_ERRORS = (ServiceUnavailable, SessionExpired, TransientError)
+# Neo4j cannot be reached, gives up on a query, or the query timed out.
+GRAPH_ERRORS = (ServiceUnavailable, SessionExpired, TransientError, GraphTimeout)
 
 
 def _utc(ms: float) -> datetime:

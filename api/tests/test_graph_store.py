@@ -9,8 +9,9 @@ import os
 
 import neo4j
 import pytest
+from neo4j.exceptions import CypherSyntaxError
 
-from app import GraphStore
+from app import GraphStore, GraphTimeout
 
 pytestmark = pytest.mark.neo4j
 
@@ -66,3 +67,19 @@ def test_no_neighbour_is_an_empty_list_and_unknown_is_none(store):
 
 def test_ping(store):
     store.ping()
+
+
+# Counts to 50 million: seconds of work, far past the timeouts below.
+SLOW = "UNWIND range(1, 50000000) AS x WITH x WHERE x % 7 = 0 RETURN count(x)"
+
+
+def test_a_query_past_its_timeout_is_a_graph_timeout(store):
+    # Neo4j reports it as a ClientError; the API must answer 503, not 500.
+    with pytest.raises(GraphTimeout):
+        store._read(SLOW, {}, timeout=0.2)
+
+
+def test_a_broken_query_is_not_mistaken_for_a_timeout(store):
+    # Also a ClientError, but a bug: it must stay an error (500).
+    with pytest.raises(CypherSyntaxError):
+        store._read("MATCH (p:Product RETURN p", {})
