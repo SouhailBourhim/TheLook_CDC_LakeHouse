@@ -1963,6 +1963,27 @@ P6 plan approved (Neo4j co-purchase graph +
   a sequence diagram; in a gantt task the first `:` separates title from
   metadata, so `transform 03:00` broke the line.
 
+### Which run counts (decided before any result, Souhail: option b)
+
+- **Preview**: graph rebuilt after the 18:00 transform (~5.5 h of companion
+  orders). Tests the whole path on fresh data; its verdict does not count.
+- **Official P6 acceptance**: the run after a graph rebuild at ~22:00 UTC
+  (~10 h). Its verdict stands, pass or fail; no rerun until it passes
+  (optional stopping would make the result meaningless).
+- Why: at ~5 h the weakest top-20 products' companions weigh ~5 against
+  noise at 1-2, so one can fail by chance; at ~10 h, ~10.
+
+### Restart at 17:40: the interrupted batch replays first
+
+- `stream` + `airflow` up at 17:40 (`features-stream` stopped: `make up`
+  had restarted it with the `serving` profile; 2 GB not needed for P6).
+- Batch 1279 held only 325 orders, batch 1280 the backlog (19,604 orders,
+  98,177 events, 135 s). 1279 was the batch `make down` cut at 05:20:
+  Spark writes a batch's offset range to the checkpoint before running it,
+  and a restart reruns it with the same range (deterministic replay). It
+  had appended nothing before the shutdown, so the replay guard skipped
+  nothing and nothing was written twice.
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
