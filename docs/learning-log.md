@@ -1920,6 +1920,30 @@ P6 plan approved (Neo4j co-purchase graph +
   every run" holds for one graph only: the weights are random draws, a
   rebuild can flip a marginal product, hence the wait for ~8-9.
 
+### Step 10 drill fixed: the spec's criterion, not the plan's summary
+
+- **My mistake**: the P6 plan summarised the acceptance as "top 20, >= 4 of
+  top 5 are companions" and I followed the summary. The spec (section 9)
+  says the 20 **most-purchased** products (measured, not the generator's
+  intended ranking) **and** "same-category recommendations far exceed the
+  random baseline". Both added.
+- **Decision (Claude, inside the spec; Souhail may challenge)**: "far
+  exceed" = at least **5x** the baseline. Baseline per recommendation =
+  (n_category - 1) / (n - 1), the chance a random other product shares the
+  category. Fixed sample of 1,000 products (sha256 rule), read through the
+  API. Threshold set before measuring.
+- **Preview (04:37 graph)**: (1) 20/20; measured top 20 vs intended ranking:
+  ranks 1-17 the same set, 18-20 reshuffled by chance. (2) same-category
+  29.0 % vs 5.1 % = **5.7x**, PASS but close to 5x.
+- **Why 5.7x and not the ~10x I expected (method)**: hypothesis 1, cross-
+  category pairs come from being a random later item in popular products'
+  orders: **rejected** (2 % of cross-category neighbours are in the top 500,
+  the chance level 1.7 %). Hypothesis 2, older orders: same-category rate
+  of 2-item orders per day = **0.05 on 09-29 to 10-01** (P1, upstream
+  generator, no affinity: the baseline), **0.59-0.63 since 10-03** (P2
+  affinity; model 0.6 + 0.4 x 0.051 = 0.62). ~50,000 uniform P1 orders
+  dilute the share; every new hour raises it. Threshold kept.
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
