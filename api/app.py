@@ -1,8 +1,13 @@
-"""Serving API (spec FR17, ADR 010, ADR 018).
+"""Serving API (spec FR17, ADR 010, ADR 018, ADR 019).
 
 GET /users/{user_id}/features reads the online features that the features
-stream keeps in Redis (spark/lakehouse/features.py). P6 adds
-GET /products/{product_id}/recommendations (Neo4j) to the same app.
+stream keeps in Redis (spark/lakehouse/features.py).
+GET /products/{product_id}/recommendations reads the co-purchase graph that
+the graph job rebuilds daily in Neo4j (spark/lakehouse/graph_writer.py):
+
+    (:Product {id, name, category, brand, department})
+    -[:BOUGHT_WITH {weight}]->  one relationship per pair, read both ways;
+                                weight = orders containing both products
 
 Redis keys, as written by the stream (keep in step with features.py):
 
@@ -13,7 +18,9 @@ Redis keys, as written by the stream (keep in step with features.py):
     user:{id}:cart:{session}   hash        item:<event id> -> price,
                                            purchased -> 1
 
-Logs in as the read-only api ACL user. Run:  uvicorn app:app
+Redis: logs in as the read-only api ACL user. Neo4j Community has no roles,
+so the API only opens read transactions (a guard against mistakes, not a
+security boundary). Run:  uvicorn app:app
 """
 
 import os
@@ -24,8 +31,10 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
+import neo4j
 import redis
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Path, Query
+from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
 from pydantic import BaseModel, Field
 from redis.backoff import NoBackoff
 from redis.retry import Retry
@@ -33,11 +42,16 @@ from redis.retry import Retry
 RECENT = 10  # products in recently_viewed (the stream keeps 10)
 HOUR_MS = 3_600_000
 VIEWED_WINDOW_MS = 72 * HOUR_MS  # as the stream's viewed window
+MAX_RECOMMENDATIONS = 20
+INT64_MAX = 2**63 - 1  # Neo4j integers are 64-bit
 
 app = FastAPI(
     title="theLook serving API",
-    description="Online user features (Redis). Synthetic data (theLook).",
-    version="0.5.0",
+    description=(
+        "Online user features (Redis) and co-purchase recommendations (Neo4j). "
+        "Synthetic data (theLook); the basket affinity is synthetic too."
+    ),
+    version="0.6.0",
 )
 
 
@@ -61,6 +75,23 @@ class UserFeatures(BaseModel):
     recently_viewed: list[ViewedProduct] = Field(description="Newest first, at most 10")
     cart: Cart | None = Field(description="The newest session's cart, if it has one")
     events_last_hour: int
+
+
+class Recommendation(BaseModel):
+    product_id: int
+    name: str | None
+    category: str | None
+    weight: int = Field(description="Number of orders containing both products")
+
+
+class ProductRecommendations(BaseModel):
+    product_id: int
+    name: str | None
+    category: str | None
+    recommendations: list[Recommendation] = Field(
+        description="Heaviest first, ties by product id; empty if never bought "
+        "with another product"
+    )
 
 
 class Health(BaseModel):
@@ -95,14 +126,77 @@ def get_redis() -> redis.Redis:
     return _client
 
 
+# Top neighbours of one product. The OPTIONAL MATCH keeps the product's row
+# when it has no neighbour, so "no co-purchase yet" ([]) differs from "no
+# such product" (no row, 404). collect() skips the nulls of that case.
+RECOMMENDATIONS = """
+MATCH (p:Product {id: $id})
+OPTIONAL MATCH (p)-[r:BOUGHT_WITH]-(o:Product)
+WITH p, r, o ORDER BY r.weight DESC, o.id ASC
+RETURN p.name AS name, p.category AS category,
+       collect(CASE WHEN o IS NULL THEN null ELSE
+         {product_id: o.id, name: o.name, category: o.category, weight: r.weight}
+       END)[..$limit] AS recommendations
+"""
+
+
+class GraphStore:
+    """Read access to the co-purchase graph (replaced by a fake in tests)."""
+
+    def __init__(self, driver: neo4j.Driver):
+        self._driver = driver
+
+    def recommendations(self, product_id: int, limit: int) -> dict | None:
+        """The product's name, category and top neighbours; None if unknown."""
+        records, _, _ = self._driver.execute_query(
+            # Server-side limit: a stuck query fails instead of holding a
+            # thread of the API's pool.
+            neo4j.Query(RECOMMENDATIONS, timeout=2),
+            id=product_id,
+            limit=limit,
+            routing_=neo4j.RoutingControl.READ,  # a read transaction
+            database_="neo4j",
+        )
+        return records[0].data() if records else None
+
+    def ping(self) -> None:
+        self._driver.verify_connectivity()
+
+
+_graph: GraphStore | None = None
+
+
+def get_graph() -> GraphStore:
+    """One driver per process (it holds a connection pool), created on first
+    use. Fails fast like the Redis client. The driver's defaults (6.3) are a
+    30 s connect timeout, up to 60 s waiting for a pooled connection and 30 s
+    of transaction retries; a 503 already tells the caller to retry."""
+    global _graph
+    if _graph is None:
+        _graph = GraphStore(
+            neo4j.GraphDatabase.driver(
+                os.environ.get("NEO4J_URI", "bolt://neo4j:7687"),
+                auth=("neo4j", os.environ["NEO4J_PASSWORD"]),
+                connection_timeout=1,
+                connection_acquisition_timeout=1,
+                max_transaction_retry_time=0,
+            )
+        )
+    return _graph
+
+
 def get_clock() -> Callable[[], float]:
     return time.time
 
 
 RedisDep = Annotated[redis.Redis, Depends(get_redis)]
+GraphDep = Annotated[GraphStore, Depends(get_graph)]
 ClockDep = Annotated[Callable[[], float], Depends(get_clock)]
 
 UNAVAILABLE = HTTPException(status_code=503, detail="feature store unavailable")
+GRAPH_UNAVAILABLE = HTTPException(status_code=503, detail="graph store unavailable")
+# The driver's errors when Neo4j cannot be reached or gives up on a query.
+GRAPH_ERRORS = (ServiceUnavailable, SessionExpired, TransientError)
 
 
 def _utc(ms: float) -> datetime:
@@ -173,12 +267,40 @@ def user_features(user_id: UUID, r: RedisDep, clock: ClockDep) -> UserFeatures:
 
 
 @app.get(
-    "/health", response_model=Health, responses={503: {"description": "Redis down"}}
+    "/products/{product_id}/recommendations",
+    response_model=ProductRecommendations,
+    responses={404: {"description": "No such product in the graph"}},
 )
-def health(r: RedisDep) -> Health:
-    """For the container's healthcheck: the API is up and reaches Redis."""
+def product_recommendations(
+    product_id: Annotated[int, Path(ge=1, le=INT64_MAX)],
+    graph: GraphDep,
+    limit: Annotated[int, Query(ge=1, le=MAX_RECOMMENDATIONS)] = 5,
+) -> ProductRecommendations:
+    """Products most often bought in the same orders, from the co-purchase
+    graph. Rebuilt daily from gold: up to a day behind the site."""
+    try:
+        found = graph.recommendations(product_id, limit)
+    except GRAPH_ERRORS as error:
+        raise GRAPH_UNAVAILABLE from error
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such product")
+    return ProductRecommendations(product_id=product_id, **found)
+
+
+@app.get(
+    "/health",
+    response_model=Health,
+    responses={503: {"description": "Redis or Neo4j down (named in detail)"}},
+)
+def health(r: RedisDep, graph: GraphDep) -> Health:
+    """For the container's healthcheck: the API is up and reaches both
+    stores. The 503 names the store that is down."""
     try:
         r.ping()
     except (redis.ConnectionError, redis.TimeoutError) as error:
         raise UNAVAILABLE from error
+    try:
+        graph.ping()
+    except GRAPH_ERRORS as error:
+        raise GRAPH_UNAVAILABLE from error
     return Health(status="ok")
