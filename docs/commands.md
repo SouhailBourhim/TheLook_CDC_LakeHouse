@@ -326,6 +326,45 @@ MATCH (p:Product) RETURN DISTINCT p.run;
 | Alertmanager | `http://localhost:9093` |
 | Spark cluster UI / bronze and features driver UIs | `http://localhost:8080` / `http://localhost:4040`, `http://localhost:4041` |
 
+Start only the monitoring services (`make up PROFILES=monitoring` would also
+restart anything you stopped in the profiles already running):
+`$C --profile monitoring up -d --wait postgres-exporter prometheus alertmanager`.
+Prometheus scrapes two targets every 15 s: `postgres` (postgres-exporter,
+the replication slot) and `connect` (the JMX exporter in the Connect worker:
+connectors, tasks, Debezium). Spark, Airflow, Redis, Neo4j and the API are
+not scraped yet (P7). In the UI: **Status → Targets** (is each target UP?),
+**Alerts** (inactive, pending, firing), **Query** (PromQL, then the Graph
+tab for history).
+
+**PromQL** (healthy values measured on 2026-10-10; the alert column is the
+rule in `onprem/monitoring/alerts.yml` that watches it):
+
+| Query | Meaning | Healthy | Alert |
+|---|---|---|---|
+| `up` | Last scrape of each target succeeded | 1 for both jobs | `PostgresExporterDown`, `KafkaConnectDown` (0 for 2 min) |
+| `pg_replication_slots_slot_is_active` | Debezium is connected to its slot | 1 | `ReplicationSlotInactive` (0 for 30 min) |
+| `pg_replication_slots_pg_wal_lsn_diff / 1024^2` | MB of WAL PostgreSQL keeps for the slot | < 1 MB | `ReplicationSlotRetainedWalHigh` (> 1 GB for 5 min) |
+| `pg_replication_slots_safe_wal_size_bytes / 1024^3` | GB left before the slot is invalidated | ~10 GB (the cap) | `ReplicationSlotNearInvalidation` (< 2 GB) |
+| `debezium_streaming_connected` | Each Debezium source connected | 1 for both | `DebeziumNotConnected` (0 for 2 min) |
+| `debezium_streaming_millisecondsbehindsource / 1000` | Capture lag in seconds, per source | 0.07-0.3 s | `DebeziumLagHigh` (> 60 s for 10 min) |
+| `max_over_time(debezium_streaming_millisecondsbehindsource[1h]) / 1000` | Worst capture lag over the last hour | < 0.5 s | |
+| `kafka_connect_connector_status == 1` | Each connector's state | `running` for both | `ConnectorNotRunning` (5 min) |
+| `kafka_connect_task_status{status="failed"} == 1` | Failed tasks | empty | `ConnectorTaskFailed` (1 min) |
+
+The same from a terminal, through the HTTP API:
+
+```bash
+curl -s localhost:9090/api/v1/query --data-urlencode 'query=debezium_streaming_millisecondsbehindsource / 1000'
+curl -s localhost:9090/api/v1/targets          # scrape health per target
+curl -s localhost:9090/api/v1/alerts           # pending and firing alerts
+```
+
+Alertmanager (`http://localhost:9093`) groups firing alerts by `alertname`
+and `slot_name` and lets you silence one during planned work. No delivery
+channel (email, Slack) is configured yet: firing alerts appear only there.
+To see the whole cycle (Connect stopped, WAL grows, alert fires, recovery):
+`drills/slot-drill.sh` (`core monitoring`).
+
 Alert rule tests, as CI runs them (the stack's Prometheus image, so promtool
 matches the server):
 
