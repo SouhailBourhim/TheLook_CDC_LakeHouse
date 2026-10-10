@@ -1907,6 +1907,19 @@ P6 plan approved (Neo4j co-purchase graph +
 - The drill can fail: with the wrong rule (`<id>-<c>` instead of
   `<id>:<c>`), 0/20 and exit 1.
 
+### Check answer (step 10 drill)
+
+- Why the 20th product's companions weigh 2-7 and the top product's
+  34-43, and why the top 20: correct (weight scales with the anchor's
+  orders; random products have too few orders for the signal to beat
+  coincidental pairs). **Precisions**: only the *first* item follows the
+  skew and companions are chosen relative to it, so a companion pair gains
+  weight only from orders the anchor starts; Zipf 0.8 predicts rank 1 /
+  rank 20 = 20^0.8 = 11x, observed ~7.6x (39.6 vs 5.2 mean companion
+  weight, 27809 vs 3031), same order at these small counts. "Same verdict
+  every run" holds for one graph only: the weights are random draws, a
+  rebuild can flip a marginal product, hence the wait for ~8-9.
+
 ### Where we stopped (2026-10-10, ~16:30 UTC) — LATEST, start here
 
 - Health split and P6 step 9 done, pushed, CI green. `core` + `serving` up
