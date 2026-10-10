@@ -1573,8 +1573,8 @@ steps, 0 to 10).
   a PostgreSQL connection active). Removed that one line; nothing else had
   changed (32 lines, as after the Redis passwords). Avoid opening `.env`
   while that extension has an active connection.
-- **Next: P5 checkpoint** (questions below, answered without the code) and
-  Souhail's decision on the ADR 018 amendment; then P6 (plan it first).
+- **P5 checkpoint passed** (answers below). Waiting: Souhail's explicit
+  decision on the ADR 018 amendment. Then P6 (plan it first).
 - Carried: step 0 (Airflow maintenance duration, daytime); step 8 and 9
   check questions (folded into the checkpoint); O8 (leaning B), E2 (before
   P6), "provisional days" rule.
@@ -1595,6 +1595,27 @@ steps, 0 to 10).
 - P7 idea added: alert on offsets skipped by the features stream.
 - Still pending from before: O8 (leaning B), E2 (before P6), "provisional
   days" rule, P7 ideas, P9 ideas (DNS hardening first).
+
+### P5 checkpoint (answers without the code) — passed
+
+- (1) Hop by hop: excellent, the right mechanism at every hop. Added: ties
+  broken as Redis does (member bytes), so Spark's pre-trim and Redis's trim
+  keep the same 10.
+- (2) Half-written batch: excellent (replay + max/union/absolute expiry;
+  bronze needs a replay guard because an Iceberg append is not idempotent).
+  Precise version: `offsets/N` before the batch, `commits/N` after
+  `foreachBatch` returns; bronze's guard is per table (batch 1161).
+- (3) Separate local-mode application: excellent, cost included.
+- (4) 72 h TTL: very good, including the flaw and its fix. Souhail's doubt
+  about the AOF **verified** on a throwaway Redis 8.10.2: an expired key
+  gets a synthesized `DEL` in the AOF, but its value stays in the file until
+  a rewrite, which is automatic only once the AOF doubled and passed 64 MB;
+  `BGREWRITEAOF` removes it. **P8: erasure runs `BGREWRITEAOF` after
+  deleting `user:{id}:*`.** Added: Kafka holds the events 72 h (FR9's
+  documented bound).
+- (5) Exact rebuild: excellent. Added: the rebuild grouped events into
+  entirely different batches (50,000 per batch vs ~200 per 10 s), so the
+  equality proves order independence across batch boundaries.
 
 ### P1 plan (agreed)
 
