@@ -203,24 +203,47 @@ def wait_for_bronze(moment: datetime.datetime, timeout_s: int = 600) -> dict:
     raise RuntimeError(f"no finished bronze batch past {stamp} within {timeout_s} s")
 
 
-def pending_deletes(table: str, stamp: str, upto: str, snapshot: str) -> int:
-    """Silver rows created before the cut whose deletion bronze holds (as of
-    a finished batch) after silver's newest change and up to `upto` (when the
-    source was counted): deleted at the source, not yet in silver."""
+def silver_at(table: str, snapshot: str) -> str:
+    """A silver table as of one snapshot, for Athena (Iceberg time travel)."""
+    return f"thelook_silver.{table} FOR VERSION AS OF {snapshot}"
+
+
+def silver_snapshots(tables: list[str]) -> dict[str, str]:
+    """Each silver table's current snapshot, read once: every silver query of
+    the run reads these, so a transform run committing meanwhile cannot move
+    silver between two queries (a first version counted silver, then the
+    pending deletions after silver had applied some: a false alarm)."""
+    return {
+        t: athena(
+            f'SELECT snapshot_id FROM thelook_silver."{t}$snapshots" '
+            "ORDER BY committed_at DESC LIMIT 1"
+        )[0][0]
+        for t in tables
+    }
+
+
+def pending_deletes(
+    table: str, silver: str, stamp: str, upto: str, snapshot: str
+) -> int:
+    """Rows of `silver` (one snapshot) created before the cut whose deletion
+    bronze holds (as of a finished batch) after silver's newest change and up
+    to `upto` (when the source was counted): deleted at the source, not yet in
+    silver."""
     return int(
         athena(
-            f"SELECT count(*) FROM thelook_silver.{table} s "
+            f"SELECT count(*) FROM {silver} s "
             f"WHERE s.created_at < TIMESTAMP '{stamp}' AND s.id IN ("
             f"SELECT doc_id FROM thelook_bronze.web_{table} FOR VERSION AS OF {snapshot} "
             f"WHERE op = 'd' AND source_ts <= TIMESTAMP '{upto}' "
-            f"AND source_ts > (SELECT max(_source_ts) FROM thelook_silver.{table}))"
+            f"AND source_ts > (SELECT max(_source_ts) FROM {silver}))"
         )[0][0]
     )
 
 
 def reconcile() -> bool:
+    pinned = silver_snapshots(SILVER_DATED + SILVER_STATIC)
     union = " UNION ALL ".join(
-        f"SELECT max(_source_ts) FROM thelook_silver.{t}" for t in SILVER_DATED
+        f"SELECT max(_source_ts) FROM {silver_at(t, pinned[t])}" for t in SILVER_DATED
     )
     latest = [parse_ts(r[0]) for r in athena(union)]
     before = cut(latest)
@@ -232,9 +255,8 @@ def reconcile() -> bool:
         where = (
             f" WHERE created_at < TIMESTAMP '{stamp}'" if table in SILVER_DATED else ""
         )
-        silver = int(
-            athena(f"SELECT count(*) FROM thelook_silver.{table}{where}")[0][0]
-        )
+        silver_table = silver_at(table, pinned[table])
+        silver = int(athena(f"SELECT count(*) FROM {silver_table}{where}")[0][0])
         counted_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         if table in ("events", "reviews"):
             source = web[table].count_documents({"created_at": {"$lt": before}})
@@ -244,7 +266,9 @@ def reconcile() -> bool:
         if table in DELETED_AT_SOURCE:
             snapshots = wait_for_bronze(counted_at)
             upto = counted_at.strftime("%Y-%m-%d %H:%M:%S.%f")
-            pending = pending_deletes(table, stamp, upto, snapshots[f"web_{table}"])
+            pending = pending_deletes(
+                table, silver_table, stamp, upto, snapshots[f"web_{table}"]
+            )
         good = counts_match(source, silver, pending)
         ok &= good
         note = (
