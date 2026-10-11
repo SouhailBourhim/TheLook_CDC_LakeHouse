@@ -1,15 +1,27 @@
-# Alertmanager groups, deduplicates and routes alerts. The delivery channel
-# (email, Slack...) is chosen with the rest of the alerting work in P4; until
-# then firing alerts are visible in the UI (http://localhost:9093) and API.
+# Alertmanager groups, deduplicates and routes alerts (ADR 005). It is the
+# single alert hub (ADR 020): Prometheus rules and Airflow (failed tasks,
+# failed quality checks, posted to /api/v2/alerts) all arrive here, and every
+# notification goes to the SNS topic thelook-alerts, which emails the owner.
+# __ALERTS_TOPIC_ARN__ is replaced at start by start-alertmanager.sh.
 route:
-  receiver: default
-  group_by: [alertname, slot_name]
+  receiver: email
+  # Airflow alerts carry dag_id and task_id: two failed tasks are two
+  # emails, not one group. Labels an alert lacks are simply empty.
+  group_by: [alertname, slot_name, dag_id, task_id]
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 4h
 
 receivers:
-  - name: default
+  - name: email
+    sns_configs:
+      - topic_arn: __ALERTS_TOPIC_ARN__
+        sigv4:
+          region: us-east-1
+        # Email subject (SNS caps it at 100 characters); the body is
+        # Alertmanager's default SNS message: labels and annotations.
+        subject: '[thelook] {{ .Status | toUpper }}: {{ .CommonLabels.alertname }}'
+        send_resolved: true
 
 # When the exporter is down, the slot metrics disappear too, so
 # ReplicationSlotMissing would fire as well and point at the wrong cause.

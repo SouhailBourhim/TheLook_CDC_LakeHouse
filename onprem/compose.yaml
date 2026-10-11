@@ -772,13 +772,17 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
     profiles: [monitoring]
-    command:
-      - --config.file=/etc/alertmanager/alertmanager.yml
-      - --storage.path=/alertmanager
+    # Renders the config with the topic ARN, then starts Alertmanager.
+    entrypoint: ["/bin/sh", "/etc/alertmanager/start-alertmanager.sh"]
+    environment:
+      ALERTS_TOPIC_ARN: ${ALERTS_TOPIC_ARN:?set ALERTS_TOPIC_ARN in onprem/.env}
+      AWS_ACCESS_KEY_ID: ${ALERTS_AWS_ACCESS_KEY_ID:?set ALERTS_AWS_ACCESS_KEY_ID in onprem/.env}
+      AWS_SECRET_ACCESS_KEY: ${ALERTS_AWS_SECRET_ACCESS_KEY:?set ALERTS_AWS_SECRET_ACCESS_KEY in onprem/.env}
     ports:
       - "127.0.0.1:9093:9093"
     volumes:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/start-alertmanager.sh:/etc/alertmanager/start-alertmanager.sh:ro
 
 volumes:
   pgdata:
