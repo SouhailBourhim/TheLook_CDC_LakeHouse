@@ -27,9 +27,9 @@ def test_every_dag_file_parses(bag):
     assert bag.import_errors == {}
 
 
-def test_transform_runs_silver_then_the_gold_stages(bag):
+def test_transform_runs_silver_then_the_gold_stages_then_quality(bag):
     dag = bag.dags["transform"]
-    chain = ["silver", "gold_dims", "gold_facts", "gold_marts"]
+    chain = ["silver", "gold_dims", "gold_facts", "gold_marts", "quality"]
     for upstream, downstream in zip(chain, chain[1:], strict=False):
         assert dag.get_task(upstream).downstream_task_ids == {downstream}
     assert set(dag.task_ids) == set(chain)
@@ -44,6 +44,8 @@ def test_transform_never_overlaps_or_replays_missed_slots(bag):
 
 def test_tasks_retry_and_allow_catch_up_runs(bag):
     for task in bag.dags["transform"].tasks:
+        if task.task_id == "quality":
+            continue
         assert task.retries == 2
         assert task.execution_timeout == timedelta(minutes=60)
         # spark-submit is not on the image's PATH.
@@ -68,9 +70,11 @@ def test_graph_rebuilds_daily_after_maintenance(bag):
 def test_every_spark_task_shares_the_one_slot_lake_pool(bag):
     # A compaction must never commit at the same time as a MERGE (ADR 017);
     # the graph job only reads, but must not take the worker's last cores.
+    # Contract checks run in Athena, not on the cluster: they take no slot.
     for dag_id in ("transform", "maintenance", "graph"):
         for task in bag.dags[dag_id].tasks:
-            assert task.pool == "lake", f"{dag_id}.{task.task_id}"
+            if task.task_type == "SparkSubmitOperator":
+                assert task.pool == "lake", f"{dag_id}.{task.task_id}"
 
 
 def test_every_task_alerts_on_its_final_failure(bag):
@@ -98,3 +102,11 @@ def test_an_alert_names_its_dag_and_task():
         alert["annotations"]["summary"] == "transform.silver failed after 3 attempt(s)"
     )
     assert len(alert["annotations"]["description"]) == 1000
+
+
+def test_transform_quality_checks_the_gold_facts_and_dead_letters(bag):
+    task = bag.dags["transform"].get_task("quality")
+    assert task.retries == 0  # check.py retries checks that could not run
+    for contract in ["gold/fct_order_items", "gold/fct_orders", "silver/dead_letters"]:
+        assert contract in task.bash_command
+

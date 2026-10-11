@@ -1,10 +1,11 @@
-"""transform: bronze -> silver -> gold every 30 minutes (spec FR12, ADR 013).
+"""transform: bronze -> silver -> gold every 30 minutes (spec FR12, ADR 013),
+then quality checks (ADR 020).
 
-Four tasks, one spark-submit each, in client mode against the standalone
-cluster (the driver runs in the scheduler container, on the same Python 3.10
-as the executors):
+Four spark-submit tasks in client mode against the standalone cluster (the
+driver runs in the scheduler container, on the same Python 3.10 as the
+executors), then the contract checks in Athena:
 
-    silver -> gold_dims -> gold_facts -> gold_marts
+    silver -> gold_dims -> gold_facts -> gold_marts -> quality
 
 - Every job is incremental and idempotent (ADR 014, ADR 015): a retry, or a
   run after downtime, simply processes what is new.
@@ -24,6 +25,7 @@ from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOpe
 from airflow.sdk import DAG
 
 from alerting import alert_on_failure
+from quality import contract_check
 
 JOBS = "/opt/lakehouse/jobs"
 
@@ -76,4 +78,18 @@ with DAG(
         **SPARK,
     )
 
-    silver >> gold_dims >> gold_facts >> gold_marts
+    # The rules a bad run would break first (ADR 020): statuses, the
+    # unknown member, facts to dimensions, amounts; and any new dead letter.
+    # The full set runs daily in quality_report: 44 Athena queries here,
+    # ~\$0.002 a run at Athena's 10 MB minimum per query (P7 step 9).
+    quality = contract_check(
+        "quality",
+        [
+            "gold/fct_order_items.odcs.yaml",
+            "gold/fct_orders.odcs.yaml",
+            "silver/dead_letters.odcs.yaml",
+        ],
+        workers=3,
+    )
+
+    silver >> gold_dims >> gold_facts >> gold_marts >> quality
