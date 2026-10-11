@@ -1,0 +1,146 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-bronze-shop_order_items
+name: bronze.shop_order_items
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Every change event of shop_order_items, as captured (append-only, ADR 012); schema only
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_bronze
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: shop_order_items
+  physicalName: shop_order_items
+  physicalType: table
+  properties:
+  - name: op
+    physicalType: string
+    logicalType: string
+  - name: source_ts_ms
+    physicalType: bigint
+    logicalType: integer
+  - name: source_ts
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: ts_ms
+    physicalType: bigint
+    logicalType: integer
+  - name: snapshot
+    physicalType: string
+    logicalType: string
+  - name: kafka_topic
+    physicalType: string
+    logicalType: string
+  - name: kafka_partition
+    physicalType: int
+    logicalType: integer
+  - name: kafka_offset
+    physicalType: bigint
+    logicalType: integer
+  - name: kafka_timestamp
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: schema_id
+    physicalType: int
+    logicalType: integer
+  - name: ingested_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: lsn
+    physicalType: bigint
+    logicalType: integer
+  - name: tx_id
+    physicalType: bigint
+    logicalType: integer
+  - name: before
+    physicalType: struct
+    logicalType: object
+    properties:
+    - name: id
+      physicalType: string
+      logicalType: string
+    - name: order_id
+      physicalType: string
+      logicalType: string
+    - name: product_id
+      physicalType: bigint
+      logicalType: integer
+    - name: status
+      physicalType: string
+      logicalType: string
+    - name: quantity
+      physicalType: int
+      logicalType: integer
+    - name: sale_price
+      physicalType: double
+      logicalType: number
+    - name: created_at
+      physicalType: bigint
+      logicalType: integer
+    - name: updated_at
+      physicalType: bigint
+      logicalType: integer
+    - name: shipped_at
+      physicalType: bigint
+      logicalType: integer
+    - name: delivered_at
+      physicalType: bigint
+      logicalType: integer
+    - name: returned_at
+      physicalType: bigint
+      logicalType: integer
+    - name: cancelled_at
+      physicalType: bigint
+      logicalType: integer
+  - name: after
+    physicalType: struct
+    logicalType: object
+    properties:
+    - name: id
+      physicalType: string
+      logicalType: string
+    - name: order_id
+      physicalType: string
+      logicalType: string
+    - name: product_id
+      physicalType: bigint
+      logicalType: integer
+    - name: status
+      physicalType: string
+      logicalType: string
+    - name: quantity
+      physicalType: int
+      logicalType: integer
+    - name: sale_price
+      physicalType: double
+      logicalType: number
+    - name: created_at
+      physicalType: bigint
+      logicalType: integer
+    - name: updated_at
+      physicalType: bigint
+      logicalType: integer
+    - name: shipped_at
+      physicalType: bigint
+      logicalType: integer
+    - name: delivered_at
+      physicalType: bigint
+      logicalType: integer
+    - name: returned_at
+      physicalType: bigint
+      logicalType: integer
+    - name: cancelled_at
+      physicalType: bigint
+      logicalType: integer

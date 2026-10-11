@@ -1,0 +1,98 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-bronze-shop_dist_centers
+name: bronze.shop_dist_centers
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Every change event of shop_dist_centers, as captured (append-only, ADR 012); schema only
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_bronze
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: shop_dist_centers
+  physicalName: shop_dist_centers
+  physicalType: table
+  properties:
+  - name: op
+    physicalType: string
+    logicalType: string
+  - name: source_ts_ms
+    physicalType: bigint
+    logicalType: integer
+  - name: source_ts
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: ts_ms
+    physicalType: bigint
+    logicalType: integer
+  - name: snapshot
+    physicalType: string
+    logicalType: string
+  - name: kafka_topic
+    physicalType: string
+    logicalType: string
+  - name: kafka_partition
+    physicalType: int
+    logicalType: integer
+  - name: kafka_offset
+    physicalType: bigint
+    logicalType: integer
+  - name: kafka_timestamp
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: schema_id
+    physicalType: int
+    logicalType: integer
+  - name: ingested_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: lsn
+    physicalType: bigint
+    logicalType: integer
+  - name: tx_id
+    physicalType: bigint
+    logicalType: integer
+  - name: before
+    physicalType: struct
+    logicalType: object
+    properties:
+    - name: id
+      physicalType: bigint
+      logicalType: integer
+    - name: name
+      physicalType: string
+      logicalType: string
+    - name: latitude
+      physicalType: double
+      logicalType: number
+    - name: longitude
+      physicalType: double
+      logicalType: number
+  - name: after
+    physicalType: struct
+    logicalType: object
+    properties:
+    - name: id
+      physicalType: bigint
+      logicalType: integer
+    - name: name
+      physicalType: string
+      logicalType: string
+    - name: latitude
+      physicalType: double
+      logicalType: number
+    - name: longitude
+      physicalType: double
+      logicalType: number

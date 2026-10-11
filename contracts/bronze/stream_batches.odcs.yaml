@@ -1,0 +1,48 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-bronze-stream_batches
+name: bronze.stream_batches
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Ledger of committed stream batches (ADR 012)
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_bronze
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: stream_batches
+  physicalName: stream_batches
+  physicalType: table
+  properties:
+  - name: query_id
+    physicalType: string
+    logicalType: string
+  - name: batch_id
+    physicalType: bigint
+    logicalType: integer
+  - name: snapshots
+    physicalType: map<string,bigint>
+    logicalType: map
+    map:
+      key:
+        name: key
+        physicalType: string
+        logicalType: string
+      value:
+        name: value
+        physicalType: bigint
+        logicalType: integer
+  - name: committed_at
+    physicalType: timestamp
+    logicalType: timestamp

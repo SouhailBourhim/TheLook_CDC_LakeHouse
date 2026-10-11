@@ -1,0 +1,97 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-bronze-web_reviews
+name: bronze.web_reviews
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Every change event of web_reviews, as captured (append-only, ADR 012); schema only
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_bronze
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: web_reviews
+  physicalName: web_reviews
+  physicalType: table
+  properties:
+  - name: op
+    physicalType: string
+    logicalType: string
+  - name: source_ts_ms
+    physicalType: bigint
+    logicalType: integer
+  - name: source_ts
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: ts_ms
+    physicalType: bigint
+    logicalType: integer
+  - name: snapshot
+    physicalType: string
+    logicalType: string
+  - name: kafka_topic
+    physicalType: string
+    logicalType: string
+  - name: kafka_partition
+    physicalType: int
+    logicalType: integer
+  - name: kafka_offset
+    physicalType: bigint
+    logicalType: integer
+  - name: kafka_timestamp
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: schema_id
+    physicalType: int
+    logicalType: integer
+  - name: ingested_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: doc_id
+    physicalType: string
+    logicalType: string
+  - name: ord
+    physicalType: int
+    logicalType: integer
+  - name: after
+    physicalType: string
+    logicalType: string
+  - name: update_description
+    physicalType: struct
+    logicalType: object
+    properties:
+    - name: removedfields
+      physicalType: array<string>
+      logicalType: array
+      items:
+        name: items
+        physicalType: string
+        logicalType: string
+    - name: updatedfields
+      physicalType: string
+      logicalType: string
+    - name: truncatedarrays
+      physicalType: array<struct<field:string,size:int>>
+      logicalType: array
+      items:
+        name: items
+        physicalType: struct
+        logicalType: object
+        properties:
+        - name: field
+          physicalType: string
+          logicalType: string
+        - name: size
+          physicalType: int
+          logicalType: integer
