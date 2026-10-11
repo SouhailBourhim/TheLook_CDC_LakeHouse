@@ -1,0 +1,5 @@
+# datacontract-cli for the contract checks (ADR 020), in its own virtualenv in
+# the Airflow image. Lock: uv pip compile contracts-requirements.txt
+#   --python-version 3.10 --python-platform x86_64-manylinux_2_28
+#   --generate-hashes -o contracts-requirements.lock
+datacontract-cli[athena]==1.2.2

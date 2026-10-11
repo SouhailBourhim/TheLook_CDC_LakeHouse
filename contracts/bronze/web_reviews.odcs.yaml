@@ -16,7 +16,7 @@ team:
 servers:
 - server: athena
   type: athena
-  catalog: awsdatacatalog
+  catalog: AwsDataCatalog
   schema: thelook_bronze
   regionName: us-east-1
   workgroup: thelook

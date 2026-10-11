@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from drift import contract_table, current_columns, drift
+from drift import contract_table, current_columns, drift, quality_credentials
 
 CONTRACTS = Path(__file__).resolve().parent.parent
 
@@ -42,3 +42,10 @@ def test_every_contract_names_its_glue_table():
         assert database == f"thelook_{path.parent.name}"
         assert table == path.name.removesuffix(".odcs.yaml")
         assert fields
+
+
+def test_glue_is_read_with_the_quality_key_when_given():
+    env = {"QUALITY_AWS_ACCESS_KEY_ID": "q", "QUALITY_AWS_SECRET_ACCESS_KEY": "s"}
+    assert quality_credentials(env)["aws_access_key_id"] == "q"
+    # Without it (a laptop with a profile): AWS's default chain.
+    assert quality_credentials({"AWS_ACCESS_KEY_ID": "batch"}) == {}

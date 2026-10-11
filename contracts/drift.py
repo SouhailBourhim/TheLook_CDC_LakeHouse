@@ -10,9 +10,11 @@ Iceberg's Glue catalog rewrites a table's column list on every commit; a
 dropped column stays listed with `iceberg.field.current = false`.
 
 Usage: python drift.py contracts/*/*.odcs.yaml   (exit 1 on any drift)
-Credentials: AWS's default chain (the quality user's keys in Airflow).
+Credentials: the read-only quality user's key when QUALITY_AWS_* is set (in
+Airflow, whose own AWS identity is the batch user), else AWS's default chain.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -45,8 +47,19 @@ def drift(fields: set[str], columns: set[str]) -> tuple[set[str], set[str]]:
     return columns - fields, fields - columns
 
 
+def quality_credentials(env: dict) -> dict:
+    """boto3 client arguments for the quality user, or {} for the default chain."""
+    if "QUALITY_AWS_ACCESS_KEY_ID" not in env:
+        return {}
+    return {
+        "aws_access_key_id": env["QUALITY_AWS_ACCESS_KEY_ID"],
+        "aws_secret_access_key": env["QUALITY_AWS_SECRET_ACCESS_KEY"],
+        "region_name": env.get("AWS_REGION", "us-east-1"),
+    }
+
+
 def main(paths: list[str]) -> int:
-    glue = boto3.client("glue")
+    glue = boto3.client("glue", **quality_credentials(dict(os.environ)))
     failed = 0
     for path in paths:
         database, table, fields = contract_table(yaml.safe_load(Path(path).read_text()))

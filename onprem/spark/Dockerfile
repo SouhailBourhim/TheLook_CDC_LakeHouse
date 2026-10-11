@@ -108,6 +108,16 @@ COPY graph-requirements.lock /tmp/graph-requirements.lock
 RUN python3 -m pip install --no-cache-dir --require-hashes -r /tmp/graph-requirements.lock \
  && rm /tmp/graph-requirements.lock
 
+# Contract checks (ADR 020): datacontract-cli in its own virtualenv, from a
+# hashed lock file, so its ~70 dependencies never meet Airflow's constraints
+# or the drivers' system Python. contracts/check.py and drift.py run on it
+# (boto3 and PyYAML come with datacontract-cli).
+COPY contracts-requirements.lock /tmp/contracts-requirements.lock
+RUN uv venv --python /usr/bin/python3 /opt/datacontract/venv \
+ && uv pip install --python /opt/datacontract/venv --no-cache --require-hashes \
+      -r /tmp/contracts-requirements.lock \
+ && rm /tmp/contracts-requirements.lock
+
 ENV AIRFLOW_HOME=/opt/airflow \
     PATH=/opt/airflow/venv/bin:$PATH
 USER spark
