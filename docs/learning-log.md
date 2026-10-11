@@ -2174,10 +2174,58 @@ P7 plan approved (contracts, quality, alerting, schema evolution; 16 steps,
   column. The error was a connection failure (`s3_staging_dir` missing): no
   check had run at all. Read the whole output before reading the verdict.
 
-### Where we stopped (2026-10-11) — LATEST, start here
+### Session 12, continued: P7 steps 1-12 (Souhail: "do P7 and finish it")
 
-- P7 step 0 done. **Next: step 1** (ADR 020 + spec v2.3, for Souhail's
-  approval), with step 0's findings folded in. Steps 1-3 need no stack.
+| Step | Result |
+|---|---|
+| 1 | ADR 020 **proposed** (awaits Souhail), spec v2.3 (alert hub, O8 option B, FR6 provisional days, FR7 drift check) |
+| 2 | 17 silver + gold contracts, 644 checks pass on the live tables; CI lints every contract; a broken contract fails lint |
+| 3 | 8 bronze schema contracts; `contracts/drift.py` (contract vs Glue, Iceberg's dropped columns ignored): 0 of 25 drift; a contract missing a field is caught |
+| 4 | Terraform: `thelook-quality` (the analyst's policy, own key), SNS topic + email subscription, `thelook-alerts` (publish only); every allowed and denied call tested with the real keys. **Subscription pending Souhail's click** |
+| 5 | Alertmanager -> SNS (config rendered at start: the ARN holds the account ID); test alert published, 0 failures; `amtool check-config` in CI |
+| 6 | datacontract venv in the Airflow image (hashed lock); `contracts/check.py` (parallel, stagingDir at run time, quality key, retry only checks that could not run). 25 contracts in 159 s (8 workers) vs 1,275 s one by one; 216 queries, 0.78 GB, but Athena bills >= 10 MB a query: ~$0.011 a run, $15.5 a month every 30 min -> full set daily only |
+| 7 | `silver.dead_letters` (raw payload, MERGE on table+key+position), created even when empty; its contract fails on any dead letter of the last hour |
+| 8 | `on_failure_callback` on every DAG -> Alertmanager (`AirflowTaskFailed`, no "resolved" email); never raises (Alertmanager down: a warning) |
+| 9 | `quality` task after `gold_marts` (gold facts + dead letters): 44 queries, ~$0.55 a month at our hours; first live run green (113 s) |
+| 10 | `quality_report` DAG (05:00): contracts, drift, freshness, reconciliation, health; read-only Postgres role and MongoDB user. Live: freshness 51/55 s to bronze, gold 3.6 h behind after the downtime (true failure); reconciliation exact on all 7 tables |
+| 11 | mongodb_exporter 0.53.0 (compatible mode + diagnostic-data collector), user clusterMonitor + read local; oplog window **152 h** (wall clock incl. downtime; size-capped at 2 GiB); alerts < 24 h, < 6 h, exporter down |
+| 12 | `mart_daily_revenue.provisional_until` = day + 14: order->return p50 4.2 d, p99 10.9, max 11.1 on 12 days of data (right-censored) |
+
+### Debugging lessons (steps 6-12): read the failure, then test the assumption
+
+- **A narrow identity exposes what broad rights hide**: the contracts named
+  the catalog `awsdatacatalog`; IAM ARNs are case-sensitive
+  (`AwsDataCatalog`). The operator profile passed; the quality user failed.
+  Proof that the checks use only the quality key: process key set to garbage,
+  checks still pass.
+- **Python 3.10 in the image, 3.12 on the laptop**: `datetime.UTC` broke the
+  DAG tests (CI installs Airflow as the image does); `contracts/` and
+  `airflow/` now target py310 in ruff.
+- **The reconciliation, four bugs in my own check before trusting it**:
+  (1) Athena returns 1,000 rows a page (my "52,211 missing" was my helper);
+  (2) the cut sent to MongoDB had microseconds, Athena's had seconds (3
+  events counted on one side only; the oplog showed only inserts, so the
+  source could not have shrunk); (3) I called reviews' `created_at`
+  backdated: wrong, I had compared it with `_source_ts`, the time of the
+  row's **latest** change; (4) waiting on `web_events` is not enough: a
+  batch commits its tables one by one, `web_reviews` last; the batch ledger
+  gives the consistent cut (the ADR 012/014 idea, reused). Result: exact,
+  no tolerance.
+- **Measure, then set thresholds**: Athena's 10 MB minimum per query
+  decided where checks run; the oplog window (152 h, not ~30 h) and the
+  return window (censored data) set the alert and the mart rule.
+- Process: one commit (step 9) failed CI on `ruff format`: I had trimmed a
+  file to split a commit and only ran `ruff check`. Run both on the exact
+  content committed.
+
+### Where we stopped (2026-10-11, ~04:20 UTC) — LATEST, start here
+
+- P7 steps 0-12 done and pushed. Pending: the live `quality_report` run
+  (scheduler restart after the 03:00 transform run), steps 13-14 (drills,
+  scripts written: `drills/schema_compatible.py`, `drills/schema_breaks.py`),
+  step 15 (wrap-up + P7 checkpoint).
+- **Souhail**: click "Confirm subscription" in the AWS SNS email; review
+  ADR 020 (Proposed).
 
 ### P1 plan (agreed)
 
