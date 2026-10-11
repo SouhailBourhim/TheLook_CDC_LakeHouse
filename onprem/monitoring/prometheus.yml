@@ -24,3 +24,9 @@ scrape_configs:
   - job_name: connect
     static_configs:
       - targets: ["connect:9404"]
+
+  # mongodb_exporter (compatible mode): replica set and oplog metrics,
+  # used by the mongodb alert group (oplog window).
+  - job_name: mongodb
+    static_configs:
+      - targets: ["mongodb-exporter:9216"]

@@ -220,3 +220,44 @@ tests:
             exp_annotations:
               summary: "Debezium (thelook) is 2m 0s behind"
               description: "Capture is slower than the source writes. Check the worker's CPU and the generator rate."
+
+  # Oplog window: 30 h (minutes 0-5), 20 h (6-26: warning once it lasted
+  # 10 min, at 16), 5 h (from 27: critical once it lasted 5 min, at 32).
+  - interval: 1m
+    input_series:
+      - series: 'mongodb_mongod_replset_oplog_head_timestamp'
+        values: '1000000x40'
+      - series: 'mongodb_mongod_replset_oplog_tail_timestamp'
+        values: '892000x5 928000x20 982000x15'
+    alert_rule_test:
+      - {eval_time: 4m, alertname: MongoOplogWindowShort, exp_alerts: []}
+      - {eval_time: 14m, alertname: MongoOplogWindowShort, exp_alerts: []}
+      - eval_time: 16m
+        alertname: MongoOplogWindowShort
+        exp_alerts:
+          - exp_labels: {severity: warning}
+            exp_annotations:
+              summary: "MongoDB oplog window down to 20h 0m 0s"
+              description: "A MongoDB connector outage longer than this loses its resume point. A bulk load shrinks the window; see the runbook (MongoDB)."
+      - {eval_time: 31m, alertname: MongoOplogWindowCritical, exp_alerts: []}
+      - eval_time: 33m
+        alertname: MongoOplogWindowCritical
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: "MongoDB oplog window down to 5h 0m 0s"
+              description: "Keep the MongoDB connector running, or enlarge the oplog (replSetResizeOplog); a longer outage forces a re-snapshot."
+
+  # The exporter is up but cannot reach MongoDB.
+  - interval: 1m
+    input_series:
+      - series: 'mongodb_up{cluster_role="mongod"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: MongoExporterDown
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster_role: mongod}
+            exp_annotations:
+              summary: "mongodb_exporter cannot read MongoDB"
+              description: "The oplog window is unwatched. Check the mongodb-exporter container and the exporter user (onprem/mongo/setup.js)."

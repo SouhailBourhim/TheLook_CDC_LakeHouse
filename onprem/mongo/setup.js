@@ -79,6 +79,14 @@ upsertRole(web, "reviewsWriter", [
 ]);
 upsertUser(web, "reviewer", env("MONGO_REVIEWER_PASSWORD"), [{ role: "reviewsWriter", db: "web" }]);
 
+// mongodb_exporter (ADR 020): clusterMonitor for server and replica set
+// status, read on local for the oplog's first and last entries (the oplog
+// window). Defined in admin, where clusterMonitor lives. No access to web.
+upsertUser(admin, "exporter", env("MONGO_EXPORTER_PASSWORD"), [
+  { role: "clusterMonitor", db: "admin" },
+  { role: "read", db: "local" },
+]);
+
 // The daily quality report (ADR 020) counts documents to reconcile them with
 // silver: the built-in read role on web, no write.
 upsertUser(web, "quality", env("MONGO_QUALITY_PASSWORD"), [{ role: "read", db: "web" }]);

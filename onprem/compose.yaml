@@ -182,6 +182,7 @@ services:
       DEBEZIUM_MONGO_PASSWORD: ${DEBEZIUM_MONGO_PASSWORD:?set DEBEZIUM_MONGO_PASSWORD in onprem/.env}
       MONGO_REVIEWER_PASSWORD: ${MONGO_REVIEWER_PASSWORD:?set MONGO_REVIEWER_PASSWORD in onprem/.env}
       MONGO_QUALITY_PASSWORD: ${MONGO_QUALITY_PASSWORD:?set MONGO_QUALITY_PASSWORD in onprem/.env}
+      MONGO_EXPORTER_PASSWORD: ${MONGO_EXPORTER_PASSWORD:?set MONGO_EXPORTER_PASSWORD in onprem/.env}
     volumes:
       - ./mongo:/setup:ro
 
@@ -765,6 +766,20 @@ services:
       DATA_SOURCE_URI: postgres:5432/thelook?sslmode=disable
       DATA_SOURCE_USER: exporter
       DATA_SOURCE_PASS: ${EXPORTER_DB_PASSWORD:?set EXPORTER_DB_PASSWORD in onprem/.env}
+
+  mongodb-exporter:
+    # The MongoDB oplog window (ADR 020): MongoDB loses the connector's resume
+    # point first in an outage (~30 h, P2). --compatible-mode exposes the
+    # oplog's head and tail timestamps; window = head - tail. Connects as
+    # the exporter user (clusterMonitor + read on local), URI from the
+    # environment so the password is not on the command line.
+    image: percona/mongodb_exporter:0.53.0@sha256:0214e482b2cd4b1849f9f4dcef90d328a99ba3727dd1103e7da48b42060bcec1
+    profiles: [monitoring]
+    environment:
+      MONGODB_URI: mongodb://exporter:${MONGO_EXPORTER_PASSWORD:?set MONGO_EXPORTER_PASSWORD in onprem/.env}@mongo:27017/admin?directConnection=true
+    # The compatible metrics (oplog head and tail among them) come from the
+    # getDiagnosticData collector; replSetGetStatus adds member state.
+    command: ["--compatible-mode", "--collector.diagnosticdata", "--collector.replicasetstatus"]
 
   prometheus:
     image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e

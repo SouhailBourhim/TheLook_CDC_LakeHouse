@@ -134,3 +134,40 @@ groups:
         annotations:
           summary: "Debezium ({{ $labels.server }}) is {{ $value | humanizeDuration }} behind"
           description: "Capture is slower than the source writes. Check the worker's CPU and the generator rate."
+
+  # MongoDB oplog window (ADR 020). The connector resumes from a position in
+  # the oplog; an outage longer than the window loses it
+  # (ChangeStreamHistoryLost, runbook: MongoDB). The oplog is capped by size
+  # (2 GiB), so the window shrinks as the write rate grows: measured 152 h
+  # on 2026-10-11 (wall clock, including stack downtime), ~30 h at the P2
+  # demo rate. Window = newest - oldest oplog entry (mongodb_exporter in
+  # compatible mode).
+  - name: mongodb
+    rules:
+      - alert: MongoOplogWindowShort
+        expr: (mongodb_mongod_replset_oplog_head_timestamp - mongodb_mongod_replset_oplog_tail_timestamp) < 24 * 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MongoDB oplog window down to {{ $value | humanizeDuration }}"
+          description: "A MongoDB connector outage longer than this loses its resume point. A bulk load shrinks the window; see the runbook (MongoDB)."
+
+      - alert: MongoOplogWindowCritical
+        expr: (mongodb_mongod_replset_oplog_head_timestamp - mongodb_mongod_replset_oplog_tail_timestamp) < 6 * 3600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MongoDB oplog window down to {{ $value | humanizeDuration }}"
+          description: "Keep the MongoDB connector running, or enlarge the oplog (replSetResizeOplog); a longer outage forces a re-snapshot."
+
+      # Without the exporter there is no window to watch.
+      - alert: MongoExporterDown
+        expr: up{job="mongodb"} == 0 or mongodb_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "mongodb_exporter cannot read MongoDB"
+          description: "The oplog window is unwatched. Check the mongodb-exporter container and the exporter user (onprem/mongo/setup.js)."
