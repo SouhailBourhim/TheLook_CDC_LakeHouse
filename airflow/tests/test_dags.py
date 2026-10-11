@@ -1,6 +1,7 @@
 """DAG checks, run in CI with Airflow installed exactly as in the image
 (ADR 013): every DAG file parses, and transform has the agreed shape."""
 
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -8,6 +9,11 @@ import pytest
 from airflow.dag_processing.dagbag import DagBag
 
 DAGS = Path(__file__).resolve().parent.parent / "dags"
+# Airflow puts the DAG folder on sys.path when it parses DAGs; so does this
+# test, for the DAGs' shared helper (alerting.py).
+sys.path.insert(0, str(DAGS))
+
+from alerting import build_alert  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -65,3 +71,30 @@ def test_every_spark_task_shares_the_one_slot_lake_pool(bag):
     for dag_id in ("transform", "maintenance", "graph"):
         for task in bag.dags[dag_id].tasks:
             assert task.pool == "lake", f"{dag_id}.{task.task_id}"
+
+
+def test_every_task_alerts_on_its_final_failure(bag):
+    for dag in bag.dags.values():
+        for task in dag.tasks:
+            callbacks = task.on_failure_callback
+            callbacks = callbacks if isinstance(callbacks, list) else [callbacks]
+            assert any(
+                getattr(c, "__name__", "") == "alert_on_failure" for c in callbacks
+            ), (
+                dag.dag_id,
+                task.task_id,
+            )
+
+
+def test_an_alert_names_its_dag_and_task():
+    alert = build_alert("transform", "silver", 3, "boom" * 400, "http://log")
+    assert alert["labels"] == {
+        "alertname": "AirflowTaskFailed",
+        "severity": "critical",
+        "dag_id": "transform",
+        "task_id": "silver",
+    }
+    assert (
+        alert["annotations"]["summary"] == "transform.silver failed after 3 attempt(s)"
+    )
+    assert len(alert["annotations"]["description"]) == 1000

@@ -18,6 +18,8 @@ from datetime import datetime, timedelta
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.sdk import DAG
 
+from alerting import alert_on_failure
+
 JOBS = "/opt/lakehouse/jobs"
 
 # spark-submit is not on the image's PATH; the connection spark_default
@@ -36,6 +38,8 @@ with DAG(
     catchup=False,
     max_active_runs=1,
     default_args={
+        # Final failures (after retries) alert through Alertmanager (ADR 020).
+        "on_failure_callback": alert_on_failure,
         # The rebuild is idempotent; a retry also covers Neo4j restarting.
         "retries": 2,
         "retry_delay": timedelta(minutes=5),
