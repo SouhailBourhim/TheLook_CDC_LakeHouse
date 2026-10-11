@@ -1,6 +1,6 @@
 # 020. Data contracts, quality checks and one alerting hub
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-11 (P7; spec FR6, FR7, FR8, FR12, FR14, NFR observability)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
