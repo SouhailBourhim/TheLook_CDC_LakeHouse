@@ -110,3 +110,17 @@ def test_transform_quality_checks_the_gold_facts_and_dead_letters(bag):
     for contract in ["gold/fct_order_items", "gold/fct_orders", "silver/dead_letters"]:
         assert contract in task.bash_command
 
+
+def test_quality_report_runs_its_five_checks_daily_after_the_graph(bag):
+    dag = bag.dags["quality_report"]
+    assert set(dag.task_ids) == {
+        "contracts",
+        "drift",
+        "freshness",
+        "reconcile",
+        "health",
+    }
+    assert "0 5 * * *" in repr(dag.timetable)  # graph runs at 04:00
+    assert dag.max_active_runs == 1 and not dag.catchup
+    for task in dag.tasks:
+        assert task.retries == 0 and not task.upstream_task_ids  # independent checks

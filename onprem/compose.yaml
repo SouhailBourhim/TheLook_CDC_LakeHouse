@@ -181,6 +181,7 @@ services:
       MONGO_GENERATOR_PASSWORD: ${MONGO_GENERATOR_PASSWORD:?set MONGO_GENERATOR_PASSWORD in onprem/.env}
       DEBEZIUM_MONGO_PASSWORD: ${DEBEZIUM_MONGO_PASSWORD:?set DEBEZIUM_MONGO_PASSWORD in onprem/.env}
       MONGO_REVIEWER_PASSWORD: ${MONGO_REVIEWER_PASSWORD:?set MONGO_REVIEWER_PASSWORD in onprem/.env}
+      MONGO_QUALITY_PASSWORD: ${MONGO_QUALITY_PASSWORD:?set MONGO_QUALITY_PASSWORD in onprem/.env}
     volumes:
       - ./mongo:/setup:ro
 
@@ -538,6 +539,10 @@ services:
       QUALITY_AWS_SECRET_ACCESS_KEY: ${QUALITY_AWS_SECRET_ACCESS_KEY:?set QUALITY_AWS_SECRET_ACCESS_KEY in onprem/.env}
       DATACONTRACT_STAGING_DIR: s3://${LAKE_BUCKET}/athena-results/
       DATACONTRACT_BIN: /opt/datacontract/venv/bin/datacontract
+      # The daily quality report's read-only source users (ADR 020).
+      QUALITY_DB_PASSWORD: ${QUALITY_DB_PASSWORD:?set QUALITY_DB_PASSWORD in onprem/.env}
+      MONGO_QUALITY_PASSWORD: ${MONGO_QUALITY_PASSWORD:?set MONGO_QUALITY_PASSWORD in onprem/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-thelook}
     command: ["airflow", "scheduler"]
     # Bounded resources (ADR 013): the scheduler hosts the Spark drivers.
     mem_limit: 3g

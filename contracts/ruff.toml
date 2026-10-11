@@ -1,0 +1,4 @@
+# contracts/ runs on Python 3.10, in the Airflow image's datacontract virtualenv
+# (ADR 020): stop ruff from suggesting 3.11+ syntax such as datetime.UTC.
+extend = "../ruff.toml"
+target-version = "py310"

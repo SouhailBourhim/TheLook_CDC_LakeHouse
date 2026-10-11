@@ -79,6 +79,10 @@ upsertRole(web, "reviewsWriter", [
 ]);
 upsertUser(web, "reviewer", env("MONGO_REVIEWER_PASSWORD"), [{ role: "reviewsWriter", db: "web" }]);
 
+// The daily quality report (ADR 020) counts documents to reconcile them with
+// silver: the built-in read role on web, no write.
+upsertUser(web, "quality", env("MONGO_QUALITY_PASSWORD"), [{ role: "read", db: "web" }]);
+
 // --- 3. Collections and indexes ---------------------------------------------
 // Collections are created explicitly so they exist (and are captured) before
 // the first write. events has only the default unique index on _id.
