@@ -2132,11 +2132,52 @@ P7 plan approved (contracts, quality, alerting, schema evolution; 16 steps,
 | 14 | `test(drills): schema breaks are caught` | drills (b) and (c), recovery measured; **P7 acceptance part 1** |
 | 15 | `docs: P7 wrap-up` | README (status, demo P7), runbook (alerts, dead letters, contracts, drill recovery), results, log; **P7 checkpoint** |
 
+### Step 0 (no commit): versions and three checks
+
+- **datacontract-cli 1.2.2** (2026-09-25; 1.2.3 and 1.2.4 were 5-6 days
+  old). Python 3.10-3.14, so it fits the Airflow image's 3.10. Extras used:
+  `athena`.
+- **mongodb_exporter v0.53.0** (Percona, 2026-08-20). The oplog window is
+  `mongodb_mongod_replset_oplog_head_timestamp - ..._tail_timestamp`,
+  exposed only with `--compatible-mode`; read from `local.oplog.rs`, so its
+  user needs `clusterMonitor` **and** `read` on `local` (step 11).
+- **Alertmanager v0.34.1 SNS receiver**: with no `sigv4.access_key`, it
+  loads AWS's default credential chain (read in `notify/sns/sns.go`), so the
+  keys come from the environment (`onprem/.env`). **Found**: the topic ARN
+  holds the account ID, which the repo never commits, and Alertmanager does
+  not expand variables in its config: step 5 renders the config at start
+  (as `start-redis.sh` does for Redis' ACL file).
+- **Drift test on a real table** (`thelook_silver.dist_centers`, Athena,
+  operator profile, scratch copy only):
+
+  | Contract variant | Simulates | `datacontract test` |
+  |---|---|---|
+  | as imported | normal | pass, 16 checks, ~12 s |
+  | without `name` | a new column in the data | **pass: not seen** |
+  | with `not_there` | a column missing from the data | fail |
+  | `latitude` as string | a type change | fail |
+
+  `changelog` and `breaking` do list the added field but exit 0 and mix in
+  server differences. **Decision (Claude, inside FR7)**: our own drift check,
+  contract fields vs Glue columns (`glue:GetTable`; Iceberg keeps Glue's
+  columns in step on every commit), a pure comparison under unit tests.
+- **Also found**: 1.2.2 requires `stagingDir` even with a workgroup that
+  enforces its result location (the docs describe a newer behaviour), and
+  that path holds the account ID: step 2 decides how contracts avoid
+  committing it. The Glue import also writes the account ID into its draft:
+  imports are curated, never committed raw. One contract on a 10-row table
+  took ~12 s (mostly connection and query overhead): 25 contracts run one
+  by one would take ~5 min, which matters for the 30-minute `transform`
+  (step 6).
+- **Debugging lesson**: my first run showed exit 1 for all four variants,
+  including the unchanged one, and my `grep | head` had cut the result
+  column. The error was a connection failure (`s3_staging_dir` missing): no
+  check had run at all. Read the whole output before reading the verdict.
+
 ### Where we stopped (2026-10-11) — LATEST, start here
 
-- P7 planned and approved. **Next: step 0** (versions; does `datacontract
-  test` flag extra columns; Alertmanager SNS credentials from the
-  environment), then step 1 (ADR 020 + spec v2.3). Steps 0-3 need no stack.
+- P7 step 0 done. **Next: step 1** (ADR 020 + spec v2.3, for Souhail's
+  approval), with step 0's findings folded in. Steps 1-3 need no stack.
 
 ### P1 plan (agreed)
 
