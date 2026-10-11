@@ -9,7 +9,7 @@ lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 > features in Redis and co-purchase recommendations from Neo4j, both
 > served by FastAPI. Next is P7 (data contracts, quality, schema
 > evolution). This is a learning project; the full
-> specification is the [cahier des charges](docs/cahier-des-charges.md) (v2.2), the
+> specification is the [cahier des charges](docs/cahier-des-charges.md) (v2.3), the
 > reasoning is in the [ADRs](docs/adr/), measured results in
 > [results](docs/results.md).
 

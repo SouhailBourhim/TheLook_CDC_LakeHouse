@@ -31,6 +31,7 @@ governed, cost-controlled analytics lakehouse
 | 2.0         | 03/10/2026 | Extension for Spark, NoSQL and serving (ADRs 007 to 010): MongoDB becomes a second CDC source and the new home of clickstream `events`, plus a synthetic `reviews` collection; PySpark Structured Streaming replaces the planned Iceberg sink connector as the bronze writer; PySpark batch replaces dbt for silver and gold; new serving layer (Redis online features, Neo4j co-purchase graph, FastAPI); synthetic cart product/price and basket affinity in the generator; milestones renumbered P1 to P10, CI starts in P2. |
 | 2.1         | 09/10/2026 | Online features (FR15, ADR 018): the Redis writer is a separate Spark streaming application in local mode, in its own container, instead of a second query in the bronze streaming job. It needs no AWS identity, cannot slow bronze, and does not compete with the batch jobs for the cluster's cores. FR15: the recently viewed products are those of the last 72 hours (a key's TTL alone did not bound the views inside it). Redis, redis-py and FastAPI versions pinned (5.3). |
 | 2.2         | 10/10/2026 | Co-purchase graph (FR16, ADR 019), decision E2: basket affinity now picks among 5 fixed companion products per product, and the first item of an order follows a popularity skew, so co-purchase weights repeat and can rank (4.3). FR16: pairs counted over all orders, one relationship per pair, full idempotent rebuild without an empty graph. FR17: `limit` parameter and 503. P6 acceptance made exact (companions in the top 5). Neo4j and its Python driver pinned (5.3). |
+| 2.3         | 11/10/2026 | Contracts, quality and alerting (ADR 020): Alertmanager is the single alert hub (Prometheus rules and Airflow failures and quality results), delivered by SNS email, replacing the planned CloudWatch alarms (NFR observability). O8 rewritten (option B): source-to-bronze lag below 2 minutes (p95) at 200 change events/s, measured in P9. FR6: provisional days in the revenue mart. FR7: Kafka topics guarded by Schema Registry, not by datacontract-cli's experimental Kafka test; a drift check compares each contract with the table's columns. datacontract-cli and mongodb_exporter pinned (5.3). |
 
 ## 1. Context and problem
 
@@ -83,7 +84,7 @@ become the figures used on the CV.
 | O5     | Data-deletion request handled                | User erased from every layer and store (PostgreSQL, MongoDB, lake, Redis), including clickstream, in \< 24 hours, with an audit trail; Kafka bounded by topic retention |
 | O6     | Monthly AWS cost                             | \< \$15 at demo volume                                                                                                             |
 | O7     | Reproducibility                              | Whole stack deployed or destroyed with one command                                                                                 |
-| O8     | Throughput                                   | Sustain 200 change events/s (set from the P1 baseline run) with consumer lag \< 30 seconds; find and document the breaking point (in P2) |
+| O8     | Throughput                                   | Sustain 200 change events/s (set from the P1 baseline run) with source-to-bronze lag \< 2 minutes (p95), measured in P9; find and document the breaking point (v2.3: the earlier "consumer lag \< 30 seconds" could not pass with a 60 s trigger) |
 | O9     | Resilience                                   | Every failure drill in FR14 ends with 0 lost and 0 duplicated rows after reconciliation                                            |
 
 ## 3. Scope
@@ -297,6 +298,8 @@ recorded in the phase's ADR or commit.
 | Redis                | 8.10 (8.10.2)                      | Pinned in P5 by digest; core data structures only (bundled modules not loaded); ACL users, AOF (ADR 018) |
 | redis-py, FastAPI    | redis-py 8.1, FastAPI 0.142, pydantic 2.13, uvicorn 0.54 | Pinned in P5 from hashed lock files; the newest release at least a week old |
 | Neo4j                | 2026.08 (2026.08.1) Community      | Pinned in P6 by digest; calendar-versioned line (5.26 is the LTS); Python driver `neo4j` 6.3 (ADR 019) |
+| datacontract-cli     | 1.2 (1.2.2)                        | Pinned in P7; own virtualenv in the Airflow image; tests through Athena (ADR 020) |
+| mongodb_exporter     | 0.53 (0.53.0, Percona)             | Pinned in P7 by digest; `--compatible-mode` for the oplog window (ADR 020) |
 
 ## 6. Functional requirements
 
@@ -434,6 +437,11 @@ One agreed definition for each business metric, documented and tested:
 
 - average product rating and review count, from the reviews collection.
 
+Revenue for recent days can still fall, because returns restate the day
+of the original order. The return window is measured from the data (the
+source defines none) and the daily revenue mart flags the days younger
+than it as provisional (ADR 020).
+
 ### FR7: Data contracts
 
 - One contract per table, written in the **Open Data Contract Standard
@@ -463,6 +471,13 @@ One agreed definition for each business metric, documented and tested:
 - MongoDB documents have no schema at the source; their contracts apply
   to the parsed silver tables, and documents that do not parse go to the
   dead-letter area.
+
+- datacontract-cli checks that each contract field exists with its type,
+  but ignores columns the contract does not list (measured in P7). A drift
+  check compares each contract with the table's columns in the Glue
+  catalog, so a new column is caught too. Kafka topics are guarded by
+  Schema Registry's compatibility rule; datacontract-cli's Kafka test,
+  still experimental, is not used (ADR 020).
 
 ### FR8: Data quality
 
@@ -643,7 +658,7 @@ within about a second.
 | Performance         | Bronze tables partitioned by day; the streaming trigger interval trades freshness against file count; scheduled compaction (the events table matters most); Athena bytes scanned measured before and after optimisation |
 | Security            | The Spark jobs use a dedicated IAM user restricted to the lake bucket and the project's Glue databases (never admin keys); Kafka Connect no longer touches AWS; least-privilege IAM for every other component and least-privilege database users (PostgreSQL and MongoDB); S3 encrypted with KMS; no secrets in the repository (`.env` git-ignored, `.env.example` documented); GitHub Actions authenticates with OIDC |
 | Cost                | AWS Budget alarm; scan limit per Athena query (workgroup); one-command teardown                                                                                                                                                                                            |
-| Observability       | Kafka consumer lag, connector status, replication slot and oplog window monitored (Prometheus and Alertmanager on-prem); Spark streaming progress (batch duration, input and processing rates) monitored; CloudWatch alarms on data freshness, dead-letter volume and Athena usage |
+| Observability       | Kafka consumer lag, connector status, replication slot and oplog window monitored (Prometheus and Alertmanager on-prem); Spark streaming progress (batch duration, input and processing rates) monitored; data freshness, dead letters and failed quality checks alert through the same hub: Alertmanager, delivered by SNS email (ADR 020) |
 | Laptop resources    | Everything runs in Docker Compose profiles (`make up PROFILES=...`), so a subset can run alone; RAM per profile is measured and documented; JVM heaps sized explicitly |
 | Documentation       | README with architecture (Mermaid), design decisions, how to run and demo each phase, cost breakdown, and an operations runbook |
 
