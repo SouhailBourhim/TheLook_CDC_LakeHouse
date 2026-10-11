@@ -4,7 +4,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: thelook-silver-dist_centers
 name: silver.dist_centers
-version: 1.0.0
+version: 1.1.0
 status: active
 domain: thelook
 description:
@@ -48,6 +48,10 @@ schema:
     physicalType: double
     logicalType: number
     required: true
+  - name: manager
+    physicalType: string
+    logicalType: string
+    description: Added at the source by the P7 compatible-column drill (optional, not personal data)
   - name: _position
     physicalType: bigint
     logicalType: integer
