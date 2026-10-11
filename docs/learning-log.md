@@ -2057,7 +2057,7 @@ P6 plan approved (Neo4j co-purchase graph +
   left, not time. (I nearly corrected Souhail from the P1 figure: measure
   first.)
 
-### Where we stopped (2026-10-10, ~23:45 UTC) — LATEST, start here
+### Where we stopped (2026-10-10, ~23:45 UTC)
 
 - **P6 accepted and checkpoint passed.** Everything pushed, CI green.
 - Next session: **P7 plan** (data contracts with datacontract-cli, quality
@@ -2084,6 +2084,59 @@ P6 plan approved (Neo4j co-purchase graph +
   the link's variability; maybe relax the API's Redis `depends_on` to
   `service_started`.
 - Still pending: O8 (leaning B), "provisional days" rule, P7 and P9 ideas.
+
+## Session 12 — 2026-10-11 — P7 planned
+
+P7 plan approved (contracts, quality, alerting, schema evolution; 16 steps,
+0 to 15). Full plan with the design: ADR 020 (step 1).
+
+### Decisions taken (Souhail)
+
+- **Alerts**: Alertmanager is the single hub (Prometheus rules, and Airflow
+  DAG failures and quality results pushed to its API), delivered by its SNS
+  receiver to an email subscription. Rejected: SMTP (a mail secret on the
+  laptop), CloudWatch as the NFR says (two alerting systems), UI only
+  (nobody is told). Spec change in v2.3 (step 1).
+- **Joining P7**: unknown-member alert, MongoDB oplog window alert,
+  provisional days in the revenue mart, and **O8 = option B** (source ->
+  bronze lag < 2 min p95 at 200 events/s, measured in P9): pending since P3.
+
+### Facts checked while planning
+
+- datacontract-cli `test` supports `type: athena` (schema + SQL quality
+  checks, exit 1 on a violation; `workgroup` field since ODCS v3.2.0);
+  checks run inside AWS, so no S3 transfer to the laptop.
+- The `thelook` workgroup enforces its result location; the generator
+  inserts with explicit column lists (an added nullable column cannot break
+  it); `*.tfvars` is git-ignored (the alert email address goes there).
+- No DAG has a failure callback today: a failing `transform` alerts nobody.
+
+### P7 plan (agreed)
+
+| # | Commit | Content / how we verify |
+|---|---|---|
+| 0 | none | Versions (newest at least a week old): datacontract-cli, mongodb_exporter. Check: does `datacontract test` flag a column present in the data but not in the contract? If not, drift = `import --format glue` + compare (`datacontract changelog`). Check Alertmanager's SNS receiver reads AWS keys from the environment |
+| 1 | `docs: ADR 020 contracts, quality and alerting (proposed)` | ADR 020 (above); spec v2.3: NFR alerting -> Alertmanager + SNS, O8 option B, FR6 provisional days, FR7 Kafka-topic note; Souhail approves |
+| 2 | `feat(contracts): silver and gold contracts` | 17 ODCS files; new CI job `datacontract lint contracts/**`; a deliberately broken contract fails lint |
+| 3 | `feat(contracts): bronze schema contracts and drift check` | 8 schema-only contracts + the drift check chosen in step 0 |
+| 4 | `feat(infra): quality identity and alert topic` | Terraform: `thelook-quality`, `thelook-alerts`, SNS topic + email subscription; real denied calls (quality cannot write a layer or use another workgroup; alerts can only publish); subscription confirmed |
+| 5 | `feat(monitoring): alertmanager delivers to sns` | `sns_configs` receiver; a test alert posted to the API arrives by email; `promtool test rules` still green |
+| 6 | `feat(airflow): contract tests on athena` | datacontract venv in the Airflow stage, contracts in the image, scheduler gets the quality key; one manual run of every contract: duration + **Athena bytes scanned** -> the transform/report split |
+| 7 | `feat(spark): dead-letter table` | silver writes `dead_letters`; chispa tests (malformed doc, replay idempotent); its own contract |
+| 8 | `feat(airflow): alert on dag failures` | `on_failure_callback` on every DAG -> Alertmanager; DAG tests (callback wired); a forced failure -> email |
+| 9 | `feat(airflow): quality task in transform` | `quality` after `gold_marts`; DAG tests; one triggered run green |
+| 10 | `feat(airflow): quality_report dag` | least-privilege readers (Postgres role, MongoDB user, read only); freshness, cut-based reconciliation, full contracts, Prometheus health; DAG tests; one run green; a stopped review simulator -> freshness alert |
+| 11 | `feat(monitoring): mongodb oplog window alert` | mongodb_exporter (monitoring profile, clusterMonitor-only user in `onprem/mongo/setup.js`), rule on the oplog window, promtool tests |
+| 12 | `feat(spark): provisional days in the revenue mart` | window measured from silver; `is_provisional`; chispa tests; contract updated |
+| 13 | `test(drills): compatible column flows end to end` | drill (a); **P7 acceptance part 2** |
+| 14 | `test(drills): schema breaks are caught` | drills (b) and (c), recovery measured; **P7 acceptance part 1** |
+| 15 | `docs: P7 wrap-up` | README (status, demo P7), runbook (alerts, dead letters, contracts, drill recovery), results, log; **P7 checkpoint** |
+
+### Where we stopped (2026-10-11) — LATEST, start here
+
+- P7 planned and approved. **Next: step 0** (versions; does `datacontract
+  test` flag extra columns; Alertmanager SNS credentials from the
+  environment), then step 1 (ADR 020 + spec v2.3). Steps 0-3 need no stack.
 
 ### P1 plan (agreed)
 
