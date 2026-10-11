@@ -294,3 +294,24 @@ resource "aws_iam_user_policy_attachment" "analyst" {
 output "analyst_user" {
   value = aws_iam_user.analyst.name
 }
+
+# --- Quality checks (P7, ADR 020): the analyst's read-only rights, own key -----
+# datacontract-cli and the drift check run from Airflow against Athena and
+# Glue. Same policy as the analyst (read-only SQL in the thelook workgroup,
+# Glue read, S3 read on the layers), but a separate user: its key lives in
+# Airflow's environment, rotates and is revoked on its own, and CloudTrail
+# tells the checks from a person. If the analyst policy ever grows, this
+# user grows with it: split them then. Never the batch key (it can write).
+resource "aws_iam_user" "quality" {
+  name = "thelook-quality"
+  path = "/thelook/"
+}
+
+resource "aws_iam_user_policy_attachment" "quality" {
+  user       = aws_iam_user.quality.name
+  policy_arn = aws_iam_policy.analyst.arn
+}
+
+output "quality_user" {
+  value = aws_iam_user.quality.name
+}
