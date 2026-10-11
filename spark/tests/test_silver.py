@@ -434,3 +434,37 @@ def test_the_dead_letter_table_exists_before_any_dead_letter(spark, lake):
     result = process_table(spark, SPECS["order_items"], bronze_db, silver_db)
     assert result["dead_letters"] == 0
     assert spark.table(f"{silver_db}.{DEAD_LETTERS}").count() == 0
+
+
+def test_a_document_with_a_mistyped_field_is_a_dead_letter(spark, lake):
+    # P7 drill (c): Spark parses field by field and nulls what does not fit;
+    # the document must not reach silver with silently missing values.
+    bronze_db, silver_db = lake
+    src = f"{bronze_db}.web_reviews"
+    mistyped = review("r3", rating="five")  # a word where a number is expected
+    append(
+        spark,
+        src,
+        [
+            mongo("c", "r1", 1_000, 1, 1, review("r1")),
+            mongo("c", "r3", 1_000, 2, 2, mistyped),
+        ],
+        MONGO_BRONZE,
+    )
+
+    result = process_table(spark, SPECS["reviews"], bronze_db, silver_db)
+
+    assert result["keys"] == 1 and result["dead_letters"] == 1
+    assert [r.id for r in spark.table(f"{silver_db}.reviews").collect()] == ["r1"]
+    (dead,) = spark.table(f"{silver_db}.{DEAD_LETTERS}").collect()
+    assert dead.record_key == "r3" and '"rating": "five"' in dead.payload
+
+
+def test_an_absent_optional_field_is_not_a_dead_letter(spark):
+    # Cart events carry product_id and price, other events do not: absent is
+    # fine, only present-but-unparseable is a dead letter.
+    doc = review("r4")
+    del doc["tags"]
+    df = spark.createDataFrame([mongo("c", "r4", 1_000, 1, 1, doc)], MONGO_BRONZE)
+    rows, bad = silver_rows(latest_per_key(df, "mongo"), SPECS["reviews"])
+    assert rows.count() == 1 and bad.count() == 0

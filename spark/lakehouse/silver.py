@@ -201,9 +201,20 @@ def silver_rows(latest: DataFrame, spec: TableSpec) -> tuple[DataFrame, DataFram
         business = [f.name for f in latest.schema["_image"].dataType.fields]
     else:
         parsed = latest.withColumn("_doc", F.from_json("_image", spec.json_schema))
-        # Not a delete, yet nothing parsed: not valid JSON for this schema.
-        bad = parsed.where(F.col("_image").isNotNull() & F.col("_doc._id").isNull())
-        good = parsed.where(F.col("_image").isNull() | F.col("_doc._id").isNotNull())
+        # A document that does not fit the schema (FR7): nothing parsed (no
+        # _id), or a field present in the JSON that parsed to null. Spark nulls
+        # a field whose value has the wrong type and keeps the rest of the
+        # document: without this check a mistyped optional field would vanish
+        # silently (P7 drill (c): rating "five", created_at "yesterday").
+        unfit = F.lit(False)
+        for field in spec.json_schema.fields:
+            unfit = unfit | (
+                F.get_json_object("_image", f"$.{field.name}").isNotNull()
+                & F.col(f"_doc.{field.name}").isNull()
+            )
+        is_bad = F.col("_image").isNotNull() & (F.col("_doc._id").isNull() | unfit)
+        bad = parsed.where(is_bad)
+        good = parsed.where(~is_bad)
         typed = good.select("*", *_mongo_columns(spec))
         business = ["id"] + [f.name for f in spec.json_schema.fields if f.name != "_id"]
     row_hash = F.sha2(F.to_json(F.struct(*[F.col(c) for c in business])), 256)
