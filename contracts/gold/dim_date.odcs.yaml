@@ -1,0 +1,70 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-dim_date
+name: gold.dim_date
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Calendar dimension
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: dim_date
+  physicalName: dim_date
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: one row per day from 2020-01-01 to 2030-12-31
+    query: SELECT count(*) FROM dim_date
+    mustBe: 4018
+  properties:
+  - name: date_key
+    physicalType: int
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: date
+    physicalType: date
+    logicalType: date
+    required: true
+  - name: year
+    physicalType: int
+    logicalType: integer
+  - name: quarter
+    physicalType: int
+    logicalType: integer
+  - name: month
+    physicalType: int
+    logicalType: integer
+  - name: month_name
+    physicalType: string
+    logicalType: string
+  - name: day
+    physicalType: int
+    logicalType: integer
+  - name: iso_week
+    physicalType: int
+    logicalType: integer
+  - name: day_name
+    physicalType: string
+    logicalType: string
+  - name: is_weekend
+    physicalType: boolean
+    logicalType: boolean

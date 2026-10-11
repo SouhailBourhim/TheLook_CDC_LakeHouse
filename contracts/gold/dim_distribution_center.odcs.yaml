@@ -1,0 +1,48 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-dim_distribution_center
+name: gold.dim_distribution_center
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Distribution centre dimension
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: dim_distribution_center
+  physicalName: dim_distribution_center
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  properties:
+  - name: distribution_center_id
+    physicalType: bigint
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: name
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: latitude
+    physicalType: double
+    logicalType: number
+  - name: longitude
+    physicalType: double
+    logicalType: number

@@ -1,0 +1,74 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-dim_product
+name: gold.dim_product
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Product dimension
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: dim_product
+  physicalName: dim_product
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  properties:
+  - name: product_id
+    physicalType: bigint
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: name
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: brand
+    physicalType: string
+    logicalType: string
+  - name: category
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: department
+    physicalType: string
+    logicalType: string
+  - name: sku
+    physicalType: string
+    logicalType: string
+  - name: cost
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 10
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: retail_price
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 10
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: distribution_center_id
+    physicalType: bigint
+    logicalType: integer

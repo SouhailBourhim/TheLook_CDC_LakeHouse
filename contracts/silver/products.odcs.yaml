@@ -1,0 +1,93 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-silver-products
+name: silver.products
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Product catalogue (PostgreSQL shop.products)
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_silver
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: products
+  physicalName: products
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: prices are positive
+    query: SELECT count(*) FROM products WHERE retail_price <= 0 OR cost < 0
+    mustBe: 0
+  properties:
+  - name: id
+    physicalType: bigint
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: cost
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 10
+    - property: scale
+      value: 2
+    logicalType: number
+    required: true
+  - name: category
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: name
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: brand
+    physicalType: string
+    logicalType: string
+  - name: retail_price
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 10
+    - property: scale
+      value: 2
+    logicalType: number
+    required: true
+  - name: department
+    physicalType: string
+    logicalType: string
+  - name: sku
+    physicalType: string
+    logicalType: string
+  - name: distribution_center_id
+    physicalType: bigint
+    logicalType: integer
+    required: true
+  - name: _position
+    physicalType: bigint
+    logicalType: integer
+  - name: _source_ts
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: _row_hash
+    physicalType: string
+    logicalType: string
+  - name: _merged_at
+    physicalType: timestamp
+    logicalType: timestamp

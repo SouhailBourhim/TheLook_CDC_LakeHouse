@@ -1,0 +1,68 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-mart_product_ratings
+name: gold.mart_product_ratings
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Rating metrics per product
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: mart_product_ratings
+  physicalName: mart_product_ratings
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: average ratings are 1 to 5
+    query: SELECT count(*) FROM mart_product_ratings WHERE average_rating NOT BETWEEN 1 AND 5
+    mustBe: 0
+  properties:
+  - name: product_id
+    physicalType: bigint
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: review_count
+    physicalType: bigint
+    logicalType: integer
+    required: true
+  - name: average_rating
+    physicalType: double
+    logicalType: number
+    required: true
+  - name: helpful_votes
+    physicalType: bigint
+    logicalType: integer
+  - name: last_review_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: name
+    physicalType: string
+    logicalType: string
+  - name: brand
+    physicalType: string
+    logicalType: string
+  - name: category
+    physicalType: string
+    logicalType: string
+  - name: department
+    physicalType: string
+    logicalType: string

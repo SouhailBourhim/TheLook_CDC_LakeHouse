@@ -1,0 +1,89 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-fct_sessions
+name: gold.fct_sessions
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: One row per clickstream session
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: fct_sessions
+  physicalName: fct_sessions
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: ghost sessions have no user
+    query: SELECT count(*) FROM fct_sessions WHERE is_ghost AND user_id IS NOT NULL
+    mustBe: 0
+  properties:
+  - name: session_id
+    physicalType: string
+    logicalType: string
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: user_id
+    physicalType: string
+    logicalType: string
+  - name: is_ghost
+    physicalType: boolean
+    logicalType: boolean
+    required: true
+  - name: started_at
+    physicalType: timestamp
+    logicalType: timestamp
+    required: true
+  - name: ended_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: event_count
+    physicalType: bigint
+    logicalType: integer
+    required: true
+  - name: viewed_product
+    physicalType: boolean
+    logicalType: boolean
+  - name: added_to_cart
+    physicalType: boolean
+    logicalType: boolean
+  - name: purchased
+    physicalType: boolean
+    logicalType: boolean
+  - name: cart_value
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: traffic_source
+    physicalType: string
+    logicalType: string
+  - name: browser
+    physicalType: string
+    logicalType: string
+  - name: session_date_key
+    physicalType: int
+    logicalType: integer
+  - name: _computed_at
+    physicalType: timestamp
+    logicalType: timestamp

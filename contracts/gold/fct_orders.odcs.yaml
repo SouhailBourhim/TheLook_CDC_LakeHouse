@@ -1,0 +1,142 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-fct_orders
+name: gold.fct_orders
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: 'One row per order (grain: order_id)'
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: fct_orders
+  physicalName: fct_orders
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: no order left on the unknown member for over an hour
+    query: SELECT count(*) FROM fct_orders WHERE user_sk = -1 AND _computed_at < current_timestamp - INTERVAL
+      '1' HOUR
+    mustBe: 0
+  - type: sql
+    description: net amount is gross minus returns
+    query: SELECT count(*) FROM fct_orders WHERE net_amount <> gross_amount - returned_amount
+    mustBe: 0
+  properties:
+  - name: order_id
+    physicalType: string
+    logicalType: string
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: user_id
+    physicalType: string
+    logicalType: string
+  - name: user_sk
+    physicalType: bigint
+    logicalType: integer
+    required: true
+  - name: order_date_key
+    physicalType: int
+    logicalType: integer
+    required: true
+  - name: status
+    physicalType: string
+    logicalType: string
+    required: true
+    quality:
+    - type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - Processing
+        - Shipped
+        - Delivered
+        - Cancelled
+        - Returned
+      mustBe: 0
+  - name: num_of_items
+    physicalType: int
+    logicalType: integer
+  - name: item_count
+    physicalType: bigint
+    logicalType: integer
+  - name: gross_amount
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: returned_amount
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: net_amount
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+    required: true
+  - name: cost_amount
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: is_cancelled
+    physicalType: boolean
+    logicalType: boolean
+  - name: is_returned
+    physicalType: boolean
+    logicalType: boolean
+  - name: created_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: shipped_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: delivered_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: returned_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: cancelled_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: hours_to_ship
+    physicalType: double
+    logicalType: number
+  - name: hours_to_deliver
+    physicalType: double
+    logicalType: number
+  - name: _computed_at
+    physicalType: timestamp
+    logicalType: timestamp

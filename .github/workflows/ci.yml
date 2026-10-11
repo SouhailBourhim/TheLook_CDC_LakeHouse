@@ -1,6 +1,6 @@
 # Continuous integration (spec FR18). Runs on every push and pull request:
-# lint, unit tests (components and PySpark), alert-rule tests. Grows with
-# each phase (terraform fmt/validate and OIDC in P9).
+# lint, unit tests (components and PySpark), alert-rule tests, contract
+# lint. Grows with each phase (terraform fmt/validate and OIDC in P9).
 name: ci
 
 on:
@@ -119,3 +119,21 @@ jobs:
           --entrypoint promtool
           prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
           test rules alerts_test.yml
+
+  contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.20"
+      # Every contract must be valid ODCS (ADR 020). Lint reads the files
+      # only: no AWS access, so CI needs no credentials. The data checks run
+      # in Airflow, against Athena.
+      - run: |
+          status=0
+          for f in contracts/*/*.odcs.yaml; do
+            uvx --python 3.11 --from 'datacontract-cli==1.2.2' datacontract lint "$f" > /tmp/lint.out 2>&1 \
+              || { echo "::error file=$f::invalid contract"; cat /tmp/lint.out; status=1; }
+          done
+          exit $status

@@ -1,0 +1,117 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-silver-events
+name: silver.events
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Clickstream events parsed from MongoDB web.events (schemaless at the source)
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_silver
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: events
+  physicalName: events
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  properties:
+  - name: id
+    physicalType: string
+    logicalType: string
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: user_id
+    physicalType: string
+    logicalType: string
+  - name: sequence_number
+    physicalType: int
+    logicalType: integer
+  - name: session_id
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: ip_address
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: city
+    physicalType: string
+    logicalType: string
+  - name: state
+    physicalType: string
+    logicalType: string
+  - name: postal_code
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: browser
+    physicalType: string
+    logicalType: string
+  - name: traffic_source
+    physicalType: string
+    logicalType: string
+  - name: uri
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: event_type
+    physicalType: string
+    logicalType: string
+    required: true
+    quality:
+    - type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - home
+        - department
+        - category
+        - product
+        - cart
+        - purchase
+        - cancel
+        - return
+      mustBe: 0
+  - name: created_at
+    physicalType: timestamp
+    logicalType: timestamp
+    required: true
+  - name: product_id
+    physicalType: bigint
+    logicalType: integer
+  - name: price
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 10
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: _position
+    physicalType: bigint
+    logicalType: integer
+  - name: _source_ts
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: _row_hash
+    physicalType: string
+    logicalType: string
+  - name: _merged_at
+    physicalType: timestamp
+    logicalType: timestamp

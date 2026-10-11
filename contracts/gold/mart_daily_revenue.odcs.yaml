@@ -1,0 +1,106 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-mart_daily_revenue
+name: gold.mart_daily_revenue
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Revenue metrics per order day (FR6 definitions, ADR 015)
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: mart_daily_revenue
+  physicalName: mart_daily_revenue
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: net revenue is gross minus returns
+    query: SELECT count(*) FROM mart_daily_revenue WHERE net_revenue <> gross_revenue - returns
+    mustBe: 0
+  - type: sql
+    description: rates are between 0 and 1
+    query: SELECT count(*) FROM mart_daily_revenue WHERE cancellation_rate NOT BETWEEN 0 AND 1 OR return_rate
+      NOT BETWEEN 0 AND 1
+    mustBe: 0
+  properties:
+  - name: date_key
+    physicalType: int
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: date
+    physicalType: date
+    logicalType: date
+  - name: orders
+    physicalType: bigint
+    logicalType: integer
+    required: true
+  - name: cancelled_orders
+    physicalType: bigint
+    logicalType: integer
+  - name: gross_revenue
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+    required: true
+  - name: returns
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: net_revenue
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+    required: true
+  - name: gross_margin
+    physicalType: double
+    logicalType: number
+  - name: average_order_value
+    physicalType: decimal
+    customProperties:
+    - property: precision
+      value: 12
+    - property: scale
+      value: 2
+    logicalType: number
+  - name: cancellation_rate
+    physicalType: double
+    logicalType: number
+  - name: return_rate
+    physicalType: double
+    logicalType: number
+  - name: median_hours_to_ship
+    physicalType: double
+    logicalType: number
+  - name: median_hours_to_deliver
+    physicalType: double
+    logicalType: number

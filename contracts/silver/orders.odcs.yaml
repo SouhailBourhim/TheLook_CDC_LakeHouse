@@ -1,0 +1,104 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-silver-orders
+name: silver.orders
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Current state of each order (PostgreSQL shop.orders)
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_silver
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: orders
+  physicalName: orders
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: an order holds 1 to 4 items
+    query: SELECT count(*) FROM orders WHERE num_of_items NOT BETWEEN 1 AND 4
+    mustBe: 0
+  - type: sql
+    description: cancelled orders carry their cancellation time
+    query: SELECT count(*) FROM orders WHERE status = 'Cancelled' AND cancelled_at IS NULL
+    mustBe: 0
+  - type: sql
+    description: returned orders carry their return time
+    query: SELECT count(*) FROM orders WHERE status = 'Returned' AND returned_at IS NULL
+    mustBe: 0
+  properties:
+  - name: id
+    physicalType: string
+    logicalType: string
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: user_id
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: status
+    physicalType: string
+    logicalType: string
+    required: true
+    quality:
+    - type: library
+      metric: invalidValues
+      arguments:
+        validValues:
+        - Processing
+        - Shipped
+        - Delivered
+        - Cancelled
+        - Returned
+      mustBe: 0
+  - name: num_of_items
+    physicalType: int
+    logicalType: integer
+    required: true
+  - name: created_at
+    physicalType: timestamp
+    logicalType: timestamp
+    required: true
+  - name: updated_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: returned_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: shipped_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: delivered_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: cancelled_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: _position
+    physicalType: bigint
+    logicalType: integer
+  - name: _source_ts
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: _row_hash
+    physicalType: string
+    logicalType: string
+  - name: _merged_at
+    physicalType: timestamp
+    logicalType: timestamp

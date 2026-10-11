@@ -1,0 +1,64 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-mart_session_funnel
+name: gold.mart_session_funnel
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Session funnel per day, ghost sessions excluded from conversion
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: mart_session_funnel
+  physicalName: mart_session_funnel
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: conversion is between 0 and 1
+    query: SELECT count(*) FROM mart_session_funnel WHERE conversion_rate NOT BETWEEN 0 AND 1
+    mustBe: 0
+  properties:
+  - name: date_key
+    physicalType: int
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: sessions
+    physicalType: bigint
+    logicalType: integer
+    required: true
+  - name: viewed_product
+    physicalType: bigint
+    logicalType: integer
+  - name: added_to_cart
+    physicalType: bigint
+    logicalType: integer
+  - name: purchased
+    physicalType: bigint
+    logicalType: integer
+  - name: ghost_sessions
+    physicalType: bigint
+    logicalType: integer
+  - name: conversion_rate
+    physicalType: double
+    logicalType: number
+  - name: date
+    physicalType: date
+    logicalType: date

@@ -1,0 +1,117 @@
+# ODCS data contract (ADR 020). Drafted from the Glue catalog with
+# `datacontract import glue`, then curated. Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-gold-dim_user
+name: gold.dim_user
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: 'User versions, SCD2 (FR4): one row per version of a user'
+  limitations: Synthetic data (theLook generator); see docs/source-schema.md
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: awsdatacatalog
+  schema: thelook_gold
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: dim_user
+  physicalName: dim_user
+  physicalType: table
+  quality:
+  - type: library
+    metric: rowCount
+    mustBeGreaterThan: 0
+  - type: sql
+    description: exactly one unknown member (user_sk = -1)
+    query: SELECT count(*) FROM dim_user WHERE user_sk = -1
+    mustBe: 1
+  - type: sql
+    description: at most one current version per user
+    query: SELECT count(*) FROM (SELECT user_id FROM dim_user WHERE is_current GROUP BY user_id HAVING
+      count(*) > 1)
+    mustBe: 0
+  - type: sql
+    description: versions have a positive duration
+    query: SELECT count(*) FROM dim_user WHERE valid_to <= valid_from AND user_sk <> -1
+    mustBe: 0
+  properties:
+  - name: user_sk
+    physicalType: bigint
+    logicalType: integer
+    primaryKey: true
+    primaryKeyPosition: 1
+    required: true
+    unique: true
+  - name: user_id
+    physicalType: string
+    logicalType: string
+  - name: first_name
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: last_name
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: email
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: age
+    physicalType: int
+    logicalType: integer
+  - name: gender
+    physicalType: string
+    logicalType: string
+  - name: street_address
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: postal_code
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: city
+    physicalType: string
+    logicalType: string
+  - name: state
+    physicalType: string
+    logicalType: string
+  - name: country
+    physicalType: string
+    logicalType: string
+  - name: latitude
+    physicalType: double
+    logicalType: number
+    classification: pii
+  - name: longitude
+    physicalType: double
+    logicalType: number
+    classification: pii
+  - name: traffic_source
+    physicalType: string
+    logicalType: string
+  - name: created_at
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: valid_from
+    physicalType: timestamp
+    logicalType: timestamp
+    required: true
+  - name: valid_to
+    physicalType: timestamp
+    logicalType: timestamp
+    required: true
+  - name: is_current
+    physicalType: boolean
+    logicalType: boolean
+  - name: version
+    physicalType: int
+    logicalType: integer
