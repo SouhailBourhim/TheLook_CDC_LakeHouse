@@ -97,6 +97,8 @@ def test_daily_revenue_follows_the_written_definitions(spark):
     assert row.cancellation_rate == 0.3333  # 1 / 3
     assert row.return_rate == 0.3333  # 1 returned / 3 items that reached the customer
     assert row.date == datetime.date(2026, 10, 4)
+    # Revenue of this day can fall until no return can arrive (14 days).
+    assert row.provisional_until == datetime.date(2026, 10, 18)
 
 
 def test_funnel_excludes_ghost_sessions(spark):
@@ -193,3 +195,12 @@ def test_marts_recompute_only_the_days_touched_since_the_last_run(spark, lake):
         for r in spark.table(f"{gold}.mart_daily_revenue").collect()
     }
     assert revenue == {D1: money("40.00"), D2: money("3.00")}
+
+    # Days written before provisional_until existed get it from their date,
+    # though the mart does not recompute them.
+    spark.sql(f"UPDATE {gold}.mart_daily_revenue SET provisional_until = NULL")
+    build_marts(spark, gold, silver_db=gold)
+    rows = spark.table(f"{gold}.mart_daily_revenue").collect()
+    assert all(
+        r.provisional_until == r.date + datetime.timedelta(days=14) for r in rows
+    )

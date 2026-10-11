@@ -587,6 +587,14 @@ def _ratio(numerator, denominator):
     return F.when(denominator > 0, F.round((numerator / denominator).cast("double"), 4))
 
 
+# Returns restate the day of the original order (spec 8.4), so a day's revenue
+# can still fall until no return can arrive any more. The source defines no
+# return window; measured in silver (P7 step 12, 515 returns): order to return
+# p50 4.2 days, p99 10.9, max 11.1, on 12 days of history, so right-censored
+# (longer delays cannot be observed yet). Two weeks; re-measure as data ages.
+RETURN_WINDOW_DAYS = 14
+
+
 def daily_revenue(orders: DataFrame, items: DataFrame) -> DataFrame:
     """mart_daily_revenue: one row per order day, every metric as defined
     once in ADR 015 (gross excludes cancelled items, net = gross - returns,
@@ -627,6 +635,13 @@ def daily_revenue(orders: DataFrame, items: DataFrame) -> DataFrame:
         ),
         "median_hours_to_ship",
         "median_hours_to_deliver",
+        # A function of the day only, so a recompute writes the same value:
+        # readers compare it with today (provisional_until > current_date).
+        # A stored flag would go stale on days the mart does not recompute.
+        F.date_add(
+            F.to_date(F.col("order_date_key").cast("string"), "yyyyMMdd"),
+            RETURN_WINDOW_DAYS,
+        ).alias("provisional_until"),
     )
 
 
@@ -727,6 +742,13 @@ def build_marts(
             items.join(days, "order_date_key", "left_semi"),
         )
         merge_mart(spark, t, rows, "date_key", newest)
+    if spark.catalog.tableExists(t):
+        # Days written before the column existed: fill it from their date
+        # (idempotent; one row per day, a tiny table).
+        spark.sql(
+            f"UPDATE {t} SET provisional_until = date_add(date, {RETURN_WINDOW_DAYS}) "
+            "WHERE provisional_until IS NULL"
+        )
     result["mart_daily_revenue_days"] = days.count()
     days.unpersist()
 

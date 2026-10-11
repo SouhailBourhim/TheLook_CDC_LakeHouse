@@ -4,7 +4,7 @@ apiVersion: v3.2.0
 kind: DataContract
 id: thelook-gold-mart_daily_revenue
 name: gold.mart_daily_revenue
-version: 1.0.0
+version: 1.1.0
 status: active
 domain: thelook
 description:
@@ -36,6 +36,10 @@ schema:
     description: rates are between 0 and 1
     query: SELECT count(*) FROM mart_daily_revenue WHERE cancellation_rate NOT BETWEEN 0 AND 1 OR return_rate
       NOT BETWEEN 0 AND 1
+    mustBe: 0
+  - type: sql
+    description: provisional until the order day plus the 14-day return window
+    query: SELECT count(*) FROM mart_daily_revenue WHERE provisional_until <> date_add('day', 14, date)
     mustBe: 0
   properties:
   - name: date_key
@@ -104,3 +108,9 @@ schema:
   - name: median_hours_to_deliver
     physicalType: double
     logicalType: number
+  - name: provisional_until
+    physicalType: date
+    logicalType: date
+    required: true
+    description: 'Order day + the return window (14 days): until then returns can still lower this day''s
+      revenue'
