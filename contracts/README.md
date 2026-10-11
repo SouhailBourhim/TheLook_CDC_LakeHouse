@@ -6,7 +6,7 @@ truth for what each table must look like (spec FR7).
 
 | Layer | Contracts | What they check |
 |---|---|---|
-| `silver/` | 7 | schema, primary key, required fields, PII tags, quality rules (accepted statuses, value ranges, timestamps that must follow a status) |
+| `silver/` | 8 (7 tables and `dead_letters`) | schema, primary key, required fields, PII tags, quality rules (accepted statuses, value ranges, timestamps that must follow a status) |
 | `gold/` | 10 | the same, plus relationships (facts to dimensions), metric identities (net = gross - returns) and the unknown member rule |
 | `bronze/` | 8 | schema only (7 change-event tables and the batch ledger), to catch drift |
 

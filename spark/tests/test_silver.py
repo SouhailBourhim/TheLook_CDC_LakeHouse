@@ -10,14 +10,17 @@ from pyspark.sql import functions as F
 
 from lakehouse.bronze import record_batch
 from lakehouse.silver import (
+    DEAD_LETTERS,
     SNAPSHOT_WATERMARK,
     SPECS,
     WATERMARK,
     consistent_cut,
+    dead_letter_rows,
     latest_per_key,
     merge_sql,
     process_table,
     silver_rows,
+    write_dead_letters,
 )
 
 ITEM = (
@@ -367,3 +370,67 @@ def test_a_snapshot_id_watermark_is_migrated_without_a_full_read(spark, lake):
 
     result = process_table(spark, spec, bronze_db, silver_db)
     assert not result["full_read"] and result["keys"] == 1  # only b
+
+
+# --- dead letters (ADR 020) ---------------------------------------------------------
+
+BAD_REVIEW = (
+    "c",
+    1_001,
+    T0,
+    1_001,
+    "false",
+    "t",
+    0,
+    2,
+    T0,
+    21,
+    T0,
+    "r2",
+    1,
+    "{not json",
+)
+
+
+def test_unparseable_documents_go_to_dead_letters(spark, lake):
+    bronze_db, silver_db = lake
+    src = f"{bronze_db}.web_reviews"
+    append(
+        spark,
+        src,
+        [mongo("c", "r1", 1_000, 1, 1, review("r1")), BAD_REVIEW],
+        MONGO_BRONZE,
+    )
+
+    result = process_table(spark, SPECS["reviews"], bronze_db, silver_db)
+
+    assert result["keys"] == 1 and result["dead_letters"] == 1
+    (dead,) = spark.table(f"{silver_db}.{DEAD_LETTERS}").collect()
+    assert (dead.source_table, dead.record_key, dead.payload) == (
+        "reviews",
+        "r2",
+        "{not json",
+    )
+    assert dead.position == 1_001 * 1_000_000 + 1
+
+
+def test_a_replayed_dead_letter_is_not_added_twice(spark, lake):
+    _, silver_db = lake
+    table = f"{silver_db}.{DEAD_LETTERS}"
+    df = spark.createDataFrame([BAD_REVIEW], MONGO_BRONZE)
+    bad = silver_rows(latest_per_key(df, "mongo"), SPECS["reviews"])[1]
+    rows = dead_letter_rows(bad, SPECS["reviews"], "test")
+
+    write_dead_letters(spark, table, rows)
+    write_dead_letters(spark, table, rows)
+
+    assert spark.table(table).count() == 1
+
+
+def test_the_dead_letter_table_exists_before_any_dead_letter(spark, lake):
+    # Its contract is checked every run: an absent table would fail it.
+    bronze_db, silver_db = lake
+    append(spark, f"{bronze_db}.shop_order_items", [pg("c", "a", 100, 1)], PG_BRONZE)
+    result = process_table(spark, SPECS["order_items"], bronze_db, silver_db)
+    assert result["dead_letters"] == 0
+    assert spark.table(f"{silver_db}.{DEAD_LETTERS}").count() == 0

@@ -1,0 +1,60 @@
+# ODCS data contract (ADR 020). Written by hand (the table is created by the
+# silver job, lakehouse.silver.write_dead_letters). Source of truth for this table.
+apiVersion: v3.2.0
+kind: DataContract
+id: thelook-silver-dead_letters
+name: silver.dead_letters
+version: 1.0.0
+status: active
+domain: thelook
+description:
+  purpose: Records silver could not type (MongoDB documents whose JSON does not fit the table), kept
+    with their raw payload instead of being dropped (FR7)
+  limitations: Holds raw source payloads, personal data included; P8's erasure must cover it
+team:
+- username: souhail
+  role: owner
+servers:
+- server: athena
+  type: athena
+  catalog: AwsDataCatalog
+  schema: thelook_silver
+  regionName: us-east-1
+  workgroup: thelook
+schema:
+- name: dead_letters
+  physicalName: dead_letters
+  physicalType: table
+  quality:
+  - type: sql
+    description: no dead letter detected in the last hour (any is an alert)
+    query: SELECT count(*) FROM dead_letters WHERE detected_at > current_timestamp - INTERVAL '1' HOUR
+    mustBe: 0
+  properties:
+  - name: source_table
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: record_key
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: position
+    physicalType: bigint
+    logicalType: integer
+    required: true
+  - name: source_ts
+    physicalType: timestamp
+    logicalType: timestamp
+  - name: payload
+    physicalType: string
+    logicalType: string
+    classification: pii
+  - name: reason
+    physicalType: string
+    logicalType: string
+    required: true
+  - name: detected_at
+    physicalType: timestamp
+    logicalType: timestamp
+    required: true

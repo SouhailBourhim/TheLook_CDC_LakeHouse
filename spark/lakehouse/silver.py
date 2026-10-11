@@ -327,6 +327,48 @@ def add_new_columns(spark: SparkSession, table: str, rows: DataFrame) -> list[st
     return added
 
 
+# --- dead letters (FR7, ADR 020) --------------------------------------------------
+
+DEAD_LETTERS = "dead_letters"
+DEAD_LETTERS_SCHEMA = (
+    "source_table string, record_key string, position bigint, source_ts timestamp, "
+    "payload string, reason string, detected_at timestamp"
+)
+
+
+def dead_letter_rows(bad: DataFrame, spec: TableSpec, reason: str) -> DataFrame:
+    """Records silver could not type, kept with their raw payload instead of
+    being dropped (MongoDB documents whose JSON does not fit the table)."""
+    return bad.select(
+        F.lit(spec.name).alias("source_table"),
+        F.col("_key").cast("string").alias("record_key"),
+        F.col("_position").alias("position"),
+        F.col("_source_ts").alias("source_ts"),
+        F.col("_image").cast("string").alias("payload"),
+        F.lit(reason).alias("reason"),
+        F.current_timestamp().alias("detected_at"),
+    )
+
+
+def write_dead_letters(spark: SparkSession, table: str, rows: DataFrame) -> int:
+    """Create the table if missing (its contract needs it to exist), then add
+    the rows not already there: a record is identified by its table, key and
+    log position, so a replayed run adds nothing. Returns the rows given."""
+    if not spark.catalog.tableExists(table):
+        spark.createDataFrame([], DEAD_LETTERS_SCHEMA).writeTo(table).using(
+            "iceberg"
+        ).tableProperty("format-version", "2").create()
+    count = rows.count()
+    if count:
+        rows.createOrReplaceTempView("dead_letter_source")
+        spark.sql(
+            f"MERGE INTO {table} t USING dead_letter_source s "
+            "ON t.source_table = s.source_table AND t.record_key = s.record_key "
+            "AND t.position = s.position WHEN NOT MATCHED THEN INSERT *"
+        )
+    return count
+
+
 def process_table(
     spark: SparkSession,
     spec: TableSpec,
@@ -353,6 +395,13 @@ def process_table(
         latest = latest_per_key(increment, spec.source)
         rows, bad = silver_rows(latest, spec)
         rows = rows.persist()
+        # Before the MERGE: a crash between the two is replayed, and the
+        # dead letters' own MERGE then adds nothing.
+        dead = write_dead_letters(
+            spark,
+            f"{silver_db}.{DEAD_LETTERS}",
+            dead_letter_rows(bad, spec, "JSON does not fit the table's schema"),
+        )
         if not spark.catalog.tableExists(target):
             create_table(spark, target, rows, spec)
         added = add_new_columns(spark, target, rows)
@@ -372,7 +421,7 @@ def process_table(
             "table": spec.name,
             "status": "merged",
             "keys": rows.count(),
-            "bad_json": bad.count(),
+            "dead_letters": dead,
             "new_columns": added,
             "bronze_snapshot": upto,
             "ingested_upto": newest.isoformat(),
