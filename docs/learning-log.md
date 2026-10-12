@@ -2349,7 +2349,7 @@ P8 plan approved (GDPR erasure, backfill, failure drills; 15 steps, 0 to
 - 2: eraser users (PostgreSQL role, MongoDB user, Redis ACL), each tested:
   deletes allowed, everything else refused.
 
-### Where we stopped (2026-10-12, usage limit) — LATEST, start here
+### Where we stopped (2026-10-12, usage limit)
 
 - **Next: step 3**, the bronze purge in the stream. Design notes found
   while reading `jobs/bronze_stream.py`:
@@ -2367,6 +2367,59 @@ P8 plan approved (GDPR erasure, backfill, failure drills; 15 steps, 0 to
   - adding a topic to a checkpointed query's subscription: new partitions
     start from earliest; back up the bronze checkpoint volume before deploying.
 - Then steps 4-14 as planned. Stack down.
+
+
+### P8 step 3 (2026-10-13): the bronze purge in the stream
+
+- `lakehouse/erasure.py`: parse a request (JSON; the user id must be a
+  canonical lowercase UUID, anything else is refused, never raised: a raise
+  would make the replay fail forever); find every key holding the user,
+  then delete by key; stamp; expire; one `erasure_log` row per request
+  (request id, sha256 of the user id, rows deleted per table).
+- **Delete by key, not by user id.** Orders → their ids; items → ids of
+  items whose order id is one of those; events/reviews → `doc_id` of
+  documents whose `$.user_id` matches. This also removes Debezium delete
+  events (`before` holds only the key) and MongoDB deletes. ADR 021's "delete
+  events are not purged" became "they go too".
+- **Keys go in as a DataFrame**, read by the DELETE as a subquery
+  (`spark.sql("... IN (SELECT k FROM {keys})", keys=df)`): no key is ever
+  text inside the SQL.
+- **Finding: expiry would break the replay guard.** `keep_last=1` keeps only
+  the DELETE's snapshot, which has no batch marks (PySpark cannot set
+  snapshot properties on an SQL statement); the append snapshot that held
+  them goes. A replay of the batch would then append its rows twice. Fix:
+  an empty Iceberg commit carrying the marks (`newAppend().set(...)`) before
+  the expiry. Test: `test_the_batch_mark_survives_the_expiry`.
+- **Finding: `deleted-records` is not rows deleted.** Copy-on-write counts
+  every record of the files it replaced (other users' rows written back
+  included). The count is `total-records` of the parent minus the DELETE's.
+- Stream: requests are split off before the Avro path (not counted as bad
+  frames); the purge runs after the appends and before the ledger row, while
+  holding the upkeep lock (a compaction committing during the DELETE would
+  fail one of them). `erasure_log` is expired with the other bronze tables.
+- `make erasure-topic`: 1 partition, **3 days** retention (requests hold a
+  user id: no longer than the CDC topics, O5).
+- Real stack: adding the topic to the checkpointed query worked (Spark:
+  "Partitions added: erasure-requests-0 -> 0"); a malformed request was
+  refused, the batch went on. Checkpoint backed up first.
+- **Cost measured:** a batch with one request (a user with no rows) took
+  995 s, then 867 s after a substring prefilter on the JSON and dropping a
+  count scan. My first diagnosis (JSON parsing) was mostly wrong: the bulk
+  is reading `web_events`' JSON column from S3 (448 s). O1 is missed for
+  that one batch per request (ADR 021 consequence).
+- By accident, a drill: restarting the stream mid-batch 1697 → the replay
+  skipped the 4 tables already committed and appended only the fifth.
+
+**Open question for Souhail:** accept the one-batch O1 miss per erasure
+request, or move the key lookup to a background thread (reads are safe
+beside appends; only the DELETE stays in the batch)? Recommendation:
+accept now (requests are rare, O5 is 24 h), revisit if O1 alerts bother.
+
+### Where we stopped (2026-10-13) — LATEST, start here
+
+- Step 3 done. **Next: step 4**, `jobs/erase.py` (silver and gold purge).
+- Check in step 6 on S3: a real purge's rewrites and expiry under the
+  stream's identity (only exercised locally so far).
 
 ### P1 plan (agreed)
 
