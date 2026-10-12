@@ -2339,11 +2339,34 @@ P8 plan approved (GDPR erasure, backfill, failure drills; 15 steps, 0 to
 | 13 | `test(drills): neo4j frozen` | `docker pause neo4j` (Souhail's idea): API answers 503 within ~2 s, `/ready` names neo4j, recovers on unpause. **Part 3** (with 10-12) |
 | 14 | `docs: P8 wrap-up` | README, runbook (erasure procedure, backfill, drills), results, log; **P8 checkpoint** |
 
-### Where we stopped (2026-10-12) — LATEST, start here
+### P8 steps 0-2 (2026-10-12)
 
-- P8 planned. **Next: step 0** (checks: Airflow 3 backfill on a paused DAG,
-  Iceberg delete + expiry removes files, Redis ACL for DEL, pick test
-  users), then step 1 (ADR 021 for Souhail's approval). Stack down.
+- 0: Airflow 3 has `backfill create` (`--reprocess-behavior completed` to
+  rerun days already done).
+- 1: ADR 021 **proposed** (awaits Souhail); ADR 017 amended. Found while
+  writing it: the bronze purge must commit before the batch's ledger row,
+  so silver never reads an expired snapshot.
+- 2: eraser users (PostgreSQL role, MongoDB user, Redis ACL), each tested:
+  deletes allowed, everything else refused.
+
+### Where we stopped (2026-10-12, usage limit) — LATEST, start here
+
+- **Next: step 3**, the bronze purge in the stream. Design notes found
+  while reading `jobs/bronze_stream.py`:
+  - split each batch by topic: requests (plain JSON) must not reach the
+    Avro decoding (they would count as bad frames);
+  - purge after the CDC appends, before `record_batch` (the ledger row);
+    replay guard on `thelook_bronze.erasure_log` (`already_committed`);
+    `upkeep.expire(spark, table, older_than=purge time, keep_last=1)`;
+  - order items: find the user's order ids, then item ids, then delete by
+    `coalesce(after.id, before.id)`; validate user ids as UUIDs (no SQL
+    injection);
+  - **the DAG must wait until bronze has passed the source deletion**
+    (ledger-consistent, like `report.wait_for_bronze`) before publishing the
+    request, or a change still in Kafka would land after the purge;
+  - adding a topic to a checkpointed query's subscription: new partitions
+    start from earliest; back up the bronze checkpoint volume before deploying.
+- Then steps 4-14 as planned. Stack down.
 
 ### P1 plan (agreed)
 
