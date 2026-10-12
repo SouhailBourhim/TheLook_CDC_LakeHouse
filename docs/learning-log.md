@@ -2278,7 +2278,7 @@ P7 plan approved (contracts, quality, alerting, schema evolution; 16 steps,
   resolve_timeout would "resolve" it; deterministic checks are not retried).
 - **P7 closed on 2026-10-12.**
 
-### Where we stopped (2026-10-12) — LATEST, start here
+### Where we stopped (2026-10-12)
 
 - **P7 done and its checkpoint passed.** Stack down.
 - Next: P8 plan (GDPR erasure incl. dead letters and the drill rows,
@@ -2286,6 +2286,64 @@ P7 plan approved (contracts, quality, alerting, schema evolution; 16 steps,
 - P9 list grew: maintenance's per-table retries and DNS hardening (it held
   the lake slot 30 min on 10-11), Spark streaming metrics in Prometheus,
   features-stream alerts, the heartbeat liveness table.
+
+## Session 13 — 2026-10-12 — P8 planned
+
+P8 plan approved (GDPR erasure, backfill, failure drills; 15 steps, 0 to
+14).
+
+### Decision taken (Souhail)
+
+- **The bronze stream purges bronze itself.** The `gdpr_erasure` DAG
+  publishes the request to a Kafka topic (`thelook.erasure-requests`); the
+  stream, bronze's only writer, reads it with its own identity, purges and
+  expires the user's rows, and acknowledges in `thelook_bronze.erasure_log`;
+  the DAG waits. ADR 017's invariant holds (no key that can delete bronze in
+  Airflow). Rejected: a dedicated erasure user in Airflow (a leaked Airflow
+  env could wipe the unrebuildable layer), a manual bronze step (O5 would
+  depend on a person; FR12 wants the DAG to do it).
+
+### The erasure map (where a user's data lives)
+
+| Place | What | How it is cleaned |
+|---|---|---|
+| PostgreSQL | `shop.users`, `orders` (user_id), `order_items` (via order ids), legacy `shop.events` (P1) | DELETE, role `eraser` (DELETE on those tables only). Debezium deletes carry the key only (REPLICA IDENTITY DEFAULT, P1) |
+| MongoDB | `web.events`, `web.reviews` (user_id; events hold IPs) | deleteMany, user `eraser` (remove on those collections only) |
+| Kafka | change events up to 3 days old | bounded by retention (O5 says so); documented, not purged |
+| Bronze (7 tables) | every past image: `shop_users` (id), `shop_orders` (user_id), `shop_order_items` (order ids), `web_events` / `web_reviews` (`$.user_id` in the JSON) | the stream: DELETE (copy-on-write), then expire snapshots, so old files are physically removed |
+| Silver | users, orders, order_items, events, reviews, **dead_letters** (raw payloads) | batch job: DELETE, compaction applying the deletes, expiry (merge-on-read: a DELETE alone writes delete files, the data stays) |
+| Gold | dim_user (SCD2), fct_order_items, fct_orders, fct_sessions | same; marts are aggregates and are kept (FR9) |
+| Time travel | older snapshots of every table above | expire every snapshot older than the purge on the affected tables |
+| Redis | `user:{id}:*` | DEL, ACL user `eraser` (`~user:*`, `+del +scan`) |
+| Neo4j | products only | nothing (ADR 010) |
+| Athena results, logs | query outputs (S3 lifecycle: 7 days); our jobs log counts, not ids | bounded; documented |
+| Feature rebuild | a rebuild from Kafka within 3 days would re-create keys | documented: rerun the Redis step after a rebuild in that window |
+
+### P8 plan (agreed)
+
+| # | Commit | Content / how we verify |
+|---|---|---|
+| 0 | none | Checks: Airflow 3 `backfill create` on a paused DAG; Iceberg DELETE on bronze (copy-on-write) then expiry removes the files (local test); Redis ACL for `DEL` on a pattern; how many users have orders, events, reviews and Redis keys (pick test users) |
+| 1 | `docs: ADR 021 erasure and backfill (proposed)` | ADR 021 (above), ADR 017 amendment (the stream also applies erasure requests), spec v2.4 if wording changes; Souhail approves |
+| 2 | `feat(onprem): eraser roles` | Postgres role, MongoDB user, Redis ACL user; allowed and denied operations tested |
+| 3 | `feat(spark): bronze purge in the stream` | `lakehouse/erasure.py` (pure: which rows a user owns) + stream wiring + `erasure_log`; chispa/Iceberg tests: purge, replay adds nothing, expiry leaves no old snapshot |
+| 4 | `feat(spark): silver and gold purge` | `jobs/erase.py`; tests on a local catalog: rows gone, compaction applied, time travel to a pre-purge snapshot fails |
+| 5 | `feat(airflow): gdpr_erasure dag` | DAG + `request_erasure.py`; DAG tests; Kafka topic created like `thelook.signals` |
+| 6 | `test(drills): erasure verified everywhere` | `verify_erasure.py`; erase a real user with orders, events, reviews and Redis keys; every place 0, time travel gone, audit rows, duration (O5 < 24 h). **P8 acceptance part 1** |
+| 7 | `feat(spark): gold rebuild for a day range` | `lakehouse/gold.py` day-range facts and marts; tests (rerun = same rows) |
+| 8 | `feat(airflow): backfill dag` | DAG tests; one `backfill create` over 2 days |
+| 9 | `test(drills): backfill repairs a logic bug` | working-tree patch counts returns as revenue (never committed); backfill 3 days; the `mart_daily_revenue` contract rule catches it; revert, backfill again; values equal the pre-bug snapshot (Iceberg time travel), unique keys hold. **Part 2** |
+| 10 | `test(drills): connect and kafka restarts` | kill the Connect worker mid-stream; restart Kafka under load; reconcile 0 lost / 0 duplicated |
+| 11 | `test(drills): debezium stopped for an hour` | WAL grows, ReplicationSlotInactive fires (and emails), resume, catch-up, reconcile |
+| 12 | `test(drills): offsets reset and stream killed` | reset connector offsets (replay: bronze duplicates, silver unchanged); kill the bronze stream mid-batch (no duplicate append) |
+| 13 | `test(drills): neo4j frozen` | `docker pause neo4j` (Souhail's idea): API answers 503 within ~2 s, `/ready` names neo4j, recovers on unpause. **Part 3** (with 10-12) |
+| 14 | `docs: P8 wrap-up` | README, runbook (erasure procedure, backfill, drills), results, log; **P8 checkpoint** |
+
+### Where we stopped (2026-10-12) — LATEST, start here
+
+- P8 planned. **Next: step 0** (checks: Airflow 3 backfill on a paused DAG,
+  Iceberg delete + expiry removes files, Redis ACL for DEL, pick test
+  users), then step 1 (ADR 021 for Souhail's approval). Stack down.
 
 ### P1 plan (agreed)
 
