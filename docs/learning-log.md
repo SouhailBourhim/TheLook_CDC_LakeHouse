@@ -2261,10 +2261,26 @@ P7 plan approved (contracts, quality, alerting, schema evolution; 16 steps,
 - **P7 acceptance: passed** on (a) and (b). Wrap-up committed, then
   `make down` (Souhail's instruction).
 
+### P7 checkpoint (passed, 2026-10-12)
+
+- (1) Unlisted column: correct (drift.py vs Glue; drill (a)). **Precision**:
+  erasure deletes a user's *rows*, so an unlisted column in them goes too;
+  the risk is governance (FR11 masks tagged columns: an untagged phone would
+  show in clear) and losing track of where personal data lives. The bronze
+  contract did not see `manager` (nested in `after`; drift compares
+  top-level columns): silver caught it.
+- (2) Cost: correct (query count x Athena's 10 MB minimum).
+- (3) The two races: correct and complete (one consistent snapshot per read).
+- (4) Failed recovery: correct. **Error in detail**: `USING
+  latitude::double precision` fails on row 2 ('not a number' does not
+  cast); the recovery uses `USING CASE WHEN id = 2 THEN <value> ELSE ...`.
+- (5) Alert semantics: correct (no endsAt, so Alertmanager's
+  resolve_timeout would "resolve" it; deterministic checks are not retried).
+- **P7 closed on 2026-10-12.**
+
 ### Where we stopped (2026-10-12) — LATEST, start here
 
-- **P7 done**, pending the P7 checkpoint (questions in the session's last
-  message). Stack down.
+- **P7 done and its checkpoint passed.** Stack down.
 - Next: P8 plan (GDPR erasure incl. dead letters and the drill rows,
   backfill, FR14 failure drills; the `docker pause` fault).
 - P9 list grew: maintenance's per-table retries and DNS hardening (it held
