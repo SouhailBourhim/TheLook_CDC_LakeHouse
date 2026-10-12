@@ -2,6 +2,8 @@
 
 - Status: Accepted
 - Date: 2026-10-05 (P4 step 9; spec FR12, NFR cost; ADR 012, ADR 014)
+- Amended: 2026-10-12 (P8, ADR 021): the stream also applies GDPR erasure
+  requests to bronze.
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
 ## Context
@@ -115,3 +117,15 @@ holds. The shared helpers live in `spark/lakehouse/upkeep.py`.
   a filter on `ingested_at`.
 - Orphan removal waits 3 days so that files of a write still in progress are
   never taken for orphans.
+
+## Amendment 2026-10-12: erasure requests (ADR 021)
+
+Erasure must delete a user's past events from bronze, and this ADR keeps
+every key that can delete bronze out of Airflow. So the stream, bronze's
+only writer, applies erasure requests itself: `gdpr_erasure` sends them
+through the topic `thelook.erasure-requests`, and the stream purges the
+user's rows, expires the pre-purge snapshots of those tables and
+acknowledges in `thelook_bronze.erasure_log`, all with its own identity.
+The purge commits before the batch's ledger row, so the ledger never points
+at an expired snapshot.
+

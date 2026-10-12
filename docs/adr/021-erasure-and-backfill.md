@@ -1,0 +1,122 @@
+# 021. GDPR erasure through every layer, and day-range backfill
+
+- Status: Accepted
+- Date: 2026-10-12 (P8; spec FR9, FR10, FR12, FR14, O5, O9; ADR 017)
+- Deciders: Souhail Bourhim (approves), Claude Code (drafts)
+
+## Context
+
+FR9 asks that a deletion request remove the user from every layer and store,
+time travel included, with an audit trail (O5: under 24 hours; Kafka bounded
+by its retention). FR10 asks for a backfill of silver and gold over a date
+range without duplicates. Both run as Airflow DAGs (FR12).
+
+A user's data lives in many places (the erasure map, below), and the hardest
+is bronze: append-only by design (FR2, with erasure as its one exception),
+never rebuildable, and protected by ADR 017's rule that no key that can
+delete bronze ever enters Airflow.
+
+A DELETE alone is not erasure on Iceberg: older snapshots still reference
+the files holding the rows (time travel), and on merge-on-read tables
+(silver, gold) a DELETE only writes delete files, the data files still hold
+the rows. Erasure = delete, rewrite the affected files, then expire every
+snapshot older than the rewrite.
+
+## Options considered (who purges bronze)
+
+1. **The bronze stream**, bronze's only writer, with its own identity: the
+   DAG sends the request through Kafka and waits for an acknowledgement.
+2. A dedicated erasure user that can delete in every layer, its key in
+   Airflow: simpler, but a leaked Airflow environment could wipe bronze.
+3. A manual bronze step with the stream key: O5 would depend on a person,
+   and FR12 wants the DAG to do it.
+
+## Decision
+
+Option 1 (Souhail, 2026-10-12). ADR 017 is amended: the stream also applies
+erasure requests to its own tables.
+
+**The erasure map.**
+
+| Place | Cleaned by |
+|---|---|
+| PostgreSQL `shop.users`, `orders`, `order_items` (via order ids), legacy `shop.events` | role `eraser` (DELETE on those tables only); Debezium's delete events carry the key only (REPLICA IDENTITY DEFAULT) |
+| MongoDB `web.events`, `web.reviews` | user `eraser` (remove on those collections only) |
+| Kafka | not purged: bounded by its 3-day retention (O5) |
+| Bronze (5 tables holding user data) | the stream: DELETE (copy-on-write), then expiry of every snapshot older than the purge |
+| Silver (users, orders, order_items, events, reviews, dead_letters) | `jobs/erase.py`, batch user: DELETE, rewrite of the affected files applying the deletes, expiry |
+| Gold (dim_user, fct_order_items, fct_orders, fct_sessions) | the same job; marts are aggregates and are kept (FR9) |
+| Redis `user:{id}:*` | ACL user `eraser` (`DEL`, `SCAN` on `user:*` only) |
+| Neo4j | nothing: products only (ADR 010) |
+| Athena query results, logs | bounded by the results bucket's 7-day lifecycle; jobs log counts, not ids |
+| A feature rebuild within Kafka's retention | would re-create Redis keys from old events: rerun the Redis step after one |
+
+**Order.** Sources first, so a re-snapshot or a replay cannot bring the user
+back; then bronze, silver and gold, Redis, verification, audit.
+
+**The request.** `drills/request_erasure.py <user_id>` (the synthetic
+deletion request of spec 4.3) triggers `gdpr_erasure` with
+`{"user_id": ...}`; the run id is the request id.
+
+**Bronze, in the stream.** A plain-JSON topic, `thelook.erasure-requests`,
+joins the stream's subscription. In a batch that holds requests, after the
+CDC appends and **before the ledger row**, the stream deletes the user's
+rows from `shop_users` (id), `shop_orders` (user_id), `shop_order_items`
+(the user's order ids, read from bronze `shop_orders` first), `web_events`
+and `web_reviews` (`$.user_id` in the JSON image); expires every snapshot of
+those tables older than the purge; and appends one row to
+`thelook_bronze.erasure_log` (request id, sha256 of the user id, rows
+deleted per table, time), stamped with the batch id like every commit, so a
+replayed batch does not purge twice. The ledger row comes last, so it points
+at post-purge snapshots and silver never needs an expired one. Delete events
+(`op = 'd'`) keep only a key and are not purged.
+
+**Silver and gold.** `jobs/erase.py <user_id> <request_id>` (batch user,
+`lake` pool): deletes (order items through the user's order ids, read
+before the orders are deleted; dead letters by `$.user_id` in the payload),
+rewrites the affected files applying the deletes (`lakehouse.upkeep`),
+expires older snapshots, and appends the audit rows.
+
+**Audit.** `lake.thelook_silver.erasure_audit`: one row per step (request
+id, sha256 of the user id, step, rows affected, time). It proves what was
+done without keeping the identifier.
+
+**Verification.** A task (and `drills/verify_erasure.py`) checks every row of
+the map: zero rows for the user in each source, layer and store; on every
+affected table, no snapshot older than its purge.
+
+**Backfill (FR10).** A `backfill` DAG with a daily timetable, kept paused
+and run only with `airflow backfill create --from-date --to-date`
+(`--reprocess-behavior completed` to rerun days). Each run recomputes one
+order day's gold facts and marts from silver and MERGEs them on the grain
+keys: rerunning a day replaces its rows, so duplicates cannot appear. The
+drill injects a logic bug as an uncommitted working-tree patch, lets the
+existing contract rule catch it, reverts it and backfills.
+
+**Failure drills (FR14).** `drills/failure_drills.py <drill>`: Connect killed
+mid-stream, Kafka restarted under load, Debezium stopped for an hour,
+connector offsets reset, bronze stream killed mid-batch, Neo4j frozen
+(`docker pause`). Each ends with the exact reconciliation (P7) and a bronze
+duplicate check by Kafka coordinates.
+
+## Consequences
+
+- ✅ Erasure reaches every copy, time travel included, and proves it.
+- ✅ ADR 017 holds: no key that can delete bronze enters Airflow.
+- ✅ Backfill is idempotent by construction (MERGE on grain keys).
+- ❌ The bronze stream gains a second duty and a non-CDC topic; a bug there
+  touches the unrebuildable layer, so it is tested on a local catalog first.
+- ❌ Expiring every pre-purge snapshot removes time travel on the affected
+  tables for everyone, not just the erased user (the price of FR9).
+- ❌ Kafka keeps the user's change events up to 3 days; a feature rebuild in
+  that window needs the Redis step rerun.
+- ❌ Erasure rewrites files in bronze, silver and gold: S3 transfer and
+  minutes per request, fine at this scale, batched requests at production
+  scale.
+
+## References
+
+- Iceberg: row-level deletes, `rewrite_data_files`, snapshot expiry
+- Airflow 3: `airflow backfill create`
+- Cahier des charges v2.3: FR2, FR9, FR10, FR12, FR14, O5, O9; ADR 006,
+  ADR 010, ADR 012, ADR 014, ADR 017
