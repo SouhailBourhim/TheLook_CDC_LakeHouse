@@ -12,6 +12,7 @@
 #   admin     everything, for operations (runbook: rebuild, INFO)
 #   features  the features stream: the write commands it sends, on user:* keys
 #   api       the API: read commands only, keys user:* read-only (%R~)
+#   eraser    GDPR erasure (ADR 021): SCAN and DEL on user:* keys only
 # Rules apply left to right: -@all clears, +@connection allows AUTH, HELLO,
 # PING, CLIENT SETINFO..., -@dangerous then removes CLIENT KILL and the like.
 set -euo pipefail
@@ -28,11 +29,12 @@ user default off resetpass resetkeys resetchannels -@all
 user admin on #$(hash "$REDIS_ADMIN_PASSWORD") ~* &* +@all
 user features on #$(hash "$REDIS_FEATURES_PASSWORD") resetchannels ~user:* -@all +@connection -@dangerous +zadd +zremrangebyrank +zremrangebyscore +hset +pexpireat
 user api on #$(hash "$REDIS_API_PASSWORD") resetchannels %R~user:* -@all +@connection +@read -@dangerous
+user eraser on #$(hash "$REDIS_ERASER_PASSWORD") resetchannels ~user:* -@all +@connection +scan +del
 ACL
 )
 chown redis:redis "$acl"
 
 # The server process does not need the passwords in its environment.
-unset REDIS_ADMIN_PASSWORD REDIS_FEATURES_PASSWORD REDIS_API_PASSWORD
+unset REDIS_ADMIN_PASSWORD REDIS_FEATURES_PASSWORD REDIS_API_PASSWORD REDIS_ERASER_PASSWORD
 exec setpriv --reuid redis --regid redis --clear-groups \
   redis-server /etc/redis/redis.conf --aclfile "$acl"

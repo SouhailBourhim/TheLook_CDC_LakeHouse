@@ -87,6 +87,14 @@ upsertUser(admin, "exporter", env("MONGO_EXPORTER_PASSWORD"), [
   { role: "read", db: "local" },
 ]);
 
+// GDPR erasure (ADR 021): find and remove a user's documents in the two
+// collections that hold them, nothing else (no insert, no update).
+upsertRole(web, "userEraser", [
+  { resource: { db: "web", collection: "events" }, actions: ["find", "remove"] },
+  { resource: { db: "web", collection: "reviews" }, actions: ["find", "remove"] },
+]);
+upsertUser(web, "eraser", env("MONGO_ERASER_PASSWORD"), [{ role: "userEraser", db: "web" }]);
+
 // The daily quality report (ADR 020) counts documents to reconcile them with
 // silver: the built-in read role on web, no write.
 upsertUser(web, "quality", env("MONGO_QUALITY_PASSWORD"), [{ role: "read", db: "web" }]);
