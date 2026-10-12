@@ -68,8 +68,12 @@ those tables older than the purge; and appends one row to
 `thelook_bronze.erasure_log` (request id, sha256 of the user id, rows
 deleted per table, time), stamped with the batch id like every commit, so a
 replayed batch does not purge twice. The ledger row comes last, so it points
-at post-purge snapshots and silver never needs an expired one. Delete events
-(`op = 'd'`) keep only a key and are not purged.
+at post-purge snapshots and silver never needs an expired one. Rows are
+deleted by key (primary key, MongoDB document id), the keys found through
+the user id first: the delete events, which carry only the key, go too.
+Before the expiry, an empty commit stamps the batch's marks on each purged
+table: the expiry removes the append snapshot that held them, and without
+them a replay of the batch would append its rows twice (step 3 finding).
 
 **Silver and gold.** `jobs/erase.py <user_id> <request_id>` (batch user,
 `lake` pool): deletes (order items through the user's order ids, read
@@ -113,6 +117,12 @@ duplicate check by Kafka coordinates.
 - ❌ Erasure rewrites files in bronze, silver and gold: S3 transfer and
   minutes per request, fine at this scale, batched requests at production
   scale.
+- ❌ The bronze key lookups read whole tables (web_events' JSON above all):
+  a batch holding a request took 867 s instead of ~50 s (step 3, a user
+  with no rows; a real purge adds the rewrites). Bronze freshness (O1,
+  5 minutes) is missed for that one batch per request. A later option: look
+  the keys up in a background thread (reads are safe beside appends) and
+  only DELETE in the batch.
 
 ## References
 

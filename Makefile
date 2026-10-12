@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: up down ps spark-run test-spark test-graph signal-topic snapshot-postgres register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+.PHONY: up down ps spark-run test-spark test-graph signal-topic erasure-topic snapshot-postgres register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
 
 # --- On-prem stack (Docker Compose) ------------------------------------------
 # Profiles group services so a laptop runs only what a task needs (RAM per
@@ -84,6 +84,15 @@ KAFKA_EXEC := $(COMPOSE) exec -T kafka env KAFKA_HEAP_OPTS=-Xmx128m /opt/kafka/b
 signal-topic:
 	@$(KAFKA_EXEC)/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists \
 	  --topic $(SIGNAL_TOPIC) --partitions 1 --replication-factor 1 --config retention.ms=604800000
+
+# GDPR erasure requests (ADR 021): the gdpr_erasure DAG writes, the bronze
+# stream reads (create it before starting the stream). One partition:
+# requests are rare and applied in order. They hold a user id, so they are
+# kept 3 days like the CDC topics (O5), not the 7 of the signals.
+ERASURE_TOPIC := thelook.erasure-requests
+erasure-topic:
+	@$(KAFKA_EXEC)/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists \
+	  --topic $(ERASURE_TOPIC) --partitions 1 --replication-factor 1 --config retention.ms=259200000
 
 # Blocking snapshot of the 5 PostgreSQL tables (P3): the connector pauses
 # streaming, re-reads the tables like its initial snapshot (op=r), then
