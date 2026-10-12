@@ -4,11 +4,11 @@ Real-time change data capture from an operational PostgreSQL database and a
 MongoDB document store into a governed, cost-controlled Apache Iceberg
 lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 
-> **Status:** P1 to P6 are built and accepted: capture from PostgreSQL and
+> **Status:** P1 to P7 are built and accepted: capture from PostgreSQL and
 > MongoDB, bronze/silver/gold on AWS with Spark and Airflow, online user
 > features in Redis and co-purchase recommendations from Neo4j, both
-> served by FastAPI. Next is P7 (data contracts, quality, schema
-> evolution). This is a learning project; the full
+> served by FastAPI, and data contracts, quality checks and email alerts
+> over all of it. Next is P8 (GDPR erasure, backfill, failure drills). This is a learning project; the full
 > specification is the [cahier des charges](docs/cahier-des-charges.md) (v2.3), the
 > reasoning is in the [ADRs](docs/adr/), measured results in
 > [results](docs/results.md).
@@ -75,6 +75,9 @@ flowchart LR
 | Serving API: `GET /users/{id}/features` (404 unknown, 503 Redis down), OpenAPI docs | P5 | `api/`, `http://localhost:8000/docs` |
 | Co-purchase graph: pairs from gold order items, weight = orders holding both; full idempotent rebuild into Neo4j, never empty | P6 | `spark/jobs/graph.py`, `(:Product)-[:BOUGHT_WITH]->(:Product)` |
 | `GET /products/{id}/recommendations` (top N by weight, 404 / `[]` / 422 / 503); `/health` liveness, `/ready` both stores | P6 | `api/`, Neo4j Browser `http://localhost:7474` |
+| Data contracts: 26 ODCS files (silver and gold with quality rules, bronze schema only), linted in CI, tested in Athena as a read-only identity; our own drift check (datacontract-cli ignores new columns) | P7 | `contracts/` |
+| Quality: a `quality` task ending `transform`; a daily `quality_report` DAG (contracts, drift, freshness, exact source-to-silver reconciliation, health); dead letters kept in silver | P7 | `airflow/dags/quality_report.py`, `lake.thelook_silver.dead_letters` |
+| Alerting: one hub, Alertmanager, emailing through SNS; every failed Airflow task alerts; MongoDB oplog window alert | P7 | `onprem/monitoring/`, `infra/terraform/lake/alerts.tf` |
 
 ## Repository layout
 
@@ -93,6 +96,7 @@ Folders are added in the commit that first needs them.
 | `drills/` | Reconciliation and failure drills | P1 onwards |
 | `scripts/` | Helpers (cost report, one-off event history copy) | P1 onwards |
 | `.github/workflows/` | CI | P2 onwards |
+| `contracts/` | ODCS data contracts, their runner, the drift check and the daily quality report | P7 |
 | `docs/` | Specification, ADRs, learning log, runbook, results, source schema, architecture diagrams, command reference | All |
 
 ## Run it
@@ -104,7 +108,7 @@ counts page cache for Kafka and MongoDB, so it is an upper bound):
 | Profile | Services | RAM |
 |---|---|---|
 | `core` | postgres, mongo, generator, review-simulator, kafka, schema-registry, connect | ~4.6 GB (mongo 1.1, kafka 1.0, postgres 0.9, connect 0.8, registry 0.7) |
-| `monitoring` | postgres-exporter, prometheus, alertmanager | ~0.1 GB (Prometheus grows with its 7-day history) |
+| `monitoring` | postgres-exporter, mongodb-exporter, prometheus, alertmanager | ~0.1 GB (Prometheus grows with its 7-day history) |
 | `stream` | spark-master, spark-worker | ~0.5 GB idle; executors up to the worker's 3 GB cap, plus ~1 GB per driver |
 | `airflow` | airflow-db, -apiserver, -scheduler, -dag-processor | ~0.9 GB idle; the scheduler (capped at 3 GB) hosts the Spark drivers |
 | `serving` | redis, features-stream, neo4j, api | ~2.4 GB (features-stream 1.3-1.4 GB, capped at 2 GB; Neo4j 0.8 GB idle, 0.9 GB while the graph loads, capped at 1.5 GB; Redis ~60 MB; API ~45 MB); needs `core`, not `stream`; no AWS access |
@@ -266,6 +270,30 @@ exact); liveness vs readiness, and why a readiness probe on shared stores
 turns a partial outage into a total one; the 500 a fake could not find
 (Neo4j reports a query timeout as a `ClientError`).
 
+## How to demo P7 (about 3 minutes)
+
+With `core stream airflow monitoring` up:
+
+```bash
+# 1. A contract is the table's definition, checked in Athena (read-only user):
+docker compose -f onprem/compose.yaml exec airflow-scheduler sh -c \
+  'cd /opt/contracts && /opt/datacontract/venv/bin/python check.py gold/fct_orders.odcs.yaml'
+# 2. The daily report: Airflow UI, DAG quality_report, five green tasks
+#    (contracts, drift, freshness, exact reconciliation, health).
+# 3. A compatible column flows, and the drift check still catches it:
+uv run drills/schema_compatible.py          # registry 5 s, bronze 20 s, silver next run
+# 4. An incompatible type change is blocked and emails within ~2 minutes,
+#    then the scripted recovery (one ALTER, offset moved, resume):
+uv run drills/schema_breaks.py incompatible
+```
+
+Talking points: why datacontract-cli alone misses a new column (and why
+that matters for personal data); Athena's 10 MB minimum per query, which
+decided what runs every 30 minutes; why the reconciliation reads bronze as
+of the batch ledger (tables commit one by one); why a failed task gets no
+"resolved" email; the recovery that failed
+the first time (restoring a value while the column still had the bad type).
+
 ## Design decisions
 
 Each has an ADR with the alternatives and consequences.
@@ -290,6 +318,7 @@ Each has an ADR with the alternatives and consequences.
 | Each layer maintained by its writer | No key that can delete bronze ever enters Airflow | [017](docs/adr/017-table-maintenance.md) |
 | Features: a separate Spark stream in local mode; max/union values in Redis; TTLs from event time | No AWS key, cannot slow bronze; replays and rebuilds give the same state | [018](docs/adr/018-online-features.md) |
 | Graph: companion products in the generator, full rebuild stamped with a run id, one writer, liveness `/health` + readiness `/ready` | Exact acceptance; idempotent and erasure-proof; never an empty graph; a store outage never restarts the API | [019](docs/adr/019-co-purchase-graph.md) |
+| Contracts per table, checks in Athena as a read-only user, own drift check, dead letters, one alert hub (Alertmanager -> SNS email) | A drift or a broken rule fails a check instead of passing silently; no laptop transfer; every alert reaches one inbox | [020](docs/adr/020-contracts-quality-alerting.md) |
 
 ## After cloning
 

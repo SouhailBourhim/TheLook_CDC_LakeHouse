@@ -489,6 +489,89 @@ read-only user for the API to switch to (ADR 019).
 throwaway Neo4j on port 17687 and removes it afterwards. They delete every
 node: never point `NEO4J_TEST_URI` at the serving Neo4j (7687).
 
+## Contracts, quality checks and alerts (P7, ADR 020)
+
+Every alert, from Prometheus or Airflow, goes through Alertmanager
+(`http://localhost:9093`) and is emailed through the SNS topic
+`thelook-alerts`. Silence one there during planned work. If no email comes:
+`aws --profile thelook sns list-subscriptions-by-topic --topic-arn <arn>`
+must show a subscription ARN, not `PendingConfirmation`; Alertmanager's
+`alertmanager_notifications_failed_total{integration="sns"}` must stay 0.
+
+### AirflowTaskFailed
+
+A task failed after its retries (`dag_id`, `task_id` and the log URL are in
+the email). Open the log in the Airflow UI. For `quality` (in `transform`)
+and the `quality_report` tasks, the log lists each failing check:
+
+- `FAIL <contract>` with a numbered error: a quality rule failed on real
+  data (a status outside the accepted values, an amount identity broken, a
+  fact still on the unknown member after an hour, a dead letter). Find the
+  rows with the rule's SQL in Athena, then fix the cause upstream.
+- `(retried once)` then `Could not read model`: Athena or the network, not
+  the data; the next run usually passes.
+- `drift`: a table gained or lost a column the contract does not list. If
+  the change is intended, add the column to the contract (with its PII tag
+  if it has one); if not, find who changed the source.
+- `freshness`: bronze more than 10 minutes behind its source (is
+  `bronze-stream` running? the connector?), or gold more than an hour
+  behind (is `transform` running? the `lake` pool held by maintenance?).
+- `reconcile`: a count differs between a source and silver as of the cut.
+  Run `uv run drills/verify_silver.py <table>` to list the keys, then the
+  re-snapshot procedure above.
+
+Run any check by hand, as Airflow does:
+
+```bash
+docker compose -f onprem/compose.yaml exec airflow-scheduler sh -c \
+  'cd /opt/contracts && /opt/datacontract/venv/bin/python check.py gold/fct_orders.odcs.yaml'
+# also: drift.py */*.odcs.yaml ; report.py freshness|reconcile|health
+```
+
+### Dead letters
+
+`lake.thelook_silver.dead_letters` keeps the MongoDB documents silver could
+not type (raw payload, key, log position, reason). The `dead_letters`
+contract fails while one is less than an hour old. Read them in Athena:
+`SELECT source_table, record_key, reason, payload FROM thelook_silver.dead_letters`.
+Fix the producer, then delete the dead letter once handled. The payload is
+raw personal data: erasure (P8) must cover this table.
+
+### MongoOplogWindowShort / MongoOplogWindowCritical
+
+The oplog (2 GiB, size-capped) now covers less than 24 h / 6 h of writes: a
+MongoDB connector outage longer than that loses its resume point (see
+"Connector fails with ChangeStreamHistoryLost" above). Keep the connector
+running; avoid bulk loads; or enlarge the oplog (`replSetResizeOplog`, as
+root). `MongoExporterDown`: the window is unwatched; check the
+`mongodb-exporter` container and the `exporter` user (`onprem/mongo/setup.js`).
+
+### ConnectorTaskFailed after a schema change (incompatible type)
+
+Schema Registry rejected a new Avro schema (`Schema being registered is
+incompatible` in the task trace): a source column changed type
+incompatibly. Nothing reached Kafka or the lake. Measured in the drill:
+task failed 5 s after the change, alert 96 s, recovery 110 s.
+
+1. Stop the writers: `docker compose -f onprem/compose.yaml stop generator review-simulator`.
+2. Note the position: `SELECT pg_current_wal_lsn();` (psql as superuser).
+3. Restore the column **with one statement** that fixes the type and any
+   changed value together, e.g.
+   `ALTER TABLE shop.t ALTER COLUMN c TYPE double precision USING CASE WHEN id = 2 THEN 41.8369 ELSE c::double precision END`.
+   Never restore a value with an UPDATE while the column still has the bad
+   type: that is a second incompatible change, and the task fails again
+   (it happened in the first drill).
+4. `curl -X PUT localhost:8083/connectors/postgres-source/stop`, then
+   `PATCH .../offsets` with `lsn`, `lsn_proc` and `lsn_commit` set to the
+   position from step 2 as a number (`X/Y` hex: `(X << 32) + Y`), the
+   `txId`, `lsn_events_processed` and `messageType` fields removed.
+5. `curl -X PUT .../resume`; check the task stays RUNNING; restart the
+   writers; `uv run drills/verify_silver.py t`.
+
+Scripted: `uv run drills/schema_breaks.py incompatible`. The skipped changes
+are only the rejected ones (and Debezium heartbeats); if the bad change
+carried real data, re-send those keys (`drills/resnapshot.py`).
+
 ## Spark AWS credentials
 
 The streaming job authenticates as IAM user `thelook-spark-stream`

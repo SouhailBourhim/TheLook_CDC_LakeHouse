@@ -669,3 +669,78 @@ same-category share rises slowly (5.7x, 5.9x, 6.2x over the day) because
 the P1 uniform orders still weigh on every product with few orders.
 API tests: 21 in CI (fakeredis and a fake graph store), 7 more on a real
 Neo4j (`make test-graph`).
+
+## P7: contracts, quality checks and alerting — 2026-10-11
+
+### Contracts and their cost (steps 2-6)
+
+| Measure | Result |
+|---|---|
+| contracts | 26 (silver 8 incl. dead letters, gold 10, bronze 8), ODCS v3, linted in CI |
+| checks on the live tables | 836 at first run; all pass |
+| full run, one contract at a time / 8 at a time | 1,275 s / 159-166 s |
+| full run in Athena | 216 queries, 0.78 GB scanned; billed at least 10 MB a query: ~$0.011 |
+| `transform`'s subset (gold facts + dead letters) | 44 queries, 0.16 GB, ~$0.002 a run, ~$0.55 a month at our hours |
+| drift: what `datacontract test` misses | a column in the data but not in the contract passes (step 0); `drift.py` catches it |
+
+Running every contract every 30 minutes would cost ~$15.5 a month, all of
+O6: Athena's minimum per query, not the bytes, sets the price. So the full
+set runs daily (`quality_report`), a subset in `transform`.
+
+### Least privilege, tested with the real keys (step 4)
+
+| Identity | Allowed | Denied |
+|---|---|---|
+| `thelook-quality` | Athena in workgroup `thelook`, Glue `GetTable` | the `primary` workgroup, S3 writes in the layers, Glue table creation |
+| `thelook-alerts` | `sns:Publish` on `thelook-alerts` | other topics, S3, listing topics |
+| Postgres role `quality` | `SELECT` on the five captured tables | inserts; `shop.events` |
+| MongoDB user `quality` | read on `web` | inserts |
+
+The contract checks run as `thelook-quality` only: with the process's own
+AWS key set to garbage they still pass.
+
+### The daily report, first live run (step 10, 04:24)
+
+| Check | Result |
+|---|---|
+| contracts | 26 of 26 pass, 166 s |
+| drift | 0 of 26 |
+| freshness | bronze 68 s (PostgreSQL) and 72 s (MongoDB) behind the source; gold 25 min |
+| reconciliation, as of a cut | exact on all 7 tables (reviews: 25,899 in silver - 64 deleted at the source since silver's cut = 25,835) |
+| health | Prometheus reachable, no alert firing |
+
+Earlier the same night, freshness failed for gold (3.6 h behind after the
+stack's downtime): a true failure, as designed.
+
+### Alert delivery (steps 5, 8, 11)
+
+| Path | Result |
+|---|---|
+| Prometheus rule or posted alert -> Alertmanager -> SNS -> email | delivered; 0 failed notifications |
+| failed Airflow task -> `AirflowTaskFailed` | routed to the receiver without "resolved" email; with Alertmanager unreachable the callback logs and returns |
+| MongoDB oplog window (new) | 152 h (wall clock, stack downtime included; size-capped at 2 GiB); alerts below 24 h and 6 h |
+
+### Acceptance (spec section 9): schema changes
+
+| Drill | Result |
+|---|---|
+| (a) compatible column (`shop.dist_centers.manager`, nullable) | new Avro version registered after 5 s, in bronze after 20 s, in silver on the next scheduled run (590 s source to silver); the drift check caught it (`not in the contract ['manager']`); contract updated, drift and tests pass |
+| (b) incompatible type (`latitude` double -> text) | task failed 5 s after the change (`Schema being registered is incompatible`), `ConnectorTaskFailed` 96 s after; registry unchanged, nothing in Kafka or the lake; recovery (one ALTER, offset moved past the rejected change, resume) 110 s; `verify_silver.py dist_centers` ALL OK |
+| (c) malformed MongoDB review (schemaless: invisible to the registry) | first run: **not** a dead letter: Spark nulled the two mistyped fields and kept the document; the silver `reviews` contract caught both required nulls (`missing_count` 1 each). Fixed (a field present in the JSON that parses to null makes a dead letter); rerun: in `dead_letters` with its raw payload, 14 min after insertion, and absent from silver. Its own email was not observed: the laptop slept through the hour the `dead_letters` rule watches (the alert path is proven by (b) and by `quality_report.reconcile`) |
+
+**Result: passed** ((a) and (b): a compatible column flows end to end;
+an incompatible change is caught and alerts). The drills also found two
+bugs, fixed the same night: the dead-letter rule above, and a false alarm
+in the reconciliation (a transform run committed silver between two of its
+queries; each silver table is now read at one pinned snapshot).
+
+The first run of (b) failed its recovery: the value was restored with an
+UPDATE while the column was still text, a second incompatible change after
+the skipped position. Fixed (one ALTER ... USING); the corrected script
+then ran clean.
+
+### Provisional revenue days (step 12)
+
+Order to return, 515 returns in silver: p50 4.2 days, p90 9.9, p99 10.9,
+max 11.1, on 12 days of history (right-censored). Window: 14 days;
+`mart_daily_revenue.provisional_until` = order day + 14.

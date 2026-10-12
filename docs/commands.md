@@ -323,7 +323,7 @@ MATCH (p:Product) RETURN DISTINCT p.run;
 | What | Where or how |
 |---|---|
 | Prometheus (targets, alerts, queries) | `http://localhost:9090` |
-| Alertmanager | `http://localhost:9093` |
+| Alertmanager (emails through SNS; silence alerts here) | `http://localhost:9093` |
 | Spark cluster UI / bronze and features driver UIs | `http://localhost:8080` / `http://localhost:4040`, `http://localhost:4041` |
 
 Start only the monitoring services (`make up PROFILES=monitoring` would also
@@ -399,6 +399,28 @@ SHOW max_slot_wal_keep_size;
 | `drills/slot-drill.sh [log file]` | Stop Connect, WAL grows, the slot alert fires, recovery | `core monitoring` |
 | `drills/throughput-baseline.sh [log file]` | Raises the generator rate step by step, measures capture lag and WAL | `core monitoring` |
 | `uv run scripts/seed_mongo_events.py` | One-off (P2): copy the event history into MongoDB | done once; kept for the record |
+
+### Data contracts and quality checks (P7, ADR 020)
+
+Run inside the scheduler (the contracts' virtualenv, the read-only quality
+user), as Airflow does:
+
+```bash
+Q="docker compose -f onprem/compose.yaml exec airflow-scheduler sh -c"
+$Q 'cd /opt/contracts && /opt/datacontract/venv/bin/python check.py --workers 8 */*.odcs.yaml'  # every contract
+$Q 'cd /opt/contracts && /opt/datacontract/venv/bin/python check.py gold/fct_orders.odcs.yaml'  # one
+$Q 'cd /opt/contracts && /opt/datacontract/venv/bin/python drift.py */*.odcs.yaml'   # contract vs Glue columns
+$Q 'cd /opt/contracts && /opt/datacontract/venv/bin/python report.py freshness'      # also: reconcile, health
+uvx --from 'datacontract-cli==1.2.2' datacontract lint contracts/gold/fct_orders.odcs.yaml   # no AWS
+A="docker compose -f onprem/compose.yaml exec -T airflow-scheduler airflow"
+$A dags trigger quality_report        # the daily report now
+```
+
+| Drill | Command | Shows |
+|---|---|---|
+| (a) compatible column | `uv run drills/schema_compatible.py` | registry, bronze, silver gain the column; the drift check catches it (runs once: the column stays) |
+| (b) incompatible type | `uv run drills/schema_breaks.py incompatible` | registry rejects, task fails, alert by email, scripted recovery |
+| (c) malformed document | `uv run drills/schema_breaks.py malformed` | a dead letter in silver, the quality task fails and alerts |
 
 ## 11. Tests and code quality
 

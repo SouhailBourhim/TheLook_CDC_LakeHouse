@@ -2218,14 +2218,58 @@ P7 plan approved (contracts, quality, alerting, schema evolution; 16 steps,
   file to split a commit and only ran `ruff check`. Run both on the exact
   content committed.
 
-### Where we stopped (2026-10-11, ~04:20 UTC) — LATEST, start here
+### P7 steps 13-14: the drills, and what they found
 
-- P7 steps 0-12 done and pushed. Pending: the live `quality_report` run
-  (scheduler restart after the 03:00 transform run), steps 13-14 (drills,
-  scripts written: `drills/schema_compatible.py`, `drills/schema_breaks.py`),
-  step 15 (wrap-up + P7 checkpoint).
-- **Souhail**: click "Confirm subscription" in the AWS SNS email; review
-  ADR 020 (Proposed).
+- Souhail confirmed the SNS subscription and received the test email
+  (`[thelook] FIRING: P7EmailTest`): Alertmanager -> SNS -> inbox verified;
+  ADR 020 **accepted**.
+- `quality_report` first live run (04:24): all five tasks green
+  (contracts 26/26, drift 0/26, freshness 68/72 s and gold 25 min,
+  reconciliation exact on 7 tables, health).
+- **Drill (a)**, compatible column: registry 5 s, bronze 20 s, silver on the
+  next run (590 s); the drift check caught it; contract updated, green.
+- **Drill (b)**, incompatible type: task failed 5 s after the change, alert
+  96 s, registry and lake unchanged. **My first recovery failed**: I
+  restored the value with an UPDATE while the column was still text, a
+  second incompatible change after the skipped position. One ALTER ...
+  USING restores type and value with no change event; the corrected script
+  ran clean (recovery 110 s), `verify_silver.py dist_centers` ALL OK.
+- **Drill (c)**, malformed review (rating "five", created_at "yesterday"):
+  not a dead letter. Spark parses field by field and nulls what does not
+  fit; the contract caught the two required nulls (manual run), but a
+  mistyped optional field would have vanished. **Fixed**: a field present in
+  the JSON that parses to null makes the document a dead letter (checked
+  first: 0 of 1.43 M real records would be caught). Rerun: see below.
+- **A false alarm from my own check** (05:40, `quality_report.reconcile`):
+  transform committed silver between two of its queries (61 deletions on
+  neither side). **Fixed**: one pinned silver snapshot per table, read FOR
+  VERSION AS OF, as bronze reads the ledger.
+- Operations: today's `maintenance` held the single `lake` slot for 30 min,
+  retrying S3 through DNS failures (the known P9 weakness). Souhail chose to
+  stop it (marked failed through the Airflow API: Iceberg commits are atomic,
+  maintenance idempotent, rerun tomorrow 03:00).
+- Process lessons: a watcher compared times of day across midnight
+  ("23:30" > "05:51") and matched yesterday's run; compare full timestamps.
+
+### Drill (c) rerun and the laptop's sleep (2026-10-11 06:00 -> 10-12 16:00)
+
+- Rerun: the 06:00 run's silver wrote the malformed review to
+  `dead_letters` (06:03:52), not to silver. Its email was not observed: the
+  laptop slept (WSL suspended: containers "Up 37 hours", VM uptime 14 h; no
+  restart, Kafka clean, no repair needed) through the hour the rule
+  watches. Recorded as not observed, not claimed.
+- **P7 acceptance: passed** on (a) and (b). Wrap-up committed, then
+  `make down` (Souhail's instruction).
+
+### Where we stopped (2026-10-12) — LATEST, start here
+
+- **P7 done**, pending the P7 checkpoint (questions in the session's last
+  message). Stack down.
+- Next: P8 plan (GDPR erasure incl. dead letters and the drill rows,
+  backfill, FR14 failure drills; the `docker pause` fault).
+- P9 list grew: maintenance's per-table retries and DNS hardening (it held
+  the lake slot 30 min on 10-11), Spark streaming metrics in Prometheus,
+  features-stream alerts, the heartbeat liveness table.
 
 ### P1 plan (agreed)
 
