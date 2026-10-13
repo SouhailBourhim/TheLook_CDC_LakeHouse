@@ -2525,6 +2525,8 @@ network) dropped every 15-30 minutes all night; every weakness showed.
 
 - Steps 3-6 done; **P8 acceptance part 1 passed** (54/54 on drill 2).
 - **Next: step 7**, gold rebuild for a day range (backfill), then 8-14.
+- Stack down (volumes kept). Checkpoint questions for step 6 asked, not yet
+  answered: start the next session with them.
 - Open question for Souhail: O1 during a bronze purge (measured ~1 h under
   load). Options: accept; partition-filtered DELETEs (above); key lookup
   in a background thread.
