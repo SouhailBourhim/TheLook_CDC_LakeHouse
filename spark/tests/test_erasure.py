@@ -271,3 +271,31 @@ def test_a_blip_repeats_one_step_not_the_purge(spark, bronze_db):
     assert ids(spark, f"{bronze_db}.shop_users") == [BOB]
     (row,) = spark.table(f"{bronze_db}.erasure_log").collect()
     assert row.rows_deleted["shop_users"] == 3
+
+
+def test_a_purge_that_dies_midway_is_completed_by_its_replay(spark, bronze_db):
+    # The first attempt deletes some tables, then fails for good (the batch
+    # fails, the stream restarts and replays it). The replay must still find
+    # every remaining row: the items are found through the orders, so the
+    # orders must not be deleted before them.
+    real_delete = erasure.delete_keys
+    done = []
+
+    def dies_after_two(spark, table, keys):
+        if len(done) == 2:
+            raise RuntimeError("batch failed")
+        done.append(table)
+        return real_delete(spark, table, keys)
+
+    erasure.delete_keys = dies_after_two
+    try:
+        with pytest.raises(RuntimeError):
+            apply_requests(spark, [Request("run-1", ALICE)], "q1", 9, bronze_db)
+    finally:
+        erasure.delete_keys = real_delete
+
+    apply_requests(spark, [Request("run-1", ALICE)], "q1", 9, bronze_db)
+
+    assert ids(spark, f"{bronze_db}.shop_order_items") == ["i-b1"]
+    assert ids(spark, f"{bronze_db}.shop_orders") == ["o-b1"]
+    assert ids(spark, f"{bronze_db}.shop_users") == [BOB]

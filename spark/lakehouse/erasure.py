@@ -112,10 +112,14 @@ def _json_user_is(user_id: str) -> Column:
 # Bronze tables holding user data, and the key each is deleted by. SQL text,
 # not Columns: a Column needs a running Spark session, and the DELETE is SQL.
 PG_KEY = "coalesce(after.id, before.id)"
+# Deleted in this order: children before parents. The items are found
+# through the user's orders; deleting the orders first, an attempt that
+# failed between the two left the items unreachable for every retry (P8
+# step 6: 115 item rows survived the first real erasure).
 USER_TABLES = {
-    "shop_users": PG_KEY,
-    "shop_orders": PG_KEY,
     "shop_order_items": PG_KEY,
+    "shop_orders": PG_KEY,
+    "shop_users": PG_KEY,
     "web_events": "doc_id",
     "web_reviews": "doc_id",
 }
