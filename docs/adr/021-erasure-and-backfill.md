@@ -123,6 +123,27 @@ connector offsets reset, bronze stream killed mid-batch, Neo4j frozen
 (`docker pause`). Each ends with the exact reconciliation (P7) and a bronze
 duplicate check by Kafka coordinates.
 
+**Learned from the first real erasure (P8 step 6, on a network that
+dropped every 15 to 30 minutes).** Each item below was a defect found there,
+now fixed and tested:
+
+- Bronze deletes children before parents (items, orders, users): items are
+  found through the orders, and an attempt that died between the two left
+  115 item rows unreachable for every retry.
+- Every bronze user table's history is dropped, whatever the attempt
+  deleted: an interrupted attempt deleted rows, its replay deleted none, and
+  the old snapshots still held them.
+- Each purge step (lookup, DELETE, history drop, log row) is retried on its
+  own; the waits in the DAG poll again after a network error.
+- `erase_lake` has the highest weight for the one-slot `lake` pool: with
+  the default weights it waited over an hour behind transform and graph.
+- A purge that cannot find rows any more (their links already purged) is
+  repaired by an operator: `jobs/repair_erasure.py`, the stream's identity,
+  the stream stopped, by key; it keeps the newest batch marks (runbook).
+- The erasure_log counts the rows the completed attempt deleted: after an
+  interrupted attempt it under-reports (the first run logged 0 for three
+  tables). The proof is `drills/verify_erasure.py`, not the counts.
+
 ## Consequences
 
 - ✅ Erasure reaches every copy, time travel included, and proves it.
@@ -137,6 +158,9 @@ duplicate check by Kafka coordinates.
 - ❌ Erasure rewrites files in bronze, silver and gold: S3 transfer and
   minutes per request, fine at this scale, batched requests at production
   scale.
+- ❌ Under load, one request kept a bronze batch busy for 58 minutes on the
+  first run (18 minutes for web_events' lookup alone, network failures on
+  top): bronze freshness is missed for that long.
 - ❌ The bronze key lookups read whole tables (web_events' JSON above all):
   a batch holding a request took 867 s instead of ~50 s (step 3, a user
   with no rows; a real purge adds the rewrites). Bronze freshness (O1,

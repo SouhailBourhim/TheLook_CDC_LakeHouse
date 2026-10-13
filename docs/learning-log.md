@@ -2480,14 +2480,54 @@ accept now (requests are rare, O5 is 24 h), revisit if O1 alerts bother.
 - Audit: the lake job also writes the counts of the earlier steps
   (`upstream` JSON, counts only): one writer for `erasure_audit`.
 
+### P8 step 6 (2026-10-13): the first real erasure, and what it broke
+
+User 1 (31 orders, 48 items, 193 events, 6 reviews, 7 Redis keys),
+request `manual__2026-10-13T01:36:39...`. The network (WSL DNS on a campus
+network) dropped every 15-30 minutes all night; every weakness showed.
+
+| Found | How | Fix (commit) |
+|---|---|---|
+| Athena subquery used another table's snapshot id | probe before the run | per-table placeholders (step 5) |
+| "delete events >= deleted" passed early (simulator deletes reviews) | probe | "no key alive" (step 5) |
+| one SSL cut killed `wait_ack` | task log | boto3 standard retries + poll again (`fix(erasure)`) |
+| a DELETE blip retried the whole 25-min purge | stream log | per-step retry (`fix(spark): retry each...`) |
+| history dropped only where the final attempt deleted rows | stream log `snapshots expired {web_events, web_reviews}` | drop every user table's history |
+| `erase_lake` waited >1 h for the lake slot (weights 1 vs 5) | pool API | absolute weight 10 |
+| **115 item rows survived**: orders deleted before items, the retry found no orders | `verify_erasure.py`: 53/54 | children first; test kills an attempt midway (fails on the old order) |
+| erasure_log under-reports after an interrupted attempt | audit rows | documented: the proof is the verification |
+
+- Repair (Souhail's choice, "operator repair + re-drill"): transform
+  paused, stream stopped, `jobs/repair_erasure.py` as the stream identity
+  with the 48 captured item ids: 115 rows deleted, 58 snapshots expired.
+  On restart the stream replayed batch 1831 and skipped `shop_order_items`:
+  the repair kept the batch marks, otherwise those rows would be doubled.
+  Then 54/54.
+- Timings: sources 5 s; bronze wait 2.5 min; bronze purge 58 min (should be
+  ~30 without failures); lake 26 min once it had the slot. Well under O5
+  (24 h).
+- Masking: the raw user id appears 0 times in the task logs (fixed-string
+  grep; a first count of "72" was a bad grep of mine).
+- **Drill 2** (fresh user, every fix deployed, no manual step): **54/54**.
+  34 orders, 45 items, 189 events, 5 reviews, 4 Redis keys. Bronze purge
+  71 min (one network outage cost one redone DELETE, nothing else);
+  `wait_ack` timed out at 1 h and its retry took over (now 2 h:
+  `fix(airflow): wait_ack...`); lake 29 min, slot taken in 2 min. Request
+  to done: **1 h 45 min** (O5: 24 h). Every audit count filled.
+- **Corrected finding:** the bronze purge costs ~1 h under load even
+  without failures: each copy-on-write DELETE re-reads its whole table to
+  find the files (web_events: 11 min) before rewriting them. Optimization
+  for later: the lookup also returns the days (`source_ts`) the keys sit
+  in, and the DELETE filters on them, so Iceberg reads and rewrites only
+  those partitions.
+
 ### Where we stopped (2026-10-13) — LATEST, start here
 
-- Steps 3-5 done. **Next: step 6**, `verify_erasure.py` + erase a real user
-  (orders, events, reviews, Redis keys) through the DAG; check every place,
-  time travel, audit rows, duration (O5 < 24 h). Remember the generator can
-  re-insert a user it read just before the DELETE: verification re-checks
-  the sources.
-- Open question (O1 during a bronze purge) still awaits Souhail.
+- Steps 3-6 done; **P8 acceptance part 1 passed** (54/54 on drill 2).
+- **Next: step 7**, gold rebuild for a day range (backfill), then 8-14.
+- Open question for Souhail: O1 during a bronze purge (measured ~1 h under
+  load). Options: accept; partition-filtered DELETEs (above); key lookup
+  in a background thread.
 
 ### P1 plan (agreed)
 
