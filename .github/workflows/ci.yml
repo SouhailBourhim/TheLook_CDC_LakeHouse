@@ -48,6 +48,8 @@ jobs:
           - component: api
             extra: --with-requirements requirements-test.txt
           - component: contracts
+          - component: erasure
+            extra: --with-requirements requirements-test.txt
     defaults:
       run:
         working-directory: ${{ matrix.component }}

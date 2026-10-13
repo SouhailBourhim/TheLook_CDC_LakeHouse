@@ -329,8 +329,11 @@ def _audit(
         spark.createDataFrame([], AUDIT_SCHEMA).writeTo(audit).using(
             "iceberg"
         ).tableProperty("format-version", "2").create()
+    counts = [
+        done.get(k) for k in ("rows_deleted", "files_rewritten", "snapshots_expired")
+    ]
     row = spark.createDataFrame(
-        [(request.request_id, user_hash(request.user_id), step, *done.values())],
+        [(request.request_id, user_hash(request.user_id), step, *counts)],
         "request_id string, user_sha256 string, step string, rows_deleted bigint, "
         "files_rewritten bigint, snapshots_expired bigint",
     ).withColumn("done_at", F.current_timestamp())
@@ -348,13 +351,19 @@ def erase_lake(
     silver_db: str = SILVER_DB,
     gold_db: str = GOLD_DB,
     retry=lambda step: step(),
+    upstream: dict[str, int] | None = None,
 ) -> dict[str, dict[str, int]]:
     """Erase the user from every silver and gold table of the map, table by
     table, each followed by its audit row; returns what was done per table.
-    `retry` wraps each table's work (the job passes with_retries)."""
+    `retry` wraps each table's work (the job passes with_retries).
+
+    `upstream`: rows removed by the DAG's earlier steps (sources, bronze,
+    Redis), {step: rows}, audited first: one writer for the audit table."""
     if not is_user_id(request.user_id):
         raise ValueError("the user id must be a canonical lowercase UUID")
     audit = f"{silver_db}.{AUDIT_NAME}"
+    for step, rows in (upstream or {}).items():
+        _audit(spark, audit, request, step, {"rows_deleted": rows})
     orders = user_orders(spark, request.user_id, silver_db, gold_db)
     report = {}
     for step, condition in LAKE_TABLES.items():

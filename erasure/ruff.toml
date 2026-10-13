@@ -1,0 +1,4 @@
+# erasure/ runs on Python 3.10, in the Airflow image's erasure virtualenv
+# (ADR 021): stop ruff from suggesting 3.11+ syntax.
+extend = "../ruff.toml"
+target-version = "py310"

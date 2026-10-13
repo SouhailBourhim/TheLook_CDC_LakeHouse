@@ -118,6 +118,16 @@ RUN uv venv --python /usr/bin/python3 /opt/datacontract/venv \
       -r /tmp/contracts-requirements.lock \
  && rm /tmp/contracts-requirements.lock
 
+# GDPR erasure steps (erasure/steps.py, ADR 021): the eraser users' clients
+# (PostgreSQL, MongoDB, Redis), a Kafka producer for the bronze stream's
+# request and boto3 for Athena, in their own virtualenv from a hashed lock,
+# like the contract checks.
+COPY erasure-requirements.lock /tmp/erasure-requirements.lock
+RUN uv venv --python /usr/bin/python3 /opt/erasure-venv \
+ && uv pip install --python /opt/erasure-venv --no-cache --require-hashes \
+      -r /tmp/erasure-requirements.lock \
+ && rm /tmp/erasure-requirements.lock
+
 ENV AIRFLOW_HOME=/opt/airflow \
     PATH=/opt/airflow/venv/bin:$PATH
 USER spark

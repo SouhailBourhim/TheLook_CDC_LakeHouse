@@ -71,7 +71,7 @@ def test_every_spark_task_shares_the_one_slot_lake_pool(bag):
     # A compaction must never commit at the same time as a MERGE (ADR 017);
     # the graph job only reads, but must not take the worker's last cores.
     # Contract checks run in Athena, not on the cluster: they take no slot.
-    for dag_id in ("transform", "maintenance", "graph"):
+    for dag_id in ("transform", "maintenance", "graph", "gdpr_erasure"):
         for task in bag.dags[dag_id].tasks:
             if task.task_type == "SparkSubmitOperator":
                 assert task.pool == "lake", f"{dag_id}.{task.task_id}"
@@ -124,3 +124,50 @@ def test_quality_report_runs_its_five_checks_daily_after_the_graph(bag):
     assert dag.max_active_runs == 1 and not dag.catchup
     for task in dag.tasks:
         assert task.retries == 0 and not task.upstream_task_ids  # independent checks
+
+
+ERASURE_CHAIN = [
+    "delete_sources",
+    "wait_bronze",
+    "request_bronze",
+    "wait_ack",
+    "erase_redis",
+    "audit_counts",
+    "erase_lake",
+]
+
+
+def test_gdpr_erasure_runs_its_steps_in_order(bag):
+    # Sources first; the request only once bronze holds their deletes.
+    dag = bag.dags["gdpr_erasure"]
+    for upstream, downstream in zip(ERASURE_CHAIN, ERASURE_CHAIN[1:], strict=False):
+        assert dag.get_task(upstream).downstream_task_ids == {downstream}
+    assert set(dag.task_ids) == set(ERASURE_CHAIN)
+
+
+def test_gdpr_erasure_is_triggered_one_request_at_a_time(bag):
+    dag = bag.dags["gdpr_erasure"]
+    assert type(dag.timetable).__name__ == "NullTimetable"  # schedule=None
+    assert not dag.catchup
+    assert dag.max_active_runs == 1
+
+
+def test_gdpr_erasure_accepts_only_a_lowercase_uuid(bag):
+    from airflow.sdk.definitions.param import ParamValidationError
+
+    param = bag.dags["gdpr_erasure"].params.get_param("user_id")
+    assert param.resolve("6f1c2a3b-0d4e-4f5a-8b6c-7d8e9f0a1b2c")
+    for bad in ["42", "6F1C2A3B-0D4E-4F5A-8B6C-7D8E9F0A1B2C", "x' OR '1'='1"]:
+        with pytest.raises(ParamValidationError):
+            param.resolve(bad)
+
+
+def test_gdpr_erasure_never_puts_the_user_id_on_a_bash_command_line(bag):
+    for task in bag.dags["gdpr_erasure"].tasks:
+        if task.task_type == "BashOperator":
+            assert "params" not in task.bash_command, task.task_id
+            assert task.env["ERASURE_USER_ID"] == "{{ params.user_id }}"
+            assert task.append_env  # keeps the scheduler's passwords
+        # Every task masks the user id in its log.
+        hook = getattr(task, "_pre_execute_hook", None)
+        assert getattr(hook, "__name__", "") == "mask_user", task.task_id

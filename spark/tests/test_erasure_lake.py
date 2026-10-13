@@ -226,3 +226,13 @@ def test_audit_has_one_row_per_table_and_a_rerun_keeps_it(spark, dbs):
 def test_a_malformed_user_id_is_refused(spark, dbs):
     with pytest.raises(ValueError):
         erase_lake(spark, Request("run-1", "x' OR '1'='1"), *dbs)
+
+
+def test_upstream_steps_are_audited_too(spark, dbs):
+    silver, _ = dbs
+    erase_lake(spark, REQUEST, *dbs, upstream={"postgres.orders": 2, "redis.keys": 5})
+
+    audit = {r.step: r for r in spark.table(f"{silver}.erasure_audit").collect()}
+    assert audit["postgres.orders"].rows_deleted == 2
+    assert audit["redis.keys"].rows_deleted == 5
+    assert audit["redis.keys"].files_rewritten is None

@@ -545,6 +545,12 @@ services:
       QUALITY_DB_PASSWORD: ${QUALITY_DB_PASSWORD:?set QUALITY_DB_PASSWORD in onprem/.env}
       MONGO_QUALITY_PASSWORD: ${MONGO_QUALITY_PASSWORD:?set MONGO_QUALITY_PASSWORD in onprem/.env}
       POSTGRES_DB: ${POSTGRES_DB:-thelook}
+      # The gdpr_erasure DAG's eraser users (ADR 021): DELETE on the user
+      # tables, remove on the user collections, DEL on user:* keys. Never a
+      # key that can delete bronze (the stream purges it).
+      ERASER_DB_PASSWORD: ${ERASER_DB_PASSWORD:?set ERASER_DB_PASSWORD in onprem/.env}
+      MONGO_ERASER_PASSWORD: ${MONGO_ERASER_PASSWORD:?set MONGO_ERASER_PASSWORD in onprem/.env}
+      REDIS_ERASER_PASSWORD: ${REDIS_ERASER_PASSWORD:?set REDIS_ERASER_PASSWORD in onprem/.env}
     command: ["airflow", "scheduler"]
     # Bounded resources (ADR 013): the scheduler hosts the Spark drivers.
     mem_limit: 3g
@@ -552,6 +558,7 @@ services:
       - ../spark:/opt/lakehouse:ro
       - ../airflow/dags:/opt/airflow/dags:ro
       - ../contracts:/opt/contracts:ro
+      - ../erasure:/opt/erasure:ro
       - airflow-logs:/opt/airflow/logs
 
   airflow-dag-processor:

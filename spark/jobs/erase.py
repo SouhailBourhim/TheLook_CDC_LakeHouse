@@ -10,9 +10,12 @@ Runs as the batch IAM user, in the Airflow pool "lake" (no MERGE or
 compaction commits on the same tables meanwhile). Safe to rerun: a second
 run deletes nothing and keeps the first run's audit rows.
 
-Usage: make spark-run JOB="jobs/erase.py <user_id> <request_id>"
+Usage: make spark-run JOB="jobs/erase.py <user_id> <request_id> [<upstream>]"
+  upstream: JSON {step: rows} from the DAG's earlier steps (sources, bronze,
+  Redis), counts only, audited first.
 """
 
+import json
 import logging
 import sys
 import time
@@ -26,10 +29,15 @@ logging.basicConfig(
 )
 log = logging.getLogger("erase")
 
-if len(sys.argv) != 3 or not is_user_id(sys.argv[1]):
+if len(sys.argv) not in (3, 4) or not is_user_id(sys.argv[1]):
     # The arguments are not echoed: one may be a user id.
-    sys.exit("usage: erase.py <user_id (canonical UUID)> <request_id>")
+    sys.exit("usage: erase.py <user_id (canonical UUID)> <request_id> [<upstream>]")
 request = Request(request_id=sys.argv[2], user_id=sys.argv[1])
+upstream = (
+    {k: int(v) for k, v in json.loads(sys.argv[3]).items()}
+    if len(sys.argv) == 4
+    else {}
+)
 
 spark = lake_session(
     "erase",
@@ -38,7 +46,7 @@ spark = lake_session(
 )
 start = time.monotonic()
 # Each table's counts are logged as it is done (lakehouse.erasure).
-report = erase_lake(spark, request, retry=with_retries)
+report = erase_lake(spark, request, retry=with_retries, upstream=upstream)
 log.info(
     "request %s: %s tables in %.1f s",
     request.request_id,

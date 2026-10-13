@@ -2450,15 +2450,43 @@ accept now (requests are rare, O5 is 24 h), revisit if O1 alerts bother.
   change: a user read just before the DELETE can come back. The final
   verification re-checks the sources; a non-zero count fails the run.
 
+### P8 step 5 (2026-10-13): the gdpr_erasure DAG
+
+- `delete_sources -> wait_bronze -> request_bronze -> wait_ack ->
+  erase_redis -> audit_counts -> erase_lake`; triggered only
+  (`schedule=None`), one run at a time, `user_id` param validated as a
+  lowercase UUID (JSON schema pattern), retries 1 (every step idempotent).
+- Steps outside Spark: `erasure/steps.py` in `/opt/erasure-venv` (hashed
+  lock `onprem/spark/erasure-requirements.lock`: confluent-kafka, psycopg,
+  pymongo, redis at the drills' versions, boto3). New CI component.
+- **The user id never on a logged command line**: BashOperator `env` (with
+  `append_env`, so the scheduler's eraser passwords stay), `mask_secret` in
+  every task's `pre_execute`; the Spark job still gets it as an argument
+  (masked). Steps print counts only (the last line is the XCom).
+- Athena: user id as an **execution parameter** (`?`), passed as a quoted
+  literal (Athena's rule), quotes doubled.
+- **Bug found on the real stack:** a subquery on `shop_orders` used the
+  order items' snapshot id; snapshot ids are per table. Placeholders are now
+  named after their table (`{shop_orders}`), and a test checks that every
+  `FOR VERSION AS OF` matches the table it reads.
+- **Bug found on the real stack:** "delete events in bronze >= rows deleted"
+  passed too early: the review simulator deletes reviews, so a live user
+  already had 8 review delete events. The wait is now "no key of the user
+  alive in bronze" (latest event by Kafka offset is a delete). Probe on a
+  live user: 1 / 58 / 79 / 328 / 19 keys alive (users, orders, items,
+  events, reviews), 6 to 13 s per Athena query.
+- `drills/request_erasure.py <user_id> [--wait]`: Airflow REST API (token,
+  unpause, trigger with the id in the body).
+- Audit: the lake job also writes the counts of the earlier steps
+  (`upstream` JSON, counts only): one writer for `erasure_audit`.
+
 ### Where we stopped (2026-10-13) — LATEST, start here
 
-- Steps 3 and 4 done. **Next: step 5**, the `gdpr_erasure` DAG. Needs a
-  Kafka client and a Redis client in the Airflow image (psycopg, pymongo,
-  boto3 are in the datacontract venv only): a small hashed lock.
-- Wait for bronze by delete events: every source delete must be in the
-  ledger's cut (per topic, one partition each) before the request is sent.
-- The user id is in the DAG run conf (Airflow's DB) and would be in the
-  spark-submit command line: mask it in task logs; document the run conf.
+- Steps 3-5 done. **Next: step 6**, `verify_erasure.py` + erase a real user
+  (orders, events, reviews, Redis keys) through the DAG; check every place,
+  time travel, audit rows, duration (O5 < 24 h). Remember the generator can
+  re-insert a user it read just before the DELETE: verification re-checks
+  the sources.
 - Open question (O1 during a bronze purge) still awaits Souhail.
 
 ### P1 plan (agreed)

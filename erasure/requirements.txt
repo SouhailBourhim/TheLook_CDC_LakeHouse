@@ -1,0 +1,7 @@
+# The erasure steps' clients, at the drills' versions; the image installs
+# the same pins from onprem/spark/erasure-requirements.lock (hashed).
+boto3==1.40.40
+confluent-kafka==2.15.1
+psycopg[binary]==3.3.6
+pymongo==4.18.2
+redis==8.1.0

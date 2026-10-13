@@ -52,7 +52,20 @@ erasure requests to its own tables.
 | A feature rebuild within Kafka's retention | would re-create Redis keys from old events: rerun the Redis step after one |
 
 **Order.** Sources first, so a re-snapshot or a replay cannot bring the user
-back; then bronze, silver and gold, Redis, verification, audit.
+back; then bronze, Redis, silver and gold (the lake job also writes every
+earlier step's counts to the audit: one writer), verification.
+
+**Steps outside Spark** (`erasure/steps.py`, one command per DAG task, its
+own virtualenv in the Airflow image from a hashed lock): the user id comes
+in an environment variable, never on a logged command line, every task
+masks it in its log, and each step prints counts only. The request is sent
+only once **none of the user's keys is alive in bronze** (each key's latest
+event, by Kafka offset, is a delete), read with Athena at the ledger's cut:
+a request sent earlier could be overtaken by a change still in Kafka.
+Counting delete events instead would be wrong: the review simulator deletes
+reviews too, so older delete events can satisfy a count before ours arrive
+(found while testing). The run's conf keeps the user id in Airflow's
+database; the runbook covers removing old runs.
 
 **The request.** `drills/request_erasure.py <user_id>` (the synthetic
 deletion request of spec 4.3) triggers `gdpr_erasure` with
