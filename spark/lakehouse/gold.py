@@ -357,8 +357,9 @@ def fact_watermark(spark: SparkSession, table: str) -> datetime.datetime | None:
     )
 
 
-def merge_facts(spark: SparkSession, table: str, rows: DataFrame, key: str) -> None:
-    """Upsert recomputed fact rows on their grain key (idempotent)."""
+def _ensure_table(spark: SparkSession, table: str, rows: DataFrame) -> None:
+    """Create a fact or mart table with the rows' schema if it is missing:
+    merge-on-read, since every write to it is a MERGE."""
     if not spark.catalog.tableExists(table):
         (
             rows.limit(0)
@@ -370,6 +371,11 @@ def merge_facts(spark: SparkSession, table: str, rows: DataFrame, key: str) -> N
             .tableProperty("write.delete.mode", "merge-on-read")
             .create()
         )
+
+
+def merge_facts(spark: SparkSession, table: str, rows: DataFrame, key: str) -> None:
+    """Upsert recomputed fact rows on their grain key (idempotent)."""
+    _ensure_table(spark, table, rows)
     from lakehouse.silver import add_new_columns
 
     add_new_columns(spark, table, rows)  # e.g. _computed_at on older tables
@@ -778,3 +784,139 @@ def build_marts(
         f"{gold_db}.mart_product_ratings"
     ).count()
     return result
+
+
+# --- backfill: one range of days, recomputed from silver (FR10, ADR 021) --------
+
+
+def _date_key(day: datetime.date) -> int:
+    return int(day.strftime("%Y%m%d"))
+
+
+def replace_range(
+    spark: SparkSession, table: str, rows: DataFrame, key: str, in_range: str
+) -> None:
+    """Make the table's rows in a range exactly `rows`: MERGE on the grain
+    key, and delete the rows in the range the source no longer has.
+
+    `in_range` is an SQL condition on the target (alias t), built here from
+    integer date keys only. Without the delete, a fact silver lost since the
+    last run (e.g. a GDPR erasure) would stay in gold; with it, a backfill
+    can never bring one back. Rerunning gives the same rows: same input,
+    same MERGE."""
+    from lakehouse.silver import add_new_columns
+
+    _ensure_table(spark, table, rows)
+    add_new_columns(spark, table, rows)
+    spark.sql(
+        f"MERGE INTO {table} t USING {{rows}} s ON t.{key} = s.{key} "
+        "WHEN MATCHED THEN UPDATE SET * "
+        "WHEN NOT MATCHED THEN INSERT * "
+        f"WHEN NOT MATCHED BY SOURCE AND {in_range} THEN DELETE",
+        rows=rows,
+    )
+
+
+def rebuild_days(
+    spark: SparkSession,
+    start: datetime.date,
+    end: datetime.date,
+    silver_db: str = "lake.thelook_silver",
+    gold_db: str = "lake.thelook_gold",
+) -> dict:
+    """Recompute the facts and daily marts of the days start..end
+    (inclusive) from silver, replacing what gold holds for those days;
+    returns the rows written per table.
+
+    Days are order days (orders created then, with their items) and session
+    days (sessions started then). The dimensions are used as they are, and
+    the incremental watermarks are left alone: a backfill repairs the past,
+    it is not progress. The next incremental run may recompute some of
+    these days again, which gives the same rows.
+
+    Like build_facts, assumes silver is not written meanwhile (the backfill
+    DAG holds the lake pool)."""
+    if end < start:
+        raise ValueError("end is before start")
+    first = datetime.datetime.combine(start, datetime.time())
+    after = datetime.datetime.combine(end + datetime.timedelta(days=1), datetime.time())
+    k1, k2 = _date_key(start), _date_key(end)
+    order_days = f"t.order_date_key BETWEEN {k1} AND {k2}"
+    items, orders, events = (
+        spark.table(f"{silver_db}.{t}") for t in ("order_items", "orders", "events")
+    )
+    products = spark.table(f"{gold_db}.dim_product")
+    users = spark.table(f"{gold_db}.dim_user")
+    counts = {}
+
+    day_orders = orders.where(
+        (F.col("created_at") >= F.lit(first)) & (F.col("created_at") < F.lit(after))
+    ).persist()
+    day_items = items.join(
+        day_orders.select(F.col("id").alias("order_id")), "order_id", "left_semi"
+    )
+    item_rows = order_item_facts(day_items, day_orders, products, users).persist()
+    computed = F.current_timestamp()
+    replace_range(
+        spark,
+        f"{gold_db}.fct_order_items",
+        item_rows.withColumn("_computed_at", computed),
+        "order_item_id",
+        order_days,
+    )
+    replace_range(
+        spark,
+        f"{gold_db}.fct_orders",
+        order_facts(day_orders, item_rows).withColumn("_computed_at", computed),
+        "order_id",
+        order_days,
+    )
+    counts["fct_order_items"] = item_rows.count()
+    counts["fct_orders"] = day_orders.count()
+    item_rows.unpersist()
+    day_orders.unpersist()
+
+    # A session spans minutes: one hour of margin on each side holds every
+    # event of the sessions started in the range (as in build_facts).
+    margin = datetime.timedelta(hours=1)
+    window = events.where(
+        (F.col("created_at") >= F.lit(first - margin))
+        & (F.col("created_at") < F.lit(after + margin))
+    )
+    session_rows = (
+        session_facts(window)
+        .where(F.col("session_date_key").between(k1, k2))
+        .withColumn("_computed_at", computed)
+        .persist()
+    )
+    replace_range(
+        spark,
+        f"{gold_db}.fct_sessions",
+        session_rows,
+        "session_id",
+        f"t.session_date_key BETWEEN {k1} AND {k2}",
+    )
+    counts["fct_sessions"] = session_rows.count()
+    session_rows.unpersist()
+
+    # The daily marts, from the facts just replaced.
+    day_range = F.col("order_date_key").between(k1, k2)
+    revenue = daily_revenue(
+        spark.table(f"{gold_db}.fct_orders").where(day_range),
+        spark.table(f"{gold_db}.fct_order_items").where(day_range),
+    )
+    days_in_range = f"t.date_key BETWEEN {k1} AND {k2}"
+    replace_range(
+        spark, f"{gold_db}.mart_daily_revenue", revenue, "date_key", days_in_range
+    )
+    funnel = session_funnel(
+        spark.table(f"{gold_db}.fct_sessions").where(
+            F.col("session_date_key").between(k1, k2)
+        )
+    )
+    replace_range(
+        spark, f"{gold_db}.mart_session_funnel", funnel, "date_key", days_in_range
+    )
+    counts["mart_daily_revenue"] = revenue.count()
+    counts["mart_session_funnel"] = funnel.count()
+    return counts
