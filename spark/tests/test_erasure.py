@@ -3,11 +3,12 @@ local Iceberg catalog (rows gone, others kept, replay, expiry)."""
 
 import json
 import os
+import uuid
 
 import pytest
 
 from lakehouse import erasure
-from lakehouse.bronze import already_committed, snapshot_summaries
+from lakehouse.bronze import BATCH_ID, QUERY_ID, already_committed, snapshot_summaries
 from lakehouse.erasure import Request, apply_requests, parse_request, user_hash
 
 ALICE = "6f1c2a3b-0d4e-4f5a-8b6c-7d8e9f0a1b2c"  # erased
@@ -299,3 +300,38 @@ def test_a_purge_that_dies_midway_is_completed_by_its_replay(spark, bronze_db):
     assert ids(spark, f"{bronze_db}.shop_order_items") == ["i-b1"]
     assert ids(spark, f"{bronze_db}.shop_orders") == ["o-b1"]
     assert ids(spark, f"{bronze_db}.shop_users") == [BOB]
+
+
+def test_repair_refuses_other_tables_and_non_uuid_keys(spark, bronze_db):
+    with pytest.raises(ValueError, match="not a bronze user table"):
+        erasure.repair_keys(spark, f"{bronze_db}.stream_batches", [ALICE])
+    with pytest.raises(ValueError, match="not canonical UUIDs"):
+        erasure.repair_keys(spark, f"{bronze_db}.shop_order_items", ["x' OR '1'='1"])
+
+
+def test_repair_deletes_by_uuid_key_and_restamps(spark, lake):
+    db, _ = lake
+    table = f"{db}.shop_order_items"
+    item_a, item_b = str(uuid.uuid4()), str(uuid.uuid4())
+    create(
+        spark,
+        table,
+        PG.format("id string, order_id string"),
+        [
+            ("c", None, (item_a, "o-a1")),
+            ("d", (item_a, None), None),
+            ("c", None, (item_b, "o-b1")),
+        ],
+    )
+    iceberg = spark._jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
+        spark._jsparkSession, table
+    )
+    iceberg.newAppend().set(QUERY_ID, "q1").set(BATCH_ID, "41").commit()
+    spark.catalog.refreshTable(table)
+
+    done = erasure.repair_keys(spark, table, [item_a])
+
+    assert done["rows_deleted"] == 2
+    assert ids(spark, table) == [item_b]
+    assert spark.table(f"{table}.snapshots").count() == 1
+    assert already_committed(snapshot_summaries(spark, table), "q1", 41)

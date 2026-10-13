@@ -217,6 +217,35 @@ def purge_user(
     }
 
 
+def latest_marks(spark: SparkSession, table: str) -> dict[str, str]:
+    """The newest batch marks in the table's snapshots ({} if none)."""
+    marked = [
+        s for s in snapshot_summaries(spark, table) if QUERY_ID in s and BATCH_ID in s
+    ]
+    if not marked:
+        return {}
+    newest = max(marked, key=lambda s: int(s[BATCH_ID]))
+    return {QUERY_ID: newest[QUERY_ID], BATCH_ID: newest[BATCH_ID]}
+
+
+def repair_keys(spark: SparkSession, table: str, keys: list[str]) -> dict[str, int]:
+    """Operator repair (runbook: "Repair a partial bronze purge"): delete
+    rows of one bronze user table by key, then drop its history. For rows a
+    purge can no longer find by user id (P8 step 6: order items whose orders
+    were already gone). Run with the stream stopped, as its identity.
+
+    The empty commit carries the newest batch marks: a stream restarting on
+    a half-done batch replays it, and must find the mark, not append twice."""
+    if table.rsplit(".", 1)[1] not in USER_TABLES:
+        raise ValueError(f"not a bronze user table: {table}")
+    bad = [k for k in keys if not is_user_id(k)]
+    if bad:
+        raise ValueError(f"{len(bad)} keys are not canonical UUIDs")
+    deleted = delete_keys(spark, table, keys)
+    expired = upkeep.drop_history(spark, table, latest_marks(spark, table))
+    return {"rows_deleted": deleted, "snapshots_expired": expired}
+
+
 def apply_requests(
     spark: SparkSession,
     requests: list[Request],
