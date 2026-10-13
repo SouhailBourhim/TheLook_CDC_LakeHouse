@@ -65,3 +65,21 @@ def test_orphan_removal_is_limited_to_a_few_tables_per_run(spark, lake):
     assert upkeep.due(
         spark, tables, upkeep.ORPHANS_REMOVED_AT, datetime.timedelta(days=7), now
     ) == [f"{gold}.fct_orders"]
+
+
+def test_apply_deletes_rewrites_a_file_that_compaction_leaves(spark, lake):
+    # GDPR erasure (ADR 021): one deleted row in a file of ten is under
+    # Iceberg's thresholds, so compact() keeps the file, the row inside it.
+    _, silver_db = lake
+    table = f"{silver_db}.one_delete"
+    df = spark.createDataFrame([(i,) for i in range(10)], "id int").coalesce(1)
+    writer = df.writeTo(table).using("iceberg")
+    for key, value in MERGE_ON_READ.items():
+        writer = writer.tableProperty(key, value)
+    writer.create()
+    spark.sql(f"DELETE FROM {table} WHERE id = 3")
+
+    assert upkeep.compact(spark, table) == 0
+    assert upkeep.apply_deletes(spark, table) == 1
+    assert spark.table(f"{table}.delete_files").count() == 0
+    assert spark.table(table).count() == 9

@@ -60,6 +60,33 @@ def expire(
     return before - size(iceberg.snapshots())
 
 
+def drop_history(
+    spark: SparkSession, table: str, properties: dict[str, str] | None = None
+) -> int:
+    """Keep only the table's current state: an empty commit (its snapshot
+    summary carrying `properties`), then expiry of every other snapshot;
+    returns how many were expired. Time travel to any earlier state fails,
+    and the files only those states used are deleted (GDPR erasure, ADR 021).
+
+    Why the empty commit: Iceberg's incremental cleanup deletes the files
+    removed by *expired* snapshots. Without it, the snapshot that deleted
+    the rows (the DELETE or the rewrite) would be the one kept, and the old
+    files it removed would stay on disk (found in P8 on a copy-on-write
+    table: expired, but the file still there)."""
+    iceberg = spark._jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
+        spark._jsparkSession, table
+    )
+    iceberg.refresh()
+    append = iceberg.newAppend()
+    for key, value in (properties or {}).items():
+        append = append.set(key, value)
+    append.commit()
+    spark.catalog.refreshTable(table)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # Every snapshot is older than now; the current one is always kept.
+    return expire(spark, table, now, keep_last=1)
+
+
 def compact(spark: SparkSession, table: str, where: str | None = None) -> int:
     """Rewrite small data files (only those matching `where`, an SQL
     condition, if given) into larger ones, applying any delete files on the
@@ -74,6 +101,28 @@ def compact(spark: SparkSession, table: str, where: str | None = None) -> int:
     return spark.sql(
         f"CALL {catalog}.system.rewrite_data_files(table => '{table}'{condition}, "
         "options => map('remove-dangling-deletes', 'true'))"
+    ).first()["rewritten_data_files_count"]
+
+
+def apply_deletes(spark: SparkSession, table: str) -> int:
+    """Rewrite every data file that has delete files, applying them (GDPR
+    erasure, ADR 021); returns how many data files were rewritten.
+
+    compact() keeps Iceberg's thresholds: a large file with a single deleted
+    row is left as it is, the row still inside it. delete-file-threshold 1
+    rewrites any data file with at least one delete file, so no deleted row
+    survives in a current file; expiry then removes the old files.
+
+    Partial progress: the rewrite commits group by group as they finish
+    (each group atomically), so a network failure late in a long rewrite
+    (6 minutes for silver users, P8) does not throw the finished groups
+    away; the retry rewrites only the files that still have deletes."""
+    catalog = table.split(".", 1)[0]
+    return spark.sql(
+        f"CALL {catalog}.system.rewrite_data_files(table => '{table}', "
+        "options => map('delete-file-threshold', '1', "
+        "'partial-progress.enabled', 'true', "
+        "'remove-dangling-deletes', 'true'))"
     ).first()["rewritten_data_files_count"]
 
 

@@ -77,9 +77,16 @@ them a replay of the batch would append its rows twice (step 3 finding).
 
 **Silver and gold.** `jobs/erase.py <user_id> <request_id>` (batch user,
 `lake` pool): deletes (order items through the user's order ids, read
-before the orders are deleted; dead letters by `$.user_id` in the payload),
-rewrites the affected files applying the deletes (`lakehouse.upkeep`),
-expires older snapshots, and appends the audit rows.
+before the orders are deleted, from silver and from `fct_orders`: silver
+may already have deleted them when the source deletion reached it; dead
+letters by `$.user_id` in the payload), rewrites every data file that has
+delete files (`upkeep.apply_deletes`, `delete-file-threshold` 1: Iceberg's
+default thresholds keep a large file with one deleted row), drops the
+history (`upkeep.drop_history`: an empty commit, then expiry of every
+other snapshot, so the snapshot that removed the files is expired too and
+incremental cleanup deletes them), and appends the audit rows. Every table
+of the map goes through the rewrite and the expiry even when the job finds
+no row: rows silver's MERGE already deleted are still inside data files.
 
 **Audit.** `lake.thelook_silver.erasure_audit`: one row per step (request
 id, sha256 of the user id, step, rows affected, time). It proves what was

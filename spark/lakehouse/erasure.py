@@ -1,4 +1,5 @@
-"""GDPR erasure in bronze, applied by the bronze stream (ADR 021).
+"""GDPR erasure in bronze (by the bronze stream) and in silver and gold
+(by jobs/erase.py), ADR 021.
 
 The gdpr_erasure DAG cannot delete from bronze (ADR 017: no key that can
 delete bronze in Airflow). It publishes a request to ERASURE_TOPIC; the
@@ -24,7 +25,6 @@ the DELETE rewrites the affected files without the user's rows; expiring
 every older snapshot then lets Iceberg delete the old files.
 """
 
-import datetime
 import hashlib
 import json
 import logging
@@ -71,12 +71,19 @@ def parse_request(value: bytes | None) -> Request | None:
     try:
         body = json.loads(value)
         request_id, user_id = str(body["request_id"]), str(body["user_id"])
-        canonical = str(uuid.UUID(user_id))
     except (TypeError, ValueError, KeyError):
         return None
-    if user_id != canonical or not 0 < len(request_id) <= 200:
+    if not is_user_id(user_id) or not 0 < len(request_id) <= 200:
         return None
     return Request(request_id, user_id)
+
+
+def is_user_id(user_id: str) -> bool:
+    """A UUID in the canonical lowercase form the source writes."""
+    try:
+        return str(uuid.UUID(user_id)) == user_id
+    except ValueError:
+        return False
 
 
 def user_hash(user_id: str) -> str:
@@ -188,23 +195,6 @@ def purge_user(
     }
 
 
-def stamp(spark: SparkSession, table: str, query_id: str, batch_id: int) -> None:
-    """An empty commit carrying the batch's marks (lakehouse.bronze).
-
-    Expiry keeps only the newest snapshot, and the DELETE's snapshot has no
-    marks (SQL statements cannot set snapshot properties from PySpark). The
-    batch's append snapshot, the one with the marks, is about to go: without
-    a newer marked snapshot, a replay of this batch would find no mark and
-    append its rows a second time.
-    """
-    iceberg = spark._jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
-        spark._jsparkSession, table
-    )
-    iceberg.refresh()
-    iceberg.newAppend().set(QUERY_ID, query_id).set(BATCH_ID, str(batch_id)).commit()
-    spark.catalog.refreshTable(table)
-
-
 def apply_requests(
     spark: SparkSession,
     requests: list[Request],
@@ -218,9 +208,13 @@ def apply_requests(
 
     Order, each step safe to replay:
       1. delete every user's rows (idempotent);
-      2. on each table that lost rows, stamp the batch's marks, then expire
-         every snapshot but the newest: the old files that held the rows are
-         deleted, and time travel to before the purge fails;
+      2. on each table that lost rows, an empty commit carrying the batch's
+         marks, then expiry of every other snapshot (upkeep.drop_history):
+         the old files that held the rows are deleted, and time travel to
+         before the purge fails. The marks matter: the expiry removes the
+         append snapshot that held them (the DELETE's snapshot has none:
+         PySpark cannot set snapshot properties on an SQL statement), and
+         without them a replay of the batch would append its rows twice;
       3. one log row per request, stamped with the batch: written last, so
          a replay before it purges again (finding nothing) and logs then.
     The caller writes the ledger row only after this returns, so the ledger
@@ -231,14 +225,10 @@ def apply_requests(
         return None
     deleted = [purge_user(spark, r.user_id, database) for r in requests]
     purged = sorted({name for counts in deleted for name, n in counts.items() if n})
-    now = datetime.datetime.now(datetime.timezone.utc)
-    expired = {}
-    for name in purged:
-        table = f"{database}.{name}"
-        stamp(spark, table, query_id, batch_id)
-        # Every snapshot older than now is pre-stamp; the current one (the
-        # stamp) is always kept.
-        expired[name] = upkeep.expire(spark, table, now, keep_last=1)
+    marks = {QUERY_ID: query_id, BATCH_ID: str(batch_id)}
+    expired = {
+        name: upkeep.drop_history(spark, f"{database}.{name}", marks) for name in purged
+    }
     rows = spark.createDataFrame(
         [
             (r.request_id, user_hash(r.user_id), counts)
@@ -252,3 +242,131 @@ def apply_requests(
     else:
         writer.using("iceberg").tableProperty("format-version", "2").create()
     return expired
+
+
+# --- silver and gold (jobs/erase.py, batch user) ---------------------------------
+
+SILVER_DB = "lake.thelook_silver"
+GOLD_DB = "lake.thelook_gold"
+# One row per request and table: what was done, never who (ADR 021).
+AUDIT_NAME = "erasure_audit"
+AUDIT_SCHEMA = (
+    "request_id string, user_sha256 string, step string, rows_deleted bigint, "
+    "files_rewritten bigint, snapshots_expired bigint, done_at timestamp"
+)
+
+# The user's rows in each table, as an SQL condition: the user id is the
+# named parameter :uid, the user's order ids the DataFrame {orders}. Neither
+# is ever text inside the SQL. The marts are aggregates and are kept (FR9).
+_JSON_USER = "contains({c}, :uid) AND get_json_object({c}, '$.user_id') = :uid"
+LAKE_TABLES = {
+    "silver.users": "id = :uid",
+    "silver.orders": "user_id = :uid",
+    # No user_id in order items: through the user's orders.
+    "silver.order_items": "order_id IN (SELECT k FROM {orders})",
+    "silver.events": "user_id = :uid",
+    "silver.reviews": "user_id = :uid",
+    # Raw MongoDB documents that did not fit their table (ADR 020).
+    "silver.dead_letters": _JSON_USER.format(c="payload"),
+    "gold.dim_user": "user_id = :uid",
+    "gold.fct_order_items": "user_id = :uid",
+    "gold.fct_orders": "user_id = :uid",
+    "gold.fct_sessions": "user_id = :uid",
+}
+
+
+def _table(step: str, silver_db: str, gold_db: str) -> str:
+    layer, name = step.split(".")
+    return f"{silver_db if layer == 'silver' else gold_db}.{name}"
+
+
+def user_orders(
+    spark: SparkSession, user_id: str, silver_db: str, gold_db: str
+) -> list[str]:
+    """The user's order ids, from silver and from gold: silver may already
+    have deleted the orders (the source deletion came first), the facts keep
+    them until this job runs."""
+    found: set[str] = set()
+    for table, key in (
+        (f"{silver_db}.orders", "id"),
+        (f"{gold_db}.fct_orders", "order_id"),
+    ):
+        if spark.catalog.tableExists(table):
+            rows = spark.table(table).where(F.col("user_id") == F.lit(user_id))
+            found |= {r[0] for r in rows.select(key).collect()}
+    return sorted(found)
+
+
+def erase_table(
+    spark: SparkSession, table: str, condition: str, user_id: str, orders: list[str]
+) -> dict[str, int]:
+    """Delete the user's rows, rewrite every file that has deletes (the
+    rows deleted now, and those an earlier MERGE already deleted when the
+    source deletion reached silver), then expire every older snapshot.
+    Idempotent: run again, it deletes and rewrites nothing."""
+    sql_args = {"args": {"uid": user_id}}
+    if "{orders}" in condition:
+        sql_args["orders"] = spark.createDataFrame([(k,) for k in orders], "k string")
+    deleted = spark.sql(
+        f"SELECT count(*) AS n FROM {table} WHERE {condition}", **sql_args
+    ).first()["n"]
+    if deleted:
+        spark.sql(f"DELETE FROM {table} WHERE {condition}", **sql_args)
+    files = upkeep.apply_deletes(spark, table)
+    return {
+        "rows_deleted": deleted,
+        "files_rewritten": files,
+        "snapshots_expired": upkeep.drop_history(spark, table),
+    }
+
+
+def _audit(
+    spark: SparkSession, audit: str, request: Request, step: str, done: dict
+) -> None:
+    """One audit row for a step, unless the request already has one: a
+    rerun after a failure keeps the first run's counts, the real ones."""
+    if not spark.catalog.tableExists(audit):
+        spark.createDataFrame([], AUDIT_SCHEMA).writeTo(audit).using(
+            "iceberg"
+        ).tableProperty("format-version", "2").create()
+    row = spark.createDataFrame(
+        [(request.request_id, user_hash(request.user_id), step, *done.values())],
+        "request_id string, user_sha256 string, step string, rows_deleted bigint, "
+        "files_rewritten bigint, snapshots_expired bigint",
+    ).withColumn("done_at", F.current_timestamp())
+    spark.sql(
+        f"MERGE INTO {audit} t USING {{row}} s "
+        "ON t.request_id = s.request_id AND t.step = s.step "
+        "WHEN NOT MATCHED THEN INSERT *",
+        row=row,
+    )
+
+
+def erase_lake(
+    spark: SparkSession,
+    request: Request,
+    silver_db: str = SILVER_DB,
+    gold_db: str = GOLD_DB,
+    retry=lambda step: step(),
+) -> dict[str, dict[str, int]]:
+    """Erase the user from every silver and gold table of the map, table by
+    table, each followed by its audit row; returns what was done per table.
+    `retry` wraps each table's work (the job passes with_retries)."""
+    if not is_user_id(request.user_id):
+        raise ValueError("the user id must be a canonical lowercase UUID")
+    audit = f"{silver_db}.{AUDIT_NAME}"
+    orders = user_orders(spark, request.user_id, silver_db, gold_db)
+    report = {}
+    for step, condition in LAKE_TABLES.items():
+        table = _table(step, silver_db, gold_db)
+        if not spark.catalog.tableExists(table):
+            continue
+        report[step] = retry(
+            lambda table=table, condition=condition: erase_table(
+                spark, table, condition, request.user_id, orders
+            )
+        )
+        _audit(spark, audit, request, step, report[step])
+        # Counts and the request id, never the user id.
+        log.info("%s %s: %s", request.request_id, step, report[step])
+    return report

@@ -2415,11 +2415,51 @@ request, or move the key lookup to a background thread (reads are safe
 beside appends; only the DELETE stays in the batch)? Recommendation:
 accept now (requests are rare, O5 is 24 h), revisit if O1 alerts bother.
 
+### P8 step 4 (2026-10-13): silver and gold purge
+
+- `jobs/erase.py <user_id> <request_id>` (batch user, pool `lake`) calls
+  `erasure.erase_lake`: for each of the 10 tables of the map, count and
+  DELETE the user's rows, `upkeep.apply_deletes`, `upkeep.drop_history`,
+  then one `erasure_audit` row (MERGE `WHEN NOT MATCHED` on request + step:
+  a rerun keeps the first, real counts).
+- One SQL condition per table; the user id is a **named parameter**
+  (`:uid`), the order ids a DataFrame subquery: nothing is pasted into SQL.
+- **Order ids from silver and `fct_orders`**: when the job runs, silver's
+  MERGE may already have deleted the orders (the source deletion went
+  first). Their rows are still inside data files (merge-on-read).
+- **Every table is rewritten and expired even with 0 rows found**, for the
+  same reason.
+- **Finding: `compact()` is not enough.** Iceberg's thresholds keep a file
+  with 1 deleted row out of 10 (test). `apply_deletes` uses
+  `delete-file-threshold=1` (any file with a delete file is rewritten) and
+  `partial-progress.enabled` (groups commit as they finish, so a network
+  failure late in a 6-minute rewrite keeps the finished groups).
+- **Finding: expiry kept the file on a copy-on-write table.** Iceberg's
+  incremental cleanup deletes files removed by *expired* snapshots; the
+  DELETE's snapshot was the one kept, so its removed file stayed on disk
+  (`dim_user`, caught by the test that reads every Parquet file on disk).
+  `upkeep.drop_history`: empty commit, then expire all others. Silver had
+  passed by luck (`remove-dangling-deletes` makes a second commit). Bronze
+  uses the same helper, the empty commit carrying the batch marks.
+- Real lake (user with no rows): first run died on a network outage (DNS
+  failures, 50% packet loss) after 5 retries; second run: 10 tables in
+  1546 s, 20-30 snapshots expired per table, ~20 files rewritten per table.
+  The DAG timeout must allow ~1 hour.
+- **Finding for step 5/6:** the generator picks a random user every
+  iteration (`ORDER BY RANDOM() LIMIT 1`) and upserts it on an address
+  change: a user read just before the DELETE can come back. The final
+  verification re-checks the sources; a non-zero count fails the run.
+
 ### Where we stopped (2026-10-13) — LATEST, start here
 
-- Step 3 done. **Next: step 4**, `jobs/erase.py` (silver and gold purge).
-- Check in step 6 on S3: a real purge's rewrites and expiry under the
-  stream's identity (only exercised locally so far).
+- Steps 3 and 4 done. **Next: step 5**, the `gdpr_erasure` DAG. Needs a
+  Kafka client and a Redis client in the Airflow image (psycopg, pymongo,
+  boto3 are in the datacontract venv only): a small hashed lock.
+- Wait for bronze by delete events: every source delete must be in the
+  ledger's cut (per topic, one partition each) before the request is sent.
+- The user id is in the DAG run conf (Airflow's DB) and would be in the
+  spark-submit command line: mask it in task logs; document the run conf.
+- Open question (O1 during a bronze purge) still awaits Souhail.
 
 ### P1 plan (agreed)
 
