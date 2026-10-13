@@ -121,6 +121,12 @@ with DAG(
         spark_binary="/opt/spark/bin/spark-submit",
         # One slot shared with transform and maintenance (ADR 017).
         pool="lake",
+        # Next in line for that slot: with the default weights it lost to
+        # transform's gold_marts, then to the graph rebuild (P8 step 6).
+        # An erasure is rare and has a deadline (O5); transform reads
+        # incrementally and loses nothing by waiting one run.
+        priority_weight=10,
+        weight_rule="absolute",
         # Measured: 26 min for the 10 tables (P8 step 4).
         execution_timeout=timedelta(minutes=90),
         pre_execute=mask_user,

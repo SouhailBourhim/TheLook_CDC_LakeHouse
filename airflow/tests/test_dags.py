@@ -171,3 +171,15 @@ def test_gdpr_erasure_never_puts_the_user_id_on_a_bash_command_line(bag):
         # Every task masks the user id in its log.
         hook = getattr(task, "_pre_execute_hook", None)
         assert getattr(hook, "__name__", "") == "mask_user", task.task_id
+
+
+def test_the_lake_erasure_goes_first_for_the_lake_slot(bag):
+    # Default weights ("downstream": own weight + every downstream task's)
+    # let transform and graph tasks take the slot first (P8 step 6).
+    task = bag.dags["gdpr_erasure"].get_task("erase_lake")
+    assert str(task.weight_rule).lower().endswith("absolute")
+    for dag_id in ("transform", "maintenance", "graph"):
+        for other in bag.dags[dag_id].tasks:
+            if other.pool == "lake":
+                downstream = other.get_flat_relative_ids(upstream=False)
+                assert task.priority_weight > other.priority_weight + len(downstream)
