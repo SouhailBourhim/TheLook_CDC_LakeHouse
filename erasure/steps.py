@@ -317,7 +317,10 @@ def main(command: str) -> dict[str, int]:
     if command == "request-bronze":
         return request_bronze(uid, request_id())
     if command == "wait-ack":
-        return wait_ack(request_id(), timeout_s=3600)
+        # Measured in P8: a bronze purge takes about an hour under load
+        # (every copy-on-write DELETE re-reads its table), more with
+        # network retries.
+        return wait_ack(request_id(), timeout_s=7200)
     if command == "erase-redis":
         return erase_redis(uid)
     sys.exit(f"unknown command: {command}")

@@ -105,8 +105,9 @@ with DAG(
         env={"ERASURE_DELETED": "{{ ti.xcom_pull(task_ids='delete_sources') }}"},
     )
     requested = step("request_bronze", "request-bronze", timedelta(minutes=5))
-    # The stream may first finish its upkeep, then scans bronze (P8: ~15 min).
-    acked = step("wait_ack", "wait-ack", timedelta(minutes=65))
+    # The stream may first finish its upkeep, then purges bronze: about an
+    # hour under load (P8 step 6), more with network retries.
+    acked = step("wait_ack", "wait-ack", timedelta(minutes=125))
     redis = step("erase_redis", "erase-redis", timedelta(minutes=5))
     counts = audit_counts()
     lake = SparkSubmitOperator(
