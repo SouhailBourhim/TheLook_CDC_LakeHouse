@@ -150,13 +150,8 @@ def test_purge_removes_every_image_of_the_user_and_nothing_else(spark, bronze_db
     assert ids(spark, f"{bronze_db}.shop_order_items") == ["i-b1"]
     assert ids(spark, f"{bronze_db}.web_events") == ["e-b1", "e-b2", "e-ghost"]
     assert ids(spark, f"{bronze_db}.web_reviews") == ["rv-b1"]
-    # Only the tables that lost rows were rewritten and expired.
-    assert sorted(expired) == [
-        "shop_order_items",
-        "shop_orders",
-        "shop_users",
-        "web_events",
-    ]
+    # Every user table loses its history, rows deleted now or not.
+    assert sorted(expired) == sorted(erasure.USER_TABLES)
     (row,) = spark.table(f"{bronze_db}.erasure_log").collect()
     assert row.request_id == "run-1"
     assert row.user_sha256 == user_hash(ALICE)
@@ -185,6 +180,10 @@ def test_a_purge_interrupted_before_its_log_row_can_run_again(spark, bronze_db):
     (row,) = spark.table(f"{bronze_db}.erasure_log").collect()
     assert set(row.rows_deleted.values()) == {0}
     assert ids(spark, f"{bronze_db}.shop_users") == [BOB]
+    # The replay deleted nothing, yet the snapshots that still held the rows
+    # (before the interrupted attempt's DELETEs) are gone too.
+    for name in erasure.USER_TABLES:
+        assert spark.table(f"{bronze_db}.{name}.snapshots").count() == 1, name
 
 
 def test_old_snapshots_and_their_files_are_gone(spark, bronze_db):
@@ -214,13 +213,15 @@ def test_the_batch_mark_survives_the_expiry(spark, bronze_db):
         assert already_committed(summaries, "q1", 9)
 
 
-def test_tables_without_the_user_are_left_alone(spark, bronze_db):
+def test_tables_without_the_user_lose_their_history_but_no_row(spark, bronze_db):
+    # Alice has no review: nothing is deleted there, but the history goes
+    # all the same (a table cannot tell an earlier interrupted attempt).
     reviews = f"{bronze_db}.web_reviews"
-    before = spark.table(f"{reviews}.snapshots").collect()
 
     apply_requests(spark, [Request("run-1", ALICE)], "q1", 9, bronze_db)
 
-    assert spark.table(f"{reviews}.snapshots").collect() == before
+    assert ids(spark, reviews) == ["rv-b1"]
+    assert spark.table(f"{reviews}.snapshots").count() == 1
 
 
 def test_two_requests_in_one_batch_get_one_log_row_each(spark, bronze_db):

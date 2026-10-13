@@ -229,8 +229,12 @@ def apply_requests(
 
     Order, each step safe to replay:
       1. delete every user's rows (idempotent);
-      2. on each table that lost rows, an empty commit carrying the batch's
-         marks, then expiry of every other snapshot (upkeep.drop_history):
+      2. on every table that can hold user data, whatever this attempt
+         deleted, an empty commit carrying the batch's marks, then expiry
+         of every other snapshot (upkeep.drop_history). Not only the tables
+         that lost rows now: an interrupted attempt may have deleted rows
+         and failed before this step; its replay deletes nothing there, and
+         the old snapshots would keep the rows (found in P8 step 6):
          the old files that held the rows are deleted, and time travel to
          before the purge fails. The marks matter: the expiry removes the
          append snapshot that held them (the DELETE's snapshot has none:
@@ -251,7 +255,9 @@ def apply_requests(
     if retry(logged):
         return None
     deleted = [purge_user(spark, r.user_id, database, retry) for r in requests]
-    purged = sorted({name for counts in deleted for name, n in counts.items() if n})
+    purged = [
+        name for name in USER_TABLES if spark.catalog.tableExists(f"{database}.{name}")
+    ]
     marks = {QUERY_ID: query_id, BATCH_ID: str(batch_id)}
     expired = {
         name: retry(
