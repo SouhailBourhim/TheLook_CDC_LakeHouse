@@ -144,6 +144,25 @@ now fixed and tested:
   interrupted attempt it under-reports (the first run logged 0 for three
   tables). The proof is `drills/verify_erasure.py`, not the counts.
 
+**Bronze freshness during a purge (O1), decided 2026-10-14 (Souhail).**
+A purge holds one micro-batch for about an hour under load; bronze misses
+O1 for that hour. Accepted for now: requests are rare, O5 gives 24 hours.
+Measured (Athena, 10 days of bronze): a user's rows sit in few files (6 to
+12 of 174 to 322) but on 5 to 9 of the 10 days, and past days are compacted
+into large files. So filtering the DELETEs by day would save little, and
+the rewrite of those large files is the core cost; it grows with bronze's
+history (append-only, never truncated).
+
+Planned answer, when retention or request volume makes the hour matter:
+**purge in the background, finish in the batch.** The batch that reads a
+request records it; a background thread (like the upkeep thread) runs the
+lookups and DELETEs while batches continue, with bronze DELETEs at
+`snapshot` isolation (concurrent appends allowed: the DAG sends a request
+only once no key of the user is alive in bronze, so none can arrive); a
+later batch, before its ledger row, stamps the marks, drops the history and
+writes the log row (1 to 2 minutes). Not now: it adds a durable state
+machine to bronze's only writer.
+
 ## Consequences
 
 - ✅ Erasure reaches every copy, time travel included, and proves it.
@@ -161,12 +180,10 @@ now fixed and tested:
 - ❌ Under load, one request kept a bronze batch busy for 58 minutes on the
   first run (18 minutes for web_events' lookup alone, network failures on
   top): bronze freshness is missed for that long.
-- ❌ The bronze key lookups read whole tables (web_events' JSON above all):
-  a batch holding a request took 867 s instead of ~50 s (step 3, a user
-  with no rows; a real purge adds the rewrites). Bronze freshness (O1,
-  5 minutes) is missed for that one batch per request. A later option: look
-  the keys up in a background thread (reads are safe beside appends) and
-  only DELETE in the batch.
+- ❌ The bronze key lookups read whole tables (web_events' JSON above all),
+  and each copy-on-write DELETE re-reads its table before rewriting the
+  files holding the user: bronze freshness (O1) is missed for about an hour
+  per request (accepted above, with the planned answer).
 
 ## References
 

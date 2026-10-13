@@ -2521,15 +2521,34 @@ network) dropped every 15-30 minutes all night; every weakness showed.
   in, and the DELETE filters on them, so Iceberg reads and rewrites only
   those partitions.
 
-### Where we stopped (2026-10-13) — LATEST, start here
+## Session 14 — 2026-10-14 — P8 step 6 checkpoint, O1 decided
 
-- Steps 3-6 done; **P8 acceptance part 1 passed** (54/54 on drill 2).
+### Step 6 checkpoint
+
+Souhail answered the three questions correctly (children first and why
+only items were hit; the empty commit: incremental cleanup + replay marks;
+"no key alive" vs counting delete events). Precisions given: incremental
+cleanup deletes files *removed by expired snapshots* (not "referenced only
+by expired snapshots", the reachable cleanup's rule); the SQL-marks limit
+is PySpark's, not Iceberg's; "latest by offset" holds because each topic has
+one partition; "no key alive" does not depend on traffic (quiet `users`).
+Open follow-up: on merge-on-read silver, what would DELETE + empty commit +
+expiry leave on S3 without the `apply_deletes` rewrite?
+
+### Decision: O1 during a bronze purge (Souhail)
+
+- Measured first: a user's rows sit in 6-12 files of 174-322, but on 5-9 of
+  10 days; past days are compacted into large files. Filtering DELETEs by
+  day (my first recommendation) would save little; the large-file rewrite
+  is the core cost, and it grows with bronze's history.
+- Decided: accept the hour for now (rare requests, O5 = 24 h). Planned
+  answer recorded in ADR 021: purge in a background thread at `snapshot`
+  isolation, finish (stamp, history, log) in a batch before the ledger row.
+
+### Where we stopped (2026-10-14) — LATEST, start here
+
 - **Next: step 7**, gold rebuild for a day range (backfill), then 8-14.
-- Stack down (volumes kept). Checkpoint questions for step 6 asked, not yet
-  answered: start the next session with them.
-- Open question for Souhail: O1 during a bronze purge (measured ~1 h under
-  load). Options: accept; partition-filtered DELETEs (above); key lookup
-  in a background thread.
+- Ask the open follow-up (merge-on-read without the rewrite) at a pause.
 
 ### P1 plan (agreed)
 
