@@ -145,9 +145,13 @@ def athena(sql: str, params: list[str] | None = None) -> list[list[str | None]]:
     """Run one query as the quality user; rows without the header. `params`
     fill the ? placeholders in order (plain strings, quoted here)."""
     import boto3
+    from botocore.config import Config
 
     client = boto3.client(
         "athena",
+        # Standard mode retries throttling and connection errors (an SSL
+        # connection cut mid-request, seen in P8), up to 10 attempts.
+        config=Config(retries={"mode": "standard", "max_attempts": 10}),
         aws_access_key_id=os.environ["QUALITY_AWS_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["QUALITY_AWS_SECRET_ACCESS_KEY"],
         region_name=os.environ.get("AWS_REGION", "us-east-1"),
@@ -172,6 +176,14 @@ def athena(sql: str, params: list[str] | None = None) -> list[list[str | None]]:
     return [[c.get("VarCharValue") for c in r["Data"]] for r in rows[1:]]
 
 
+def network_error(error: Exception) -> bool:
+    """A failure of the connection to AWS, worth polling again: the waits
+    run for up to an hour, and the network here drops now and then (P8)."""
+    from botocore.exceptions import ConnectionError, HTTPClientError
+
+    return isinstance(error, ConnectionError | HTTPClientError)
+
+
 def bronze_cut() -> dict[str, int]:
     """Every bronze table's snapshot id in the stream's newest ledger row."""
     rows = athena(
@@ -194,12 +206,18 @@ def wait_bronze(uid: str, deleted: dict[str, int], timeout_s: int) -> dict[str, 
     polls = 0
     while True:
         polls += 1
-        cut = bronze_cut()
-        alive = {
-            step: int(athena(sql.format(**cut), [uid] * binds)[0][0])
-            for step, (sql, binds) in BRONZE_ALIVE.items()
-            if deleted.get(step, 0)
-        }
+        try:
+            cut = bronze_cut()
+            alive = {
+                step: int(athena(sql.format(**cut), [uid] * binds)[0][0])
+                for step, (sql, binds) in BRONZE_ALIVE.items()
+                if deleted.get(step, 0)
+            }
+        except Exception as error:
+            if not network_error(error):
+                raise
+            print(f"network error, polling again: {error}", file=sys.stderr)
+            alive = {"unknown": 1}
         alive = {step: n for step, n in alive.items() if n}
         if not alive:
             return {"bronze.polls": polls}
@@ -241,11 +259,17 @@ def wait_ack(rid: str, timeout_s: int) -> dict[str, int]:
     bronze table (as audit steps "bronze.<table>")."""
     deadline = time.monotonic() + timeout_s
     while True:
-        rows = athena(
-            "SELECT t.k, t.v FROM thelook_bronze.erasure_log "
-            "CROSS JOIN UNNEST(rows_deleted) AS t(k, v) WHERE request_id = ?",
-            [rid],
-        )
+        try:
+            rows = athena(
+                "SELECT t.k, t.v FROM thelook_bronze.erasure_log "
+                "CROSS JOIN UNNEST(rows_deleted) AS t(k, v) WHERE request_id = ?",
+                [rid],
+            )
+        except Exception as error:
+            if not network_error(error):
+                raise
+            print(f"network error, polling again: {error}", file=sys.stderr)
+            rows = []
         if rows:
             return {f"bronze.{k}": int(v) for k, v in rows}
         if time.monotonic() > deadline:

@@ -181,3 +181,30 @@ def test_an_undelivered_request_fails_the_step(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="not delivered"):
         steps.request_bronze(ALICE, "run-1")
+
+
+def test_a_network_error_does_not_end_a_wait(monkeypatch):
+    from botocore.exceptions import SSLError
+
+    answers = iter(
+        [SSLError(endpoint_url="https://athena", error="EOF"), [["shop_users", "1"]]]
+    )
+
+    def athena(sql, params):
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(steps, "athena", athena)
+    monkeypatch.setattr(steps, "POLL_SECONDS", 0)
+    assert steps.wait_ack("run-1", timeout_s=60) == {"bronze.shop_users": 1}
+
+
+def test_any_other_error_still_ends_a_wait(monkeypatch):
+    def athena(sql, params):
+        raise RuntimeError("Athena FAILED: TABLE_NOT_FOUND")
+
+    monkeypatch.setattr(steps, "athena", athena)
+    with pytest.raises(RuntimeError):
+        steps.wait_ack("run-1", timeout_s=60)
