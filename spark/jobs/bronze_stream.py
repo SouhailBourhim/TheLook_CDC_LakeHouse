@@ -145,7 +145,8 @@ def erase(batch: DataFrame, batch_id: int, qid: str) -> str:
     if not requests:
         return "erasure=none valid"
     with maintenance_running:
-        expired = with_retries(lambda: apply_requests(spark, requests, qid, batch_id))
+        # Each step retried on its own (lakehouse.erasure).
+        expired = apply_requests(spark, requests, qid, batch_id, retry=with_retries)
     if expired is None:
         return "erasure=skipped(replay)"
     return f"erasure={len(requests)} requests, snapshots expired {expired}"

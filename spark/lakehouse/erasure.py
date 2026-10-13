@@ -130,20 +130,30 @@ def _keys(spark: SparkSession, table: str, where: Column) -> list[str]:
     return sorted(r.k for r in rows.collect() if r.k is not None)
 
 
+def _once(step):
+    return step()
+
+
 def user_keys(
-    spark: SparkSession, user_id: str, database: str = DATABASE
+    spark: SparkSession, user_id: str, database: str = DATABASE, retry=_once
 ) -> dict[str, list[str]]:
-    """Every bronze key that holds the user's data, per table."""
+    """Every bronze key that holds the user's data, per table. Each table's
+    lookup is retried on its own (`retry`): one scan of web_events takes up
+    to 18 minutes (P8), not worth redoing for a blip on another table."""
     t = {name: f"{database}.{name}" for name in USER_TABLES}
     user = F.lit(user_id)
-    orders = _keys(spark, t["shop_orders"], _pg("user_id") == user)
-    items = _keys(spark, t["shop_order_items"], _pg("order_id").isin(orders))
+
+    def keys(name, where):
+        return retry(lambda: _keys(spark, t[name], where))
+
+    orders = keys("shop_orders", _pg("user_id") == user)
+    items = keys("shop_order_items", _pg("order_id").isin(orders))
     return {
-        "shop_users": _keys(spark, t["shop_users"], _pg("id") == user),
+        "shop_users": keys("shop_users", _pg("id") == user),
         "shop_orders": orders,
         "shop_order_items": items,
-        "web_events": _keys(spark, t["web_events"], _json_user_is(user_id)),
-        "web_reviews": _keys(spark, t["web_reviews"], _json_user_is(user_id)),
+        "web_events": keys("web_events", _json_user_is(user_id)),
+        "web_reviews": keys("web_reviews", _json_user_is(user_id)),
     }
 
 
@@ -157,25 +167,30 @@ def delete_keys(spark: SparkSession, table: str, keys: list[str]) -> int:
     text inside the SQL: a key cannot change the statement.
 
     The count comes from the snapshot summaries (total records before and
-    after the DELETE), not from a count before it: each scan of a bronze table costs minutes (P8), and no one
-    else commits meanwhile (the stream is bronze's only writer, and its
-    upkeep thread is held off during the purge).
+    after the DELETE), not from a count before it: each scan of a bronze
+    table costs minutes (P8), and no one else commits meanwhile (the stream
+    is bronze's only writer, and its upkeep thread is held off during the
+    purge). A DELETE that commits nothing (a retry after a commit whose
+    reply was lost finds no row left) counts 0.
     """
     if not keys:
         return 0
     key_sql = USER_TABLES[table.rsplit(".", 1)[1]]
-    spark.sql(
-        f"DELETE FROM {table} WHERE {key_sql} IN (SELECT k FROM {{keys}})",
-        keys=spark.createDataFrame([(k,) for k in keys], "k string"),
-    )
     iceberg = spark._jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
         spark._jsparkSession, table
     )
     iceberg.refresh()
+    before = iceberg.currentSnapshot()
+    spark.sql(
+        f"DELETE FROM {table} WHERE {key_sql} IN (SELECT k FROM {{keys}})",
+        keys=spark.createDataFrame([(k,) for k in keys], "k string"),
+    )
+    iceberg.refresh()
+    after = iceberg.currentSnapshot()
+    if after.snapshotId() == before.snapshotId():
+        return 0
     # Not "deleted-records": copy-on-write counts every record of the files
     # it replaced, including the other users' rows it wrote back.
-    after = iceberg.currentSnapshot()
-    before = iceberg.snapshot(after.parentId())
     return _total(before) - _total(after)
 
 
@@ -184,13 +199,16 @@ def _total(snapshot) -> int:
 
 
 def purge_user(
-    spark: SparkSession, user_id: str, database: str = DATABASE
+    spark: SparkSession, user_id: str, database: str = DATABASE, retry=_once
 ) -> dict[str, int]:
     """Delete every bronze row holding the user's data; returns the rows
-    deleted per table. Idempotent: run again, it finds nothing."""
-    keys = user_keys(spark, user_id, database)
+    deleted per table. Idempotent: run again, it finds nothing. Each lookup
+    and each DELETE is retried on its own (`retry`)."""
+    keys = user_keys(spark, user_id, database, retry)
     return {
-        name: delete_keys(spark, f"{database}.{name}", keys[name])
+        name: retry(
+            lambda name=name: delete_keys(spark, f"{database}.{name}", keys[name])
+        )
         for name in USER_TABLES
     }
 
@@ -201,10 +219,13 @@ def apply_requests(
     query_id: str,
     batch_id: int,
     database: str = DATABASE,
+    retry=_once,
 ) -> dict[str, int] | None:
     """Apply a micro-batch's erasure requests to bronze; returns how many
     snapshots each purged table lost, or None when a replay of the batch
-    finds its log rows (already applied).
+    finds its log rows (already applied). `retry` wraps each step (the
+    stream passes with_retries): a network blip repeats one step, not the
+    whole purge (a first version retried it all: 25 more minutes, P8).
 
     Order, each step safe to replay:
       1. delete every user's rows (idempotent);
@@ -221,13 +242,22 @@ def apply_requests(
     never points at an expired snapshot.
     """
     log_table = f"{database}.{LOG_NAME}"
-    if already_committed(snapshot_summaries(spark, log_table), query_id, batch_id):
+
+    def logged() -> bool:
+        return already_committed(
+            snapshot_summaries(spark, log_table), query_id, batch_id
+        )
+
+    if retry(logged):
         return None
-    deleted = [purge_user(spark, r.user_id, database) for r in requests]
+    deleted = [purge_user(spark, r.user_id, database, retry) for r in requests]
     purged = sorted({name for counts in deleted for name, n in counts.items() if n})
     marks = {QUERY_ID: query_id, BATCH_ID: str(batch_id)}
     expired = {
-        name: upkeep.drop_history(spark, f"{database}.{name}", marks) for name in purged
+        name: retry(
+            lambda name=name: upkeep.drop_history(spark, f"{database}.{name}", marks)
+        )
+        for name in purged
     }
     rows = spark.createDataFrame(
         [
@@ -236,11 +266,19 @@ def apply_requests(
         ],
         "request_id string, user_sha256 string, rows_deleted map<string, bigint>",
     ).withColumn("purged_at", F.current_timestamp())
-    writer = rows.writeTo(log_table).options(**_marks(query_id, batch_id))
-    if spark.catalog.tableExists(log_table):
-        writer.append()
-    else:
-        writer.using("iceberg").tableProperty("format-version", "2").create()
+
+    def write_log() -> None:
+        # Checked again on each attempt: a commit whose reply was lost must
+        # not be written twice.
+        if logged():
+            return
+        writer = rows.writeTo(log_table).options(**_marks(query_id, batch_id))
+        if spark.catalog.tableExists(log_table):
+            writer.append()
+        else:
+            writer.using("iceberg").tableProperty("format-version", "2").create()
+
+    retry(write_log)
     return expired
 
 

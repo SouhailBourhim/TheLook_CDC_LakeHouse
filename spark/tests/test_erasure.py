@@ -232,3 +232,41 @@ def test_two_requests_in_one_batch_get_one_log_row_each(spark, bronze_db):
     log = {r.request_id: r for r in spark.table(f"{bronze_db}.erasure_log").collect()}
     assert log["run-2"].rows_deleted["web_reviews"] == 1
     assert log["run-1"].user_sha256 != log["run-2"].user_sha256
+
+
+def test_a_blip_repeats_one_step_not_the_purge(spark, bronze_db):
+    # A network error on the first DELETE: only that DELETE runs again; the
+    # key lookups before it are not repeated.
+    calls = {"lookups": 0, "failed": False}
+    real_keys = erasure._keys
+
+    def counting_keys(*args):
+        calls["lookups"] += 1
+        return real_keys(*args)
+
+    def flaky_retry(step):
+        try:
+            return step()
+        except ConnectionError:
+            return step()
+
+    real_delete = erasure.delete_keys
+
+    def flaky_delete(spark, table, keys):
+        if keys and not calls["failed"]:
+            calls["failed"] = True
+            raise ConnectionError("Unable to execute HTTP request")
+        return real_delete(spark, table, keys)
+
+    erasure._keys, erasure.delete_keys = counting_keys, flaky_delete
+    try:
+        apply_requests(
+            spark, [Request("run-1", ALICE)], "q1", 9, bronze_db, retry=flaky_retry
+        )
+    finally:
+        erasure._keys, erasure.delete_keys = real_keys, real_delete
+
+    assert calls["lookups"] == len(erasure.USER_TABLES)  # each table once
+    assert ids(spark, f"{bronze_db}.shop_users") == [BOB]
+    (row,) = spark.table(f"{bronze_db}.erasure_log").collect()
+    assert row.rows_deleted["shop_users"] == 3
