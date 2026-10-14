@@ -198,6 +198,16 @@ def test_backfill_recomputes_the_runs_day_for_backfill_runs_only(bag):
     assert task.retries == 2  # a day is replaced as a whole
 
 
+def test_a_backfilled_day_passes_the_contracts_of_what_it_rewrote(bag):
+    dag = bag.dags["backfill"]
+    assert dag.get_task("rebuild_day").downstream_task_ids == {"quality"}
+    command = dag.get_task("quality").bash_command
+    for table in ("fct_order_items", "fct_orders", "fct_sessions"):
+        assert f"gold/{table}.odcs.yaml" in command
+    for mart in ("mart_daily_revenue", "mart_session_funnel"):
+        assert f"gold/{mart}.odcs.yaml" in command
+
+
 def test_only_backfill_runs_reach_the_spark_job():
     from types import SimpleNamespace
 

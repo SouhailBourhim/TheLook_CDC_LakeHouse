@@ -20,6 +20,9 @@ a second: the Spark job runs for backfill runs only.
 - Pool "lake" (one slot, with transform and maintenance): a backfilled day
   never commits beside another MERGE.
 - max_active_runs=1: days run one after the other.
+- quality: the contracts of the tables a backfill rewrites (ADR 020). It
+  rewrites the past, so a day counts as repaired only once they pass;
+  transform's own check does not cover the marts (P8 step 9).
 """
 
 from datetime import datetime, timedelta
@@ -29,6 +32,7 @@ from airflow.providers.standard.operators.python import ShortCircuitOperator
 from airflow.sdk import DAG
 
 from alerting import alert_on_failure
+from quality import contract_check
 
 JOBS = "/opt/lakehouse/jobs"
 
@@ -72,4 +76,16 @@ with DAG(
         spark_binary="/opt/spark/bin/spark-submit",
         pool="lake",
     )
-    only_backfills >> rebuild
+    # In Athena, as the read-only quality user: no lake slot.
+    quality = contract_check(
+        "quality",
+        [
+            "gold/fct_order_items.odcs.yaml",
+            "gold/fct_orders.odcs.yaml",
+            "gold/fct_sessions.odcs.yaml",
+            "gold/mart_daily_revenue.odcs.yaml",
+            "gold/mart_session_funnel.odcs.yaml",
+        ],
+        workers=3,
+    )
+    only_backfills >> rebuild >> quality
