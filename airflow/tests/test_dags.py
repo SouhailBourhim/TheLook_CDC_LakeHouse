@@ -71,7 +71,7 @@ def test_every_spark_task_shares_the_one_slot_lake_pool(bag):
     # A compaction must never commit at the same time as a MERGE (ADR 017);
     # the graph job only reads, but must not take the worker's last cores.
     # Contract checks run in Athena, not on the cluster: they take no slot.
-    for dag_id in ("transform", "maintenance", "graph", "gdpr_erasure"):
+    for dag_id in ("transform", "maintenance", "graph", "gdpr_erasure", "backfill"):
         for task in bag.dags[dag_id].tasks:
             if task.task_type == "SparkSubmitOperator":
                 assert task.pool == "lake", f"{dag_id}.{task.task_id}"
@@ -178,8 +178,33 @@ def test_the_lake_erasure_goes_first_for_the_lake_slot(bag):
     # let transform and graph tasks take the slot first (P8 step 6).
     task = bag.dags["gdpr_erasure"].get_task("erase_lake")
     assert str(task.weight_rule).lower().endswith("absolute")
-    for dag_id in ("transform", "maintenance", "graph"):
+    for dag_id in ("transform", "maintenance", "graph", "backfill"):
         for other in bag.dags[dag_id].tasks:
             if other.pool == "lake":
                 downstream = other.get_flat_relative_ids(upstream=False)
                 assert task.priority_weight > other.priority_weight + len(downstream)
+
+
+def test_backfill_recomputes_the_runs_day_for_backfill_runs_only(bag):
+    dag = bag.dags["backfill"]
+    assert dag.get_task("only_backfills").downstream_task_ids == {"rebuild_day"}
+    # Airflow starts no run of a paused DAG, not even a backfill's.
+    assert not dag.is_paused_upon_creation and not dag.catchup
+    assert dag.max_active_runs == 1  # one day at a time
+    task = dag.get_task("rebuild_day")
+    # The run's logical date is the day recomputed.
+    assert task.application.endswith("/backfill.py")
+    assert task.application_args == ["{{ ds }}"]
+    assert task.retries == 2  # a day is replaced as a whole
+
+
+def test_only_backfill_runs_reach_the_spark_job():
+    from types import SimpleNamespace
+
+    from airflow.sdk.api.datamodels._generated import DagRunType
+    from backfill import is_backfill
+
+    # The type tasks really get (a plain string here first hid a bug).
+    assert is_backfill(dag_run=SimpleNamespace(run_type=DagRunType.BACKFILL))
+    for other in (DagRunType.SCHEDULED, DagRunType.MANUAL):
+        assert not is_backfill(dag_run=SimpleNamespace(run_type=other))
