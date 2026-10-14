@@ -903,19 +903,66 @@ def rebuild_days(
     session_rows.unpersist()
 
     # The daily marts, from the facts just replaced.
-    day_range = F.col("order_date_key").between(k1, k2)
-    revenue = daily_revenue(
-        spark.table(f"{gold_db}.fct_orders").where(day_range),
-        spark.table(f"{gold_db}.fct_order_items").where(day_range),
-    )
-    days_in_range = f"t.date_key BETWEEN {k1} AND {k2}"
-    replace(f"{gold_db}.mart_daily_revenue", revenue, "date_key", days_in_range)
-    funnel = session_funnel(
-        spark.table(f"{gold_db}.fct_sessions").where(
-            F.col("session_date_key").between(k1, k2)
+    days = [
+        _date_key(start + datetime.timedelta(days=n))
+        for n in range((end - start).days + 1)
+    ]
+    counts.update(refresh_daily_marts(spark, days, days, gold_db, retry))
+    return counts
+
+
+def refresh_daily_marts(
+    spark: SparkSession,
+    order_days: list[int] | None,
+    session_days: list[int] | None,
+    gold_db: str = "lake.thelook_gold",
+    retry=lambda step: step(),
+) -> dict:
+    """Recompute mart_daily_revenue for these order days and
+    mart_session_funnel for these session days (date keys, yyyymmdd), from
+    the facts as they are now; a day left without facts loses its row.
+    None means every day: the whole mart is rebuilt from all its facts.
+
+    Used by the backfill, and by the erasure: the incremental marts
+    recompute only days whose facts have a newer _computed_at, which a
+    deleted fact cannot give (P8 step 8: the funnel kept counting the
+    sessions of two erased users). Returns the mart rows written."""
+    counts = {}
+    for mart, facts, key, days, build in (
+        (
+            "mart_daily_revenue",
+            ("fct_orders", "fct_order_items"),
+            "order_date_key",
+            order_days,
+            daily_revenue,
+        ),
+        (
+            "mart_session_funnel",
+            ("fct_sessions",),
+            "session_date_key",
+            session_days,
+            session_funnel,
+        ),
+    ):
+        if days is None:
+            frames = [spark.table(f"{gold_db}.{f}") for f in facts]
+            in_days = "TRUE"
+        else:
+            days = sorted({int(d) for d in days})
+            if not days:
+                counts[mart] = 0
+                continue
+            frames = [
+                spark.table(f"{gold_db}.{f}").where(F.col(key).isin(days))
+                for f in facts
+            ]
+            # Integers only in the SQL: date keys are ints by construction.
+            in_days = f"t.date_key IN ({', '.join(str(d) for d in days)})"
+        rows = build(*frames)
+        retry(
+            lambda mart=mart, rows=rows, in_days=in_days: replace_range(
+                spark, f"{gold_db}.{mart}", rows, "date_key", in_days
+            )
         )
-    )
-    replace(f"{gold_db}.mart_session_funnel", funnel, "date_key", days_in_range)
-    counts["mart_daily_revenue"] = revenue.count()
-    counts["mart_session_funnel"] = funnel.count()
+        counts[mart] = rows.count()
     return counts
