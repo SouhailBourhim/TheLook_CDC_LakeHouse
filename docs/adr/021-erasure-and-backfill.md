@@ -120,6 +120,15 @@ keys: rerunning a day replaces its rows, so duplicates cannot appear. The
 drill injects a logic bug as an uncommitted working-tree patch, lets the
 existing contract rule catch it, reverts it and backfills.
 
+*Amendment (P8 step 9, approved 2026-10-14).* Each run ends with a
+`quality` task: the contracts of the three facts and both daily marts, on
+whole tables, the same contracts as the daily report. A run's result
+therefore depends on the days not yet rewritten: repairing 3 bad days, the
+revenue rule counted 2, then 1, then 0 bad rows. Only the last day's
+result speaks for a range; an early red day is not a failed repair.
+Checking each run on its own day only was rejected: it needs a second,
+day-filtered copy of the rules, and uniqueness cannot be checked per day.
+
 **Failure drills (FR14).** `drills/failure_drills.py <drill>`: Connect killed
 mid-stream, Kafka restarted under load, Debezium stopped for an hour,
 connector offsets reset, bronze stream killed mid-batch, Neo4j frozen

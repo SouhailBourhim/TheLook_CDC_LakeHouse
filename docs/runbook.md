@@ -489,6 +489,28 @@ read-only user for the API to switch to (ADR 019).
 throwaway Neo4j on port 17687 and removes it afterwards. They delete every
 node: never point `NEO4J_TEST_URI` at the serving Neo4j (7687).
 
+## Backfill (P8, ADR 021)
+
+Recompute gold for past days from silver, for example after fixing a logic
+bug (Airflow UI, or the API as `drills/backfill_drill.py` does):
+
+```bash
+docker compose -f onprem/compose.yaml exec airflow-scheduler \
+  airflow backfill create --dag-id backfill \
+  --from-date 2026-10-05 --to-date 2026-10-07 --reprocess-behavior completed
+```
+
+- Days run one at a time, oldest first. Each run's `quality` task checks
+  whole tables, so **only the last day's result speaks for the range**: an
+  earlier day stays red while later days still hold the bad rows. Do not
+  rerun a red day before the range has finished.
+- A `rebuild_day` failure is usually the network (`UnknownHostException`
+  on the lake bucket). A day is replaced in one commit, so a failed attempt
+  leaves the old rows; Airflow retries 5 min later.
+- The backfill DAG stays unpaused (a paused DAG starts no backfill run).
+- If `drills/backfill_drill.py` is killed (a closed WSL, Docker Desktop
+  restart), its `finally` does not run: unpause `transform` by hand.
+
 ## Contracts, quality checks and alerts (P7, ADR 020)
 
 Every alert, from Prometheus or Airflow, goes through Alertmanager

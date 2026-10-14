@@ -22,7 +22,10 @@ a second: the Spark job runs for backfill runs only.
 - max_active_runs=1: days run one after the other.
 - quality: the contracts of the tables a backfill rewrites (ADR 020). It
   rewrites the past, so a day counts as repaired only once they pass;
-  transform's own check does not cover the marts (P8 step 9).
+  transform's own check does not cover the marts (P8 step 9). They check
+  whole tables, as the daily report does: in a range, an early day fails
+  while later days still hold bad rows, and only the last day's result
+  speaks for the range (P8 step 9).
 """
 
 from datetime import datetime, timedelta
