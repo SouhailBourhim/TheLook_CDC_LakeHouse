@@ -865,3 +865,29 @@ and would have set every field of the review to null, until the delete that
 follows; tonight each delete came in the same transform run and won, so
 silver held 0 null rows. Silver and the verifier now read an update without
 a document as a delete (a test fails without the fix).
+
+### `drills/bronze_stream_kill.py`: bronze stream killed mid-batch (step 12), 00:05-00:18 local
+
+Load running. The drill follows the stream's log and kills the driver JVM
+(`pkill -9 java` inside the container: a crash, so Docker's restart policy
+must act; `docker kill` is a manual stop, never restarted) right after a
+bronze table commits: that table holds the batch, the ledger row and
+Spark's checkpoint commit do not.
+
+| What | Result |
+|---|---|
+| kill | after `shop_dist_centers` committed in batch 2184 |
+| restart | by Docker's `on-failure` policy, 2 s after the kill |
+| replayed batch 2184 (first batch after the restart, 4.5 min later) | `shop_dist_centers=skipped(replay)`, the other six tables written |
+| Kafka = bronze, window from the capture | all 7 topics exact (users 277, orders 2,487, order_items 3,617, events 12,123, reviews 243) |
+| bronze rows against distinct offsets, everything ingested since 22:30 UTC | equal in all 7 tables (dist_centers 30, products 87,360, events 95,003, ...): **no offset appended twice** |
+
+Spark replays batch 2184 from its offset log (no commit file for it); the
+skipped table found the batch's mark (query id, batch id) in its snapshots
+and appended nothing; the ledger row was written once, after all seven.
+
+The capture window did not cover batch 2184 whole: a batch reads from where
+the previous one ended, planned when that one started, so 2184 began before
+the capture and its `dist_centers` rows were outside the window. The
+offsets check since 22:30 covers it. The script now kills only in the third
+batch after the capture, which starts after it.
