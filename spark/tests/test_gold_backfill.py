@@ -153,3 +153,22 @@ def test_an_inverted_range_is_refused(spark, built):
     silver, gold = built
     with pytest.raises(ValueError):
         rebuild_days(spark, DAY5, DAY3, silver, gold)
+
+
+def test_a_blip_repeats_one_table_not_the_day(spark, built):
+    silver, gold = built
+    calls = []
+
+    def flaky(step):
+        calls.append(1)
+        if len(calls) == 2:  # the second table's first attempt fails
+            try:
+                raise ConnectionError("Unable to execute HTTP request")
+            except ConnectionError:
+                return step()
+        return step()
+
+    counts = rebuild_days(spark, DAY4, DAY4, silver, gold, retry=flaky)
+
+    assert len(calls) == 5  # one call per table: nothing redone but that one
+    assert counts["fct_orders"] == 1

@@ -38,7 +38,8 @@ spark = lake_session(
     conf={"spark.executor.memory": "1500m", "spark.sql.shuffle.partitions": "8"},
 )
 began = time.monotonic()
-# Safe to retry: every write replaces the range (MERGE on the grain keys).
-counts = with_retries(lambda: rebuild_days(spark, start, end))
+# Each table's replacement is retried on its own: safe, since it replaces
+# the range (MERGE on the grain keys).
+counts = rebuild_days(spark, start, end, retry=with_retries)
 log.info("%s..%s: %s in %.1f s", start, end, counts, time.monotonic() - began)
 spark.stop()

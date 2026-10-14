@@ -823,6 +823,7 @@ def rebuild_days(
     end: datetime.date,
     silver_db: str = "lake.thelook_silver",
     gold_db: str = "lake.thelook_gold",
+    retry=lambda step: step(),
 ) -> dict:
     """Recompute the facts and daily marts of the days start..end
     (inclusive) from silver, replacing what gold holds for those days;
@@ -835,7 +836,9 @@ def rebuild_days(
     these days again, which gives the same rows.
 
     Like build_facts, assumes silver is not written meanwhile (the backfill
-    DAG holds the lake pool)."""
+    DAG holds the lake pool). `retry` wraps each table's replacement (the
+    job passes with_retries): a network failure repeats that table, not the
+    whole day (the lesson of the first real erasure, P8 step 6)."""
     if end < start:
         raise ValueError("end is before start")
     first = datetime.datetime.combine(start, datetime.time())
@@ -849,6 +852,9 @@ def rebuild_days(
     users = spark.table(f"{gold_db}.dim_user")
     counts = {}
 
+    def replace(table: str, rows: DataFrame, key: str, in_range: str) -> None:
+        retry(lambda: replace_range(spark, table, rows, key, in_range))
+
     day_orders = orders.where(
         (F.col("created_at") >= F.lit(first)) & (F.col("created_at") < F.lit(after))
     ).persist()
@@ -857,15 +863,13 @@ def rebuild_days(
     )
     item_rows = order_item_facts(day_items, day_orders, products, users).persist()
     computed = F.current_timestamp()
-    replace_range(
-        spark,
+    replace(
         f"{gold_db}.fct_order_items",
         item_rows.withColumn("_computed_at", computed),
         "order_item_id",
         order_days,
     )
-    replace_range(
-        spark,
+    replace(
         f"{gold_db}.fct_orders",
         order_facts(day_orders, item_rows).withColumn("_computed_at", computed),
         "order_id",
@@ -889,8 +893,7 @@ def rebuild_days(
         .withColumn("_computed_at", computed)
         .persist()
     )
-    replace_range(
-        spark,
+    replace(
         f"{gold_db}.fct_sessions",
         session_rows,
         "session_id",
@@ -906,17 +909,13 @@ def rebuild_days(
         spark.table(f"{gold_db}.fct_order_items").where(day_range),
     )
     days_in_range = f"t.date_key BETWEEN {k1} AND {k2}"
-    replace_range(
-        spark, f"{gold_db}.mart_daily_revenue", revenue, "date_key", days_in_range
-    )
+    replace(f"{gold_db}.mart_daily_revenue", revenue, "date_key", days_in_range)
     funnel = session_funnel(
         spark.table(f"{gold_db}.fct_sessions").where(
             F.col("session_date_key").between(k1, k2)
         )
     )
-    replace_range(
-        spark, f"{gold_db}.mart_session_funnel", funnel, "date_key", days_in_range
-    )
+    replace(f"{gold_db}.mart_session_funnel", funnel, "date_key", days_in_range)
     counts["mart_daily_revenue"] = revenue.count()
     counts["mart_session_funnel"] = funnel.count()
     return counts
