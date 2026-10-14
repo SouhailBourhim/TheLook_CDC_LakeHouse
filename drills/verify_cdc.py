@@ -14,17 +14,21 @@ version of each key, drop keys whose latest event is a delete, then compare
 with the source.
 
 - PostgreSQL: latest = highest source.lsn (the rule silver uses); compared
-  column by column. Topics keep 3 days, so once a topic's first records are
-  deleted, rows that have not changed since then have no event left in
-  Kafka: they are reported as "outside retention", not as failures. Every
-  key still in Kafka must match (no differ, no extra). Kafka is not the
-  system of record; bronze is.
+  column by column. Every key still in Kafka must match (no differ, no
+  extra). Kafka is not the system of record; bronze is.
 - MongoDB: latest = last record in the topic (one partition, keyed by _id,
   so Kafka order is change-stream order). Documents are compared through a
   hash of their canonical JSON, because holding 1.8 M events twice in memory
   would take gigabytes. The script also reports how often "highest
   (source.ts_ms, source.ord)" picks a different version than the Kafka
   order: evidence for open question E1 (silver's ordering key).
+- Retention (both): topics keep 3 days. Once a topic's first records are
+  deleted, a row missing from Kafka is "outside retention" if it last
+  changed before the topic's horizon (the time of its first record still
+  on the broker), and lost if it changed after: its event must still be
+  there (P8 step 10). The change time is CHANGED_AT; a user's address
+  update leaves updated_at alone, so a lost one is seen only while the
+  user has another event in Kafka.
 
 Run it when the sources are quiet (generator and review simulator stopped)
 and Debezium has caught up; otherwise the sides are compared at different
@@ -54,6 +58,17 @@ from pymongo import MongoClient
 TABLES = ["users", "orders", "order_items", "products", "dist_centers"]
 COLLECTIONS = ["events", "reviews"]
 EPOCH = datetime.datetime(1970, 1, 1)
+# When a row or document last changed (UTC, naive in PostgreSQL); None:
+# no such column, every missing key of a trimmed topic is outside retention.
+CHANGED_AT = {
+    "users": "updated_at",
+    "orders": "updated_at",
+    "order_items": "updated_at",
+    "products": None,
+    "dist_centers": None,
+    "events": "created_at",  # never updated
+    "reviews": "updated_at",  # set on every vote and edit
+}
 
 
 def load_env(path: Path) -> dict:
@@ -71,6 +86,46 @@ def low_watermark(topic: str) -> int:
     low = c.get_watermark_offsets(TopicPartition(topic, 0), timeout=10)[0]
     c.close()
     return low
+
+
+def horizon(topic: str) -> datetime.datetime | None:
+    """Kafka timestamp (naive UTC) of the first record still on the broker;
+    None while the topic is complete. A record is written after its change
+    is committed, so a change made after this time has its event here."""
+    low = low_watermark(topic)
+    if low == 0:
+        return None
+    c = Consumer(
+        {
+            "bootstrap.servers": "localhost:9092",
+            "group.id": f"verify-{time.time()}",
+            "enable.auto.commit": False,
+        }
+    )
+    c.assign([TopicPartition(topic, 0, low)])
+    for _ in range(30):
+        m = c.poll(10.0)
+        if m is not None and not m.error():
+            break
+    else:
+        raise RuntimeError(f"{topic}: no record read at offset {low}")
+    c.close()
+    return EPOCH + datetime.timedelta(milliseconds=m.timestamp()[1])
+
+
+def is_lost(changed: datetime.datetime | None, edge: datetime.datetime | None) -> bool:
+    """A key missing from Kafka is lost, unless the topic is trimmed (edge)
+    and the key changed before the edge or has no change time (retention
+    explains it)."""
+    return edge is None or (changed is not None and changed >= edge)
+
+
+def retention_note(outside: int, edge: datetime.datetime | None) -> str:
+    return (
+        f"  ({outside} rows outside retention, before {edge:%Y-%m-%d %H:%M})"
+        if edge
+        else ""
+    )
 
 
 def read_topic(topic: str):
@@ -132,7 +187,6 @@ def verify_postgres(env: dict, deser: AvroDeserializer) -> bool:
     ) as conn:
         for table in TABLES:
             topic = f"thelook.shop.{table}"
-            complete = low_watermark(topic) == 0
             kafka = latest_from_pg_topic(topic, deser)
             with conn.cursor() as cur:
                 cur.execute(f"SELECT * FROM shop.{table}")
@@ -150,16 +204,18 @@ def verify_postgres(env: dict, deser: AvroDeserializer) -> bool:
                 for pk in pg.keys() & kafka.keys()
                 if any(normalise(kafka[pk][c], c in ts_cols) != pg[pk][c] for c in cols)
             ]
-            # Missing rows only count as lost while the topic is complete.
-            lost = missing if complete else set()
-            status = "OK" if not (lost or extra or differ) else "MISMATCH"
+            edge, column = horizon(topic), CHANGED_AT[table]
+            gone = [pk for pk in missing if is_lost(column and pg[pk][column], edge)]
+            scope = retention_note(len(missing) - len(gone), edge)
+            status = "OK" if not (gone or extra or differ) else "MISMATCH"
             ok &= status == "OK"
-            scope = "" if complete else f"  ({len(missing)} rows outside retention)"
             print(
                 f"pg    {table:13} source={len(pg):>8} kafka_latest={len(kafka):>8} "
-                f"missing={len(lost)} extra={len(extra)} differ={len(differ)}  "
+                f"missing={len(gone)} extra={len(extra)} differ={len(differ)}  "
                 f"{status}{scope}"
             )
+            for pk in gone[:3]:
+                print("   example missing", pk, pg[pk][column] if column else "")
             for pk in list(differ)[:3]:
                 print(
                     "   example diff",
@@ -223,32 +279,31 @@ def verify_mongo(env: dict, key_deser, val_deser) -> bool:
     )
     for name in COLLECTIONS:
         topic = f"thelook_mongo.web.{name}"
-        if low_watermark(topic) != 0:
-            # Not expected before day 3 of the topic; treat as a failure so
-            # it is noticed rather than silently half-checked.
-            print(f"mongo {name:13} topic no longer complete (retention)  MISMATCH")
-            ok = False
-            continue
+        edge = horizon(topic)
         kafka, disagree = latest_from_mongo_topic(topic, key_deser, val_deser)
-        missing = differ = seen = 0
+        differ = seen = outside = 0
+        gone = []
         examples = []
         for doc in client["web"][name].find():
             seen += 1
             kafka_digest = kafka.pop(doc["_id"], None)
             if kafka_digest is None:
-                missing += 1
+                if is_lost(doc.get(CHANGED_AT[name]), edge):
+                    gone.append(doc["_id"])
+                else:
+                    outside += 1
             elif kafka_digest != digest(doc):
                 differ += 1
-            if (kafka_digest is None or kafka_digest != digest(doc)) and len(
-                examples
-            ) < 3:
-                examples.append(doc["_id"])
+                if len(examples) < 3:
+                    examples.append(doc["_id"])
         extra = len(kafka)  # left in Kafka, absent from MongoDB
-        status = "OK" if not (missing or extra or differ) else "MISMATCH"
+        scope = retention_note(outside, edge)
+        examples += gone[:3]
+        status = "OK" if not (gone or extra or differ) else "MISMATCH"
         ok &= status == "OK"
         print(
             f"mongo {name:13} source={seen:>8} "
-            f"missing={missing} extra={extra} differ={differ}  {status}   "
+            f"missing={len(gone)} extra={extra} differ={differ}  {status}{scope}   "
             f"[E1: ts_ms/ord order disagrees with Kafka order for {disagree} ids]"
         )
         for doc_id in examples:
