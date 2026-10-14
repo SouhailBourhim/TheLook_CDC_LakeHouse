@@ -394,9 +394,12 @@ services:
     # the stream restarts itself after a crash: it resumes from its
     # checkpoint and the replay guard prevents duplicates. Short S3/Glue
     # blips are retried inside the batch; this covers the rest (driver
-    # crash, retries exhausted). After 3 failed restarts it stays down,
-    # visible in `make ps` (alerting: P7).
-    restart: on-failure:3
+    # crash, retries exhausted). No maximum: Docker counts restarts over the
+    # container's life, never resetting on success (restartmanager.go), so
+    # "on-failure:3" stopped bronze for good at its third blip (P8 step 10).
+    # A permanent error loops at most once a minute (Docker's backoff cap),
+    # visible in `make ps` and in the bronze freshness check (P7).
+    restart: on-failure
 
   # --- jobs profile: one-off Spark drivers (make spark-run) ----------------------
   # Never started by `make up`; `docker compose run` creates a throwaway
