@@ -797,3 +797,39 @@ first day and "repaired" on the last (ADR 021 amendment, runbook "Backfill").
   attempt left the old rows; Airflow retried 5 min later and the job's
   transient-error retries carried it through more drops (DNS, refused
   connections, cut downloads) to its commit.
+
+### `drills/connect_kafka_restarts.py` (step 10), 21:59-22:17 local
+
+Core, stream and airflow profiles up; generator and review simulator
+running. Bronze checked over the drill window from the captured end offsets
+(`drills/verify_bronze.py`); sources checked against Kafka once the load
+stopped (`drills/verify_cdc.py`).
+
+| What | Result |
+|---|---|
+| Connect `kill -9`, 60 s dead, then started | both connectors RUNNING 8 s after the start (tasks 6 s), no FAILED task, no operator action |
+| Kafka restarted (clean stop) | healthy after 10 s; connectors RUNNING at once |
+| bronze stream | kept running, 0 restarts |
+| sources = Kafka | all 7 sources: 0 missing, 0 extra, 0 differ |
+| Kafka = bronze, per topic over the window | users 154, orders 1,579, order_items 2,268, events 7,753, reviews 168 committed records: bronze rows and distinct offsets equal, **0 lost, 0 duplicated** (products, dist_centers: no change) |
+
+No duplicate from the crash: Connect writes records and source offsets in
+one Kafka transaction (exactly-once source). The transaction open at the
+`kill -9` is aborted; the changes are sent again after the restart, and
+bronze reads `read_committed`, so it never sees the aborted copy. Offsets
+are counted, not checked for gaps: aborted records and transaction markers
+take offsets too (bronze holds 154 records over 267 offsets for users).
+
+**The source check had to be fixed first.** A first run (21:37) gave the
+same restart times and bronze = Kafka exactly, but exited 1: the MongoDB
+check stopped on "topic no longer complete (retention)". Topics keep 3 days
+and both MongoDB topics had been trimmed. The Postgres check had coped by
+calling every row missing from a trimmed topic "outside retention", which
+would also hide a change lost in this drill. `verify_cdc.py` now takes each
+topic's horizon (timestamp of its first record still on the broker): a
+missing row that changed after it is lost, one that changed before is
+outside retention (`updated_at`, `created_at` for events; a user's address
+update does not move `updated_at`). Tested both ways: with Connect stopped
+for 30 s under load, it reported 6 users, 134 orders, 196 order items, 659
+events and 10 reviews missing, all changed in those 30 s, and kept 6.26 M
+events outside retention; caught up, every source matched.
