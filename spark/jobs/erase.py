@@ -4,7 +4,8 @@ For each table of the erasure map (lakehouse.erasure.LAKE_TABLES): delete
 the user's rows, rewrite every file that has deletes, expire every older
 snapshot, and write an audit row to lake.thelook_silver.erasure_audit
 (sha256 of the user id, never the id). Bronze is purged by the stream
-before this job runs; the marts are aggregates and are kept (FR9).
+before this job runs. The daily marts are aggregates and are kept (FR9),
+but recomputed for the user's days, so that they stay equal to the facts.
 
 Runs as the batch IAM user, in the Airflow pool "lake" (no MERGE or
 compaction commits on the same tables meanwhile). Safe to rerun: a second

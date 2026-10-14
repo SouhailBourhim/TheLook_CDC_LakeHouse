@@ -112,20 +112,38 @@ def dbs(spark, lake):
     table_of(
         spark,
         g + "fct_order_items",
-        "order_item_id string, order_id string, user_id string",
-        [[("i-a1", "o-a1", ALICE), ("i-a2", "o-a2", ALICE), ("i-b1", "o-b1", BOB)]],
+        "order_item_id string, order_id string, user_id string, order_date_key int",
+        [
+            [
+                ("i-a1", "o-a1", ALICE, 20261001),
+                ("i-a2", "o-a2", ALICE, 20261002),
+                ("i-b1", "o-b1", BOB, 20261001),
+            ]
+        ],
     )
     table_of(
         spark,
         g + "fct_orders",
-        "order_id string, user_id string",
-        [[("o-a1", ALICE), ("o-a2", ALICE), ("o-b1", BOB)]],
+        "order_id string, user_id string, order_date_key int",
+        [
+            [
+                ("o-a1", ALICE, 20261001),
+                ("o-a2", ALICE, 20261002),
+                ("o-b1", BOB, 20261001),
+            ]
+        ],
     )
     table_of(
         spark,
         g + "fct_sessions",
-        "session_id string, user_id string",
-        [[("s-a", ALICE), ("s-b", BOB), ("s-ghost", None)]],
+        "session_id string, user_id string, session_date_key int",
+        [
+            [
+                ("s-a", ALICE, 20261001),
+                ("s-b", BOB, 20261001),
+                ("s-ghost", None, 20261001),
+            ]
+        ],
     )
     return silver, gold
 

@@ -45,7 +45,7 @@ erasure requests to its own tables.
 | Kafka | not purged: bounded by its 3-day retention (O5) |
 | Bronze (5 tables holding user data) | the stream: DELETE (copy-on-write), then expiry of every snapshot older than the purge |
 | Silver (users, orders, order_items, events, reviews, dead_letters) | `jobs/erase.py`, batch user: DELETE, rewrite of the affected files applying the deletes, expiry |
-| Gold (dim_user, fct_order_items, fct_orders, fct_sessions) | the same job; marts are aggregates and are kept (FR9) |
+| Gold (dim_user, fct_order_items, fct_orders, fct_sessions) | the same job; the daily marts are aggregates and are kept (FR9), but recomputed for the user's days (below) |
 | Redis `user:{id}:*` | ACL user `eraser` (`DEL`, `SCAN` on `user:*` only) |
 | Neo4j | nothing: products only (ADR 010) |
 | Athena query results, logs | bounded by the results bucket's 7-day lifecycle; jobs log counts, not ids |
@@ -163,11 +163,32 @@ later batch, before its ledger row, stamps the marks, drops the history and
 writes the log row (1 to 2 minutes). Not now: it adds a durable state
 machine to bronze's only writer.
 
+**Daily marts after an erasure, decided 2026-10-14 (Souhail).** The
+incremental marts recompute only days whose facts have a newer
+`_computed_at`, which a deleted fact cannot give: after two erasures the
+funnel still counted 8 and 1 erased sessions (P8 step 8). Options: leave
+the marts stale until a backfill; recompute the user's days in the
+erasure; detect deletes in the incremental build (Iceberg's changelog;
+not chosen: unproven on merge-on-read delete files, and only the erasure
+deletes facts outside the backfill, which refreshes its own marts).
+Decided: `erase_lake` reads the user's order and session days from the
+facts before deleting them, recomputes `mart_daily_revenue` and
+`mart_session_funnel` for those days from the facts left
+(`gold.refresh_daily_marts`, the backfill's function; a day left without
+facts loses its row), and audits the step as `gold.marts`. If a rerun finds
+this request's fact steps audited but no `gold.marts` row, the earlier run
+died in between and the days can no longer be found: both marts are then
+rebuilt from all their facts (slower, rare, correct). Storing the days to
+survive the crash was rejected: it would keep when the erased user was
+active.
+
 ## Consequences
 
 - ✅ Erasure reaches every copy, time travel included, and proves it.
 - ✅ ADR 017 holds: no key that can delete bronze enters Airflow.
 - ✅ Backfill is idempotent by construction (MERGE on grain keys).
+- ✅ The daily marts stay equal to the facts after an erasure, a crashed
+  run included.
 - ❌ The bronze stream gains a second duty and a non-CDC topic; a bug there
   touches the unrebuildable layer, so it is tested on a local catalog first.
 - ❌ Expiring every pre-purge snapshot removes time travel on the affected

@@ -16,7 +16,8 @@ FR9, FR12; ADR 021). Triggered per request, never scheduled:
   thelook_bronze.erasure_log.
 - erase_redis: the feature keys user:{id}:*.
 - erase_lake: silver and gold (jobs/erase.py, batch user, pool "lake"),
-  which also writes every step's counts to thelook_silver.erasure_audit.
+  then the daily marts of the user's days; it also writes every step's
+  counts to thelook_silver.erasure_audit.
 
 The user id reaches the steps as an environment variable, never on a logged
 command line, and every task masks it in its log (it still shows in the

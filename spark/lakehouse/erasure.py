@@ -43,6 +43,7 @@ from lakehouse.bronze import (
     already_committed,
     snapshot_summaries,
 )
+from lakehouse.gold import refresh_daily_marts
 
 ERASURE_TOPIC = "thelook.erasure-requests"
 # One row per request applied: what was removed, never who (ADR 021).
@@ -352,6 +353,11 @@ LAKE_TABLES = {
 }
 
 
+# The daily marts' recompute, audited after the facts' deletes.
+MARTS_STEP = "gold.marts"
+_FACT_STEPS = {"gold.fct_order_items", "gold.fct_orders", "gold.fct_sessions"}
+
+
 def _table(step: str, silver_db: str, gold_db: str) -> str:
     layer, name = step.split(".")
     return f"{silver_db if layer == 'silver' else gold_db}.{name}"
@@ -372,6 +378,26 @@ def user_orders(
             rows = spark.table(table).where(F.col("user_id") == F.lit(user_id))
             found |= {r[0] for r in rows.select(key).collect()}
     return sorted(found)
+
+
+def affected_days(
+    spark: SparkSession, user_id: str, gold_db: str
+) -> tuple[list[int], list[int]]:
+    """The order days and session days of the user's gold facts, read
+    before they are deleted: afterwards nothing links those days to the
+    user, and their daily marts must be recomputed."""
+    user = F.col("user_id") == F.lit(user_id)
+
+    def days(table: str, key: str) -> set[int]:
+        if not spark.catalog.tableExists(f"{gold_db}.{table}"):
+            return set()
+        rows = spark.table(f"{gold_db}.{table}").where(user).select(key).distinct()
+        return {r[0] for r in rows.collect() if r[0] is not None}
+
+    order_days = days("fct_order_items", "order_date_key") | days(
+        "fct_orders", "order_date_key"
+    )
+    return sorted(order_days), sorted(days("fct_sessions", "session_date_key"))
 
 
 def erase_table(
@@ -422,6 +448,14 @@ def _audit(
     )
 
 
+def _audited(spark: SparkSession, audit: str, request: Request) -> set[str]:
+    """The steps an earlier run of this request already audited."""
+    if not spark.catalog.tableExists(audit):
+        return set()
+    rows = spark.table(audit).where(F.col("request_id") == request.request_id)
+    return {r.step for r in rows.select("step").collect()}
+
+
 def erase_lake(
     spark: SparkSession,
     request: Request,
@@ -431,7 +465,8 @@ def erase_lake(
     upstream: dict[str, int] | None = None,
 ) -> dict[str, dict[str, int]]:
     """Erase the user from every silver and gold table of the map, table by
-    table, each followed by its audit row; returns what was done per table.
+    table, each followed by its audit row, then recompute the daily marts
+    of the user's days (MARTS_STEP); returns what was done per step.
     `retry` wraps each table's work (the job passes with_retries).
 
     `upstream`: rows removed by the DAG's earlier steps (sources, bronze,
@@ -441,7 +476,9 @@ def erase_lake(
     audit = f"{silver_db}.{AUDIT_NAME}"
     for step, rows in (upstream or {}).items():
         _audit(spark, audit, request, step, {"rows_deleted": rows})
+    earlier = _audited(spark, audit, request)
     orders = user_orders(spark, request.user_id, silver_db, gold_db)
+    order_days, session_days = affected_days(spark, request.user_id, gold_db)
     report = {}
     for step, condition in LAKE_TABLES.items():
         table = _table(step, silver_db, gold_db)
@@ -455,4 +492,17 @@ def erase_lake(
         _audit(spark, audit, request, step, report[step])
         # Counts and the request id, never the user id.
         log.info("%s %s: %s", request.request_id, step, report[step])
+    # The daily marts are aggregates and are kept (FR9), but recomputed for
+    # the user's days so they stay equal to the facts. If an earlier run
+    # deleted facts and died before this step, the days can no longer be
+    # found (nothing links them to the user any more): rebuild every day.
+    if spark.catalog.tableExists(f"{gold_db}.mart_daily_revenue"):
+        if earlier & _FACT_STEPS and MARTS_STEP not in earlier:
+            order_days = session_days = None
+            log.info("%s %s: every day", request.request_id, MARTS_STEP)
+        report[MARTS_STEP] = refresh_daily_marts(
+            spark, order_days, session_days, gold_db, retry
+        )
+        _audit(spark, audit, request, MARTS_STEP, {})
+        log.info("%s %s: %s", request.request_id, MARTS_STEP, report[MARTS_STEP])
     return report
