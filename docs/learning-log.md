@@ -2692,10 +2692,50 @@ Written afterwards (session 17), from the commits, the working tree and
 - Reviewed progress: P1-P7 done, P8 steps 0-8 done, 9-13 scripted.
 - Wrote the session 16 entry above from the commits and files.
 
-### Where we stopped (2026-10-14) — LATEST, start here
+### Where we stopped (2026-10-14)
 
 - Waiting for Docker Desktop's WSL integration. Then run step 9:
   `uv run drills/backfill_drill.py <first> <last>` on 3 days with returns.
+
+## Session 18 — 2026-10-14 (evening) — P8 step 9 passed
+
+- A drill run started at 18:03 (not logged before) passed the baseline and
+  the catch, then was killed with WSL during step 5. Airflow resumed the
+  fix backfill by itself after `make up`; steps 6-7 were run with the
+  drill's functions; the baseline snapshot id was recovered from the
+  mart's snapshot history. Result: caught, repaired, 15 columns x 3 days
+  identical to the baseline, no duplicate date_key (`docs/results.md`).
+- **Decision (approved by Souhail): the backfill's quality check stays
+  table-wide.** Found because the fixed 10-05 failed quality: the revenue
+  rule counted 1, 2, 3 bad rows on the bug run and 2, 1, 0 on the fix,
+  since each check sees the days not yet rewritten. Caught = the first
+  buggy day (its count of 1 is its own row, the baseline being clean);
+  repaired = the last day. Per-day checks rejected (a second copy of the
+  rules; uniqueness is table-wide). ADR 021 amendment, runbook "Backfill".
+- Debugging method: a red quality task has two causes, a rule failing on
+  data or the task crashing; the log line (`Actual ... was 2, expected =
+  0`) said which, and the number pointed at the other days.
+- Network: 10-07's rebuild failed once on DNS (`UnknownHostException` on
+  the bucket); the one-commit replace left the old rows, Airflow's 5-min
+  retry and the job's own transient retries got through.
+- A SIGKILL (WSL stopping) skips `finally`: transform stayed paused. In
+  the runbook: unpause it by hand after a killed drill.
+
+### Check answer (given by Claude at Souhail's request)
+
+Why does the first buggy day's count of 1 prove more than the last day's
+3? When 10-05 was checked, it was the only day rewritten with the bug and
+the baseline had passed, so the one bad row was its own. At 10-07, three
+days were bad: a 3 would appear even if 10-07 itself were right.
+
+### Where we stopped (2026-10-14) — LATEST, start here
+
+- **Next: step 10**, `uv run drills/connect_kafka_restarts.py` (core and
+  stream profiles up, generator running), then 11 (`slot-drill.sh`, needs
+  the monitoring profile), 12 (no script yet), 13 (`neo4j_freeze.py`,
+  serving profile), 14 wrap-up and the P8 checkpoint.
+- Still open: answers on the marts change, the merge-on-read follow-up,
+  the session 16 fixes' questions.
 
 ### P1 plan (agreed)
 
