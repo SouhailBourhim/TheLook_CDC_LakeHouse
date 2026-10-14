@@ -2613,13 +2613,89 @@ expiry leave on S3 without the `apply_deletes` rewrite?
 - **Push blocked:** the gitleaks pre-push hook needs Docker, absent from
   WSL this session. Three commits wait locally; not bypassed.
 
-### Where we stopped (2026-10-14) — LATEST, start here
+### Where we stopped (2026-10-14)
 
 - Push the waiting commits once Docker is back, then read the CI run.
 - Souhail to answer the check questions on the marts change (in chat).
 - **Next: step 9**, the backfill drill (logic bug caught by the contract,
   revert, backfill 3 days, values equal the pre-bug snapshot).
 - Ask the open follow-up (merge-on-read without the rewrite) at a pause.
+
+## Session 16 — 2026-10-14 (night, 02:00-05:40) — drill scripts, two robustness fixes
+
+Written afterwards (session 17), from the commits, the working tree and
+`drills/logs/`: this session ended without a log entry.
+
+### Pushed
+
+- **`b6fe151` the backfill checks what it rewrote.** A `quality` task after
+  `rebuild_day` runs the contracts of the three facts and both daily marts
+  in Athena (read-only quality user, no lake slot). transform's check does
+  not cover the marts, so a bad backfill would otherwise wait for the
+  daily `quality_report` (up to a day) to be noticed. This is what step 9
+  relies on: the `net_revenue = gross_revenue - returns` rule of
+  `mart_daily_revenue` is the one that must catch the bug.
+- **`f4616ec` bronze restarts after every crash.** Seen live at 04:06:
+  bronze had stopped for good. `restart: on-failure:3` counts restarts over
+  the container's whole life, not in a row: Docker's restart count never
+  resets on success, only the backoff does (`daemon/internal/
+  restartmanager`). Three network drops in a day used the budget; the
+  fourth stopped the stream. Now `on-failure` with no maximum (at most one
+  restart a minute, from the backoff). A crash loop costs little here; a
+  silently stopped bronze costs the freshness objective.
+- **`8b02742` backfill retries 5 min apart (was 2).** A DNS outage of about
+  6 min failed a backfilled day three times: two retries 2 min apart only
+  cover about 4 min. Retrying is safe because a day is replaced whole.
+
+### Written, not committed, not yet passed
+
+- `drills/backfill_drill.py` (step 9): pause transform (silver frozen),
+  baseline backfill with the committed code, record the mart snapshot,
+  introduce the bug in the working tree only (`net_revenue` = sum of gross),
+  backfill (rebuild succeeds, quality fails), revert (in a `finally`, also
+  on Ctrl-C), backfill, compare every column with the baseline snapshot by
+  Athena time travel, check `date_key` unique, unpause transform.
+  Baseline = a recompute, not the incremental mart, which erasures before
+  session 15 may have left stale.
+  **One attempt at 05:09 on 2026-10-05..07** wrote only the days to its
+  summary: it stopped during the baseline (the network drop that led to
+  `8b02742`). `gold.py` is clean, so the bug did not stay in the tree.
+- `drills/verify_bronze.py` (shared by steps 10-12): `--capture` saves each
+  CDC topic's end offset; later, per topic, the records Kafka committed
+  since then (read_committed, no tombstones) are counted against bronze's
+  rows and distinct offsets in that range: 0 lost, 0 duplicated. Counts,
+  not gap checks: exactly-once transaction markers take offsets too.
+- `drills/connect_kafka_restarts.py` (step 10): `kill -9` Connect under
+  load, restart it, then restart Kafka; sources = Kafka (`verify_cdc.py`),
+  Kafka = bronze (`verify_bronze.py`). A FAILED task is restarted through
+  the REST API and reported.
+- `drills/slot-drill.sh` (step 11, modified): also stops the review
+  simulator, checks bronze = Kafka over the hour, and requires that
+  Alertmanager actually sent an email (`alertmanager_notifications_total`
+  minus failed, for the email integration).
+- `drills/neo4j_freeze.py` (step 13): `docker pause neo4j` (silence, not a
+  refused connection); every sample: recommendations 503 within the limit,
+  `/ready` 503 naming neo4j, `/health` 200; 200 again after unpause.
+- Step 12 (offsets reset, stream killed mid-batch) has no script yet.
+
+### Where we stopped (2026-10-14)
+
+- Docker absent from WSL again at the start of session 17: nothing can run.
+- **Next: step 9**, run `backfill_drill.py` on days with returns, record it
+  in `docs/results.md`, commit the drill. Then steps 10, 11, 12, 13.
+- Still open: Souhail's answers on the marts change; the merge-on-read
+  follow-up; the questions on this session's two fixes (why `on-failure:3`
+  was not "3 in a row"; why the retry delay, not the count, was the fix).
+
+## Session 17 — 2026-10-14 (later) — progress review
+
+- Reviewed progress: P1-P7 done, P8 steps 0-8 done, 9-13 scripted.
+- Wrote the session 16 entry above from the commits and files.
+
+### Where we stopped (2026-10-14) — LATEST, start here
+
+- Waiting for Docker Desktop's WSL integration. Then run step 9:
+  `uv run drills/backfill_drill.py <first> <last>` on 3 days with returns.
 
 ### P1 plan (agreed)
 
