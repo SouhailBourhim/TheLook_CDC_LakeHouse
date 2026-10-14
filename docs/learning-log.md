@@ -2545,9 +2545,46 @@ expiry leave on S3 without the `apply_deletes` rewrite?
   answer recorded in ADR 021: purge in a background thread at `snapshot`
   isolation, finish (stamp, history, log) in a batch before the ledger row.
 
+### P8 steps 7-8 (2026-10-14): gold for a day range, the backfill DAG
+
+- `lakehouse.gold.rebuild_days(start, end)`: from silver, the facts of the
+  orders created and sessions started on those days, then the daily
+  revenue and funnel marts, with the regular build's functions. Each
+  range is replaced exactly: MERGE on the grain key plus `WHEN NOT
+  MATCHED BY SOURCE AND <in range> THEN DELETE` (rows silver lost, e.g. an
+  erasure, leave gold; a backfill can never bring one back). Watermarks
+  untouched. `jobs/backfill.py <start> [<end>]`.
+- `backfill` DAG: `@daily`, one day per run, `{{ ds }}`, lake pool, one
+  run at a time, retries 2.
+- **Finding: Airflow 3.3 starts no run of a paused DAG, not even a
+  backfill's** (dagrun.py, `get_queued_dag_runs_to_set_running` joins on
+  `is_paused = false`; read in the installed source after the runs sat
+  `queued`). ADR 021's "kept paused" was wrong; step 0 had only checked
+  that `backfill create` exists. Now: unpaused, first task
+  `only_backfills` (ShortCircuit) skips the scheduler's own daily runs.
+- **Bug: `str(run_type)`** is `"DagRunType.BACKFILL"` for the Task SDK's
+  enum (no `__str__`, unlike the scheduler's enum I had read): every
+  backfill run skipped. Fixed to `run_type == "backfill"`; the test uses
+  the real SDK enum (a plain string had hidden it).
+- **Same lesson as the erasure:** the first real day retried the whole day
+  on each network error and died after 4. Per-table retry now.
+- Real run, 2026-10-10 and 10-11, rerun with `--reprocess-behavior
+  completed`: 221 s and 343 s, no retries; fact counts identical to
+  before (197,635 items, 136,361 orders, 228,465 sessions on 10-10).
+- Mart differences explained by time travel to the "before" moment:
+  cancellations 502 -> 570 were live changes (mart = facts then); the
+  funnel was **stale by 8 and 1 sessions**: the erasures deleted sessions
+  from the facts, and the incremental marts recompute only days whose
+  facts have a newer `_computed_at`, which a deleted row cannot give.
+  The backfill fixed it; after it, marts = facts exactly.
+
 ### Where we stopped (2026-10-14) — LATEST, start here
 
-- **Next: step 7**, gold rebuild for a day range (backfill), then 8-14.
+- Steps 7-8 done. **Decision pending (Souhail):** should `erase.py` also
+  recompute the daily marts of the erased facts' days (marts stay
+  aggregates, stay consistent with facts)? Recommendation: yes.
+- **Next: step 9**, the backfill drill (logic bug caught by the contract,
+  revert, backfill 3 days, values equal the pre-bug snapshot).
 - Ask the open follow-up (merge-on-read without the rewrite) at a pause.
 
 ### P1 plan (agreed)
