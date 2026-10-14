@@ -2697,7 +2697,7 @@ Written afterwards (session 17), from the commits, the working tree and
 - Waiting for Docker Desktop's WSL integration. Then run step 9:
   `uv run drills/backfill_drill.py <first> <last>` on 3 days with returns.
 
-## Session 18 — 2026-10-14 (evening) — P8 step 9 passed
+## Session 18 — 2026-10-14 (evening) — P8 steps 9 and 10 passed
 
 - A drill run started at 18:03 (not logged before) passed the baseline and
   the catch, then was killed with WSL during step 5. Airflow resumed the
@@ -2728,12 +2728,32 @@ Why does the first buggy day's count of 1 prove more than the last day's
 the baseline had passed, so the one bad row was its own. At 10-07, three
 days were bad: a 3 would appear even if 10-07 itself were right.
 
+### Step 10: Connect and Kafka restarts
+
+- `kill -9` Connect (60 s dead): connectors back 8 s after the start;
+  Kafka restart: healthy in 10 s; bronze never restarted. Sources = Kafka
+  and Kafka = bronze over the window: 0 lost, 0 duplicated.
+- **Verifier fix:** the first run exited 1 because the MongoDB topics had
+  been trimmed by retention. The Postgres check had been calling every
+  row missing from a trimmed topic "outside retention", which would hide a
+  change lost in the drill. Now a topic's horizon (timestamp of its first
+  record still on the broker) splits missing rows: changed after it =
+  lost. A check is only worth something if it can fail: Connect stopped
+  30 s under load -> missing rows on every busy source, all from those
+  30 s; caught up -> all OK.
+- Check answer (given by Claude): no duplicate after the crash because
+  records and source offsets are written in one Kafka transaction; the open
+  one is aborted, the changes are resent, and `read_committed` readers
+  never see the aborted copy. Offsets are counted, not gap-checked:
+  markers and aborted records take offsets (users: 154 records over 267
+  offsets).
+
 ### Where we stopped (2026-10-14) — LATEST, start here
 
-- **Next: step 10**, `uv run drills/connect_kafka_restarts.py` (core and
-  stream profiles up, generator running), then 11 (`slot-drill.sh`, needs
-  the monitoring profile), 12 (no script yet), 13 (`neo4j_freeze.py`,
-  serving profile), 14 wrap-up and the P8 checkpoint.
+- **Next: step 11**, `drills/slot-drill.sh` (Debezium stopped for an hour;
+  needs the monitoring profile up, and the stream profile for the bronze
+  check), then 12 (no script yet), 13 (`neo4j_freeze.py`, serving
+  profile), 14 wrap-up and the P8 checkpoint.
 - Still open: answers on the marts change, the merge-on-read follow-up,
   the session 16 fixes' questions.
 
