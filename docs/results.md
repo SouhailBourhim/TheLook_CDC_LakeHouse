@@ -833,3 +833,35 @@ update does not move `updated_at`). Tested both ways: with Connect stopped
 for 30 s under load, it reported 6 users, 134 orders, 196 order items, 659
 events and 10 reviews missing, all changed in those 30 s, and kept 6.26 M
 events outside retention; caught up, every source matched.
+
+### `drills/slot-drill.sh`: Debezium stopped for an hour (step 11), 21:52-23:01 UTC
+
+Core, stream, airflow and monitoring profiles up; generator and review
+simulator running throughout the stop.
+
+| What | Result |
+|---|---|
+| retained WAL while Connect was down | 702 kB -> ~200 MB at minute 60 (~3.5 MB/min), `wal_status` reserved, cap 10 GB |
+| alerts | `KafkaConnectDown` firing from minute 2; `ReplicationSlotInactive` firing at minute 31 (rule: inactive 30 min) |
+| delivery | 3 SNS notifications sent, 0 failed; the `[thelook] FIRING: ReplicationSlotInactive` email reached the owner's inbox |
+| verifier with Connect down | MISMATCH, as required: 542 users, 13,735 orders, 19,841 order items, 73,676 events, 687 reviews missing, all changed during the hour |
+| catch-up | slot confirmed the last LSN 44 s after `up` (worker start-up included) |
+| sources = Kafka after catch-up | all 7 OK (reviews after the fix below) |
+| Kafka = bronze over the drill | users 1,591, orders 14,982, order_items 21,638, events 73,681, reviews 1,678: **0 lost, 0 duplicated** |
+
+The drill script counted emails on `integration="email"`; the label is the
+integration type, `sns` here (`email` is SMTP, unused), so it would have
+reported "no email sent". Fixed before the run; it also requires
+`ReplicationSlotInactive` to have fired, since the SNS counter counts every
+alert.
+
+**A defect found: MongoDB updates read an hour late have no document.**
+The verifier crashed on a review update with `after = null`. The connector
+looks an update's document up when it reads the event
+(`change_streams_update_full`), not when it happened: a review updated then
+deleted during the hour no longer existed when Connect caught up. Bronze
+held 9 such updates, all from the drill hour. Silver read them as updates
+and would have set every field of the review to null, until the delete that
+follows; tonight each delete came in the same transform run and won, so
+silver held 0 null rows. Silver and the verifier now read an update without
+a document as a delete (a test fails without the fix).
