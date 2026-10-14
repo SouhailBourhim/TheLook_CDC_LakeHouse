@@ -196,6 +196,7 @@ def test_backfill_recomputes_the_runs_day_for_backfill_runs_only(bag):
     assert task.application.endswith("/backfill.py")
     assert task.application_args == ["{{ ds }}"]
     assert task.retries == 2  # a day is replaced as a whole
+    assert task.retry_delay >= timedelta(minutes=5)  # network drops: ~6 min
 
 
 def test_a_backfilled_day_passes_the_contracts_of_what_it_rewrote(bag):

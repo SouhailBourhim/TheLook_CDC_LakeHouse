@@ -58,9 +58,10 @@ with DAG(
     max_active_runs=1,
     default_args={
         "on_failure_callback": alert_on_failure,
-        # A day is replaced as a whole: retrying is always safe.
+        # A day is replaced as a whole: retrying is always safe. The delay
+        # outlasts this network's drops (up to 6 min, P8 step 9).
         "retries": 2,
-        "retry_delay": timedelta(minutes=2),
+        "retry_delay": timedelta(minutes=5),
         "execution_timeout": timedelta(minutes=60),
     },
     tags=["lakehouse", "p8"],
