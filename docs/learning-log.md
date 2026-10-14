@@ -2578,11 +2578,45 @@ expiry leave on S3 without the `apply_deletes` rewrite?
   facts have a newer `_computed_at`, which a deleted row cannot give.
   The backfill fixed it; after it, marts = facts exactly.
 
-### Where we stopped (2026-10-14) — LATEST, start here
+### Where we stopped (2026-10-14)
 
 - Steps 7-8 done. **Decision pending (Souhail):** should `erase.py` also
   recompute the daily marts of the erased facts' days (marts stay
   aggregates, stay consistent with facts)? Recommendation: yes.
+- **Next: step 9**, the backfill drill (logic bug caught by the contract,
+  revert, backfill 3 days, values equal the pre-bug snapshot).
+- Ask the open follow-up (merge-on-read without the rewrite) at a pause.
+
+## Session 15 — 2026-10-14 (later) — the erasure keeps the marts true
+
+### Decision: daily marts after an erasure (Souhail)
+
+- Found at the start: an uncommitted draft from the previous session
+  (`affected_days`, `refresh_daily_marts`) that had never been run. It
+  broke 5 erasure tests (`UNRESOLVED_COLUMN order_date_key`: the test
+  fixture's facts had no date keys), and it left a gap that only a code
+  comment mentioned: a crash between the fact deletes and the mart refresh
+  loses the days, because nothing links them to the user any more.
+- Options for the gap: accept it (no one knows which days to backfill);
+  store the days in the audit (rejected: keeps when the erased user was
+  active); **rebuild every day as a fallback** (chosen).
+- Built: `refresh_daily_marts(order_days, session_days)`, shared with the
+  backfill, `None` = whole mart; `erase_lake` audits a `gold.marts` step,
+  and a rerun that finds this request's fact steps audited without
+  `gold.marts` rebuilds both marts from all facts. ADR 021 updated (and
+  its stale "backfill kept paused" corrected).
+- Tests: `test_erasure_marts.py` (days recomputed, day without facts loses
+  its row; crash then rerun calls the refresh with `(None, None)`; a rerun
+  after success writes nothing). Mutation check: with the fallback
+  disabled, the crash test fails with `[([], [])] != [(None, None)]`, the
+  exact bug. Full suite: 149 passed, 7 skipped.
+- **Push blocked:** the gitleaks pre-push hook needs Docker, absent from
+  WSL this session. Three commits wait locally; not bypassed.
+
+### Where we stopped (2026-10-14) — LATEST, start here
+
+- Push the waiting commits once Docker is back, then read the CI run.
+- Souhail to answer the check questions on the marts change (in chat).
 - **Next: step 9**, the backfill drill (logic bug caught by the contract,
   revert, backfill 3 days, values equal the pre-bug snapshot).
 - Ask the open follow-up (merge-on-read without the rewrite) at a pause.

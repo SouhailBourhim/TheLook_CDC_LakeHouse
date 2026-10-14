@@ -109,9 +109,12 @@ done without keeping the identifier.
 the map: zero rows for the user in each source, layer and store; on every
 affected table, no snapshot older than its purge.
 
-**Backfill (FR10).** A `backfill` DAG with a daily timetable, kept paused
-and run only with `airflow backfill create --from-date --to-date`
-(`--reprocess-behavior completed` to rerun days). Each run recomputes one
+**Backfill (FR10).** A `backfill` DAG with a daily timetable, run only
+with `airflow backfill create --from-date --to-date`
+(`--reprocess-behavior completed` to rerun days). It stays unpaused:
+Airflow 3.3 starts no run of a paused DAG, not even a backfill's (P8 step
+8; "kept paused" here was wrong); the scheduler's own daily runs end at
+the first task, `only_backfills`. Each run recomputes one
 order day's gold facts and marts from silver and MERGEs them on the grain
 keys: rerunning a day replaces its rows, so duplicates cannot appear. The
 drill injects a logic bug as an uncommitted working-tree patch, lets the
