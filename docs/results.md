@@ -744,3 +744,56 @@ then ran clean.
 Order to return, 515 returns in silver: p50 4.2 days, p90 9.9, p99 10.9,
 max 11.1, on 12 days of history (right-censored). Window: 14 days;
 `mart_daily_revenue.provisional_until` = order day + 14.
+
+## P8: backfill repairs a logic bug — 2026-10-14
+
+### `drills/backfill_drill.py` on 2026-10-05..07 (step 9, acceptance part 2)
+
+Transform paused (silver frozen), generator running. The bug, in the
+working tree only: `net_revenue` = sum of gross amounts instead of net.
+Days chosen with returns, so the rule
+`net_revenue = gross_revenue - returns` has something to catch.
+
+| Step | Backfill | Duration | Result |
+|---|---|---|---|
+| 2. baseline, committed code | 5 | 51.0 min | 3 days rebuilt, quality passed on all 3; mart snapshot `1815688829346899471` |
+| 3-4. the bug | 6 | 21.5 min | 3 days rebuilt; quality **failed** on all 3: net = gross on each day |
+| 5. reverted | 7 | 18:30-20:12 UTC | 3 days rebuilt; quality passed on the last day (below) |
+| 6. compare | | | 15 columns x 3 days **identical** to the baseline snapshot (Athena time travel); no extra day; no duplicate `date_key` in the mart |
+
+| Day | Baseline gross | returns | net | With the bug: net |
+|---|---|---|---|---|
+| 2026-10-05 | 23,759,507.17 | 1,865.39 | 23,757,641.78 | 23,759,507.17 |
+| 2026-10-06 | 7,733,030.48 | 339.83 | 7,732,690.65 | 7,733,030.48 |
+| 2026-10-07 | 10,354,598.08 | 58.99 | 10,354,539.09 | 10,354,598.08 |
+
+**The contracts check whole tables.** The revenue rule's count of bad rows,
+per day's quality task:
+
+| Run | 10-05 | 10-06 | 10-07 |
+|---|---|---|---|
+| bug (backfill 6) | 1 | 2 | 3 |
+| fix (backfill 7) | 2 | 1 | 0 |
+
+Days run oldest first, one at a time, so each check also sees the days not
+yet rewritten. The first buggy day's count of 1 is its own row (the
+baseline was clean): that is the catch. Only the last fixed day sees every
+day rewritten: that is the repair. The drill first required every fixed day
+to pass, which a table-wide check cannot give; it now judges "caught" on the
+first day and "repaired" on the last (ADR 021 amendment, runbook "Backfill").
+
+**Interruptions, and what they showed.**
+
+- Docker Desktop stopped with WSL during step 5 (every container exit 255,
+  about 18:35). The drill script was killed with it: no `finally`, so
+  transform stayed paused and steps 6-7 did not run. After `make up`,
+  Airflow resumed backfill 7 by itself (the 10-05 `rebuild_day` retried at
+  18:37). Steps 6-7 were then run with the drill's own functions; the
+  baseline snapshot id, never printed, was recovered from
+  `mart_daily_revenue$snapshots` (last commit before backfill 6 began).
+- 10-07's rebuild failed once after 25 min on DNS (`UnknownHostException`
+  on the lake bucket; the SDK's 6 attempts and Spark's 4 task tries all
+  fell inside the outage). The day is replaced in one commit, so the failed
+  attempt left the old rows; Airflow retried 5 min later and the job's
+  transient-error retries carried it through more drops (DNS, refused
+  connections, cut downloads) to its commit.
