@@ -125,6 +125,7 @@ def latest_per_key(bronze: DataFrame, source: str) -> DataFrame:
     rows (a blocking snapshot's rows carry the pause LSN, which the first
     streamed event can share, P3), then the Kafka offset.
     """
+    op = F.col("op")
     if source == "postgres":
         # A delete carries the key only in `before` (REPLICA IDENTITY DEFAULT).
         key = F.coalesce(F.col("after.id"), F.col("before.id"))
@@ -134,9 +135,15 @@ def latest_per_key(bronze: DataFrame, source: str) -> DataFrame:
         # (source_ts_ms, ord) as one comparable number (E1); ord counts
         # events within one cluster-time second, far below 1,000,000.
         position = F.col("source_ts_ms") * F.lit(1_000_000) + F.col("ord")
+        # An update's document is looked up when Debezium reads the event
+        # (change_streams_update_full), not when it happened: a document
+        # deleted in between comes with no image. It no longer existed, so
+        # it is a delete; the real one follows (P8 step 11, Connect read an
+        # hour late). As an update it would null every field of the row.
+        op = F.when((op == "u") & F.col("after").isNull(), F.lit("d")).otherwise(op)
     events = bronze.select(
         key.alias("_key"),
-        F.col("op").alias("_op"),
+        op.alias("_op"),
         position.alias("_position"),
         F.col("source_ts").alias("_source_ts"),
         F.col("after").alias("_image"),

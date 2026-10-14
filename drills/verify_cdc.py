@@ -258,7 +258,10 @@ def latest_from_mongo_topic(topic: str, key_deser, val_deser) -> tuple[dict, int
         key = key_deser(m.key(), SerializationContext(topic, MessageField.KEY))
         doc_id = json.loads(key["id"])
         v = val_deser(m.value(), SerializationContext(topic, MessageField.VALUE))
-        state = None if v["op"] == "d" else digest(json_util.loads(v["after"]))
+        # An update with no document: Debezium looked it up after it was
+        # deleted (silver reads it as a delete, P8 step 11).
+        gone = v["op"] == "d" or v["after"] is None
+        state = None if gone else digest(json_util.loads(v["after"]))
         by_offset[doc_id] = state
         pos = (v["source"]["ts_ms"], v["source"]["ord"])
         if doc_id not in by_position or pos >= by_position[doc_id][0]:

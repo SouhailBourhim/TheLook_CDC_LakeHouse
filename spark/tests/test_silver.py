@@ -112,6 +112,19 @@ def test_delete_takes_its_key_from_before(spark):
     assert (row._key, row._op, row._image) == ("a", "d", None)
 
 
+def test_mongo_update_without_a_document_is_a_delete(spark):
+    # Debezium looked the document up after it was deleted (P8 step 11).
+    looked_up_too_late = (*mongo("u", "r1", 2_000, 1, 2)[:-1], None)
+    df = spark.createDataFrame(
+        [mongo("c", "r1", 1_000, 1, 1, review("r1")), looked_up_too_late],
+        MONGO_BRONZE,
+    )
+    (row,) = latest_per_key(df, "mongo").collect()
+    assert row._op == "d" and row._image is None
+    rows, bad = silver_rows(latest_per_key(df, "mongo"), SPECS["reviews"])
+    assert [r._op for r in rows.collect()] == ["d"] and bad.count() == 0
+
+
 def test_mongo_order_is_commit_time_then_ord(spark):
     df = spark.createDataFrame(
         [
