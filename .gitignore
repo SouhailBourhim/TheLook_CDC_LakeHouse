@@ -26,3 +26,4 @@ tfplan
 
 # Terraform variable values (may contain personal data); see *.tfvars.example
 *.tfvars
+docs/images/screens/raw/

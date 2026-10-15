@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="466" viewBox="0 0 1000 466" role="img" aria-label="Architecture: PostgreSQL and MongoDB, Debezium, Kafka, bronze, silver and gold on AWS, Redis, Neo4j and FastAPI" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Architecture: PostgreSQL and MongoDB, Debezium, Kafka, bronze, silver and gold on AWS, Redis, Neo4j and FastAPI</title>
+<rect width="1000" height="466" rx="8" fill="#1a1a19"/>
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#898781"/></marker></defs>
+<rect x="12" y="40" width="476" height="240" rx="12" fill="#232322"/>
+<text x="26.0" y="62.0" fill="#898781" font-size="10" font-weight="600" text-anchor="start">ON-PREM · DOCKER COMPOSE</text>
+<rect x="498" y="40" width="490" height="168" rx="12" fill="#232322"/>
+<text x="512.0" y="62.0" fill="#898781" font-size="10" font-weight="600" text-anchor="start">AWS · ICEBERG ON S3, GLUE CATALOG, ATHENA</text>
+<rect x="498" y="222" width="490" height="230" rx="12" fill="#232322"/>
+<text x="512.0" y="244.0" fill="#898781" font-size="10" font-weight="600" text-anchor="start">SERVING · ON-PREM</text>
+<rect x="12" y="296" width="476" height="156" rx="12" fill="#232322"/>
+<text x="26.0" y="318.0" fill="#898781" font-size="10" font-weight="600" text-anchor="start">ACROSS THE STACK</text>
+<rect x="24" y="76" width="128" height="52" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="88.0" y="98.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">PostgreSQL 17</text>
+<text x="88.0" y="115.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">orders, users, items</text>
+<rect x="24" y="144" width="128" height="52" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="88.0" y="166.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">MongoDB 8</text>
+<text x="88.0" y="183.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">events, reviews</text>
+<rect x="186" y="110" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="250.0" y="135.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">Debezium</text>
+<text x="250.0" y="152.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">change events, Avro</text>
+<rect x="186" y="200" width="128" height="46" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="250.0" y="219.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">Schema Registry</text>
+<text x="250.0" y="236.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">compatibility</text>
+<rect x="348" y="110" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3987e5" stroke-width="1.5"/>
+<text x="412.0" y="135.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">Kafka 4</text>
+<text x="412.0" y="152.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">7 CDC topics</text>
+<rect x="510" y="110" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="574.0" y="135.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">bronze</text>
+<text x="574.0" y="152.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Spark stream, 60 s</text>
+<rect x="672" y="110" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="736.0" y="135.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">silver</text>
+<text x="736.0" y="152.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">MERGE latest per key</text>
+<rect x="834" y="110" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="898.0" y="135.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">gold</text>
+<text x="898.0" y="152.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">star schema, marts</text>
+<polyline points="152.0,102.0 170.0,102.0 170.0,131.0 186.0,131.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="152.0,170.0 170.0,170.0 170.0,147.0 186.0,147.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="250.0,168.0 250.0,200.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="314.0,139.0 348.0,139.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="476.0,139.0 510.0,139.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="638.0,139.0 672.0,139.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="800.0,139.0 834.0,139.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<rect x="510" y="262" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="574.0" y="287.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">Features stream</text>
+<text x="574.0" y="304.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Spark, local mode</text>
+<rect x="672" y="262" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="736.0" y="287.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">Redis 8</text>
+<text x="736.0" y="304.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">user features</text>
+<rect x="834" y="262" width="128" height="58" rx="8" fill="#1a1a19" stroke="#3a3a37" stroke-width="1"/>
+<text x="898.0" y="287.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">Neo4j</text>
+<text x="898.0" y="304.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">co-purchase graph</text>
+<rect x="672" y="368" width="290" height="58" rx="8" fill="#1a1a19" stroke="#3987e5" stroke-width="1.5"/>
+<text x="817.0" y="393.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="middle">FastAPI</text>
+<text x="817.0" y="410.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">features · recommendations</text>
+<polyline points="412.0,168.0 412.0,291.0 510.0,291.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<text x="461.0" y="285.0" fill="#898781" font-size="10" font-weight="400" text-anchor="middle">events</text>
+<polyline points="638.0,291.0 672.0,291.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="898.0,168.0 898.0,262.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<text x="906.0" y="219.0" fill="#898781" font-size="10" font-weight="400" text-anchor="start">graph job, daily</text>
+<polyline points="736.0,320.0 736.0,368.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<polyline points="898.0,320.0 898.0,368.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<circle cx="31" cy="340" r="4" fill="#3987e5"/>
+<text x="43.0" y="344.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="start">Airflow</text>
+<text x="43.0" y="360.0" fill="#c3c2b7" font-size="12" font-weight="400" text-anchor="start">silver and gold every 30 min, maintenance, graph, erasure, backfill</text>
+<circle cx="31" cy="376" r="4" fill="#3987e5"/>
+<text x="43.0" y="380.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="start">Prometheus + Alertmanager</text>
+<text x="43.0" y="396.0" fill="#c3c2b7" font-size="12" font-weight="400" text-anchor="start">slot, connector and lag alerts, emailed through SNS</text>
+<circle cx="31" cy="412" r="4" fill="#3987e5"/>
+<text x="43.0" y="416.0" fill="#f0efec" font-size="13" font-weight="600" text-anchor="start">Data contracts</text>
+<text x="43.0" y="432.0" fill="#c3c2b7" font-size="12" font-weight="400" text-anchor="start">26 ODCS contracts checked in Athena, a daily quality report</text>
+</svg>

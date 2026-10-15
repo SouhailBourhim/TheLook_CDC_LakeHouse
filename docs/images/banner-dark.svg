@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="210" viewBox="0 0 1000 210" role="img" aria-label="theLook CDC Lakehouse" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>theLook CDC Lakehouse</title>
+<rect width="1000" height="210" rx="8" fill="#1a1a19"/>
+<rect x="0" y="0" width="6" height="210" fill="#3987e5"/>
+<text x="44.0" y="74.0" fill="#f0efec" font-size="38" font-weight="700" text-anchor="start">theLook CDC Lakehouse</text>
+<text x="44.0" y="108.0" fill="#c3c2b7" font-size="16" font-weight="400" text-anchor="start">Change data capture from PostgreSQL and MongoDB into an Apache Iceberg</text>
+<text x="44.0" y="130.0" fill="#c3c2b7" font-size="16" font-weight="400" text-anchor="start">lakehouse on AWS, served as live features and recommendations.</text>
+<rect x="44.0" y="154" width="157.0" height="28" rx="14" fill="#3987e5" fill-opacity="0.10" stroke="#3987e5" stroke-opacity="0.35"/>
+<text x="122.5" y="173.0" fill="#f0efec" font-size="12" font-weight="500" text-anchor="middle">PostgreSQL · MongoDB</text>
+<text x="212.0" y="173.0" fill="#898781" font-size="13" font-weight="400" text-anchor="middle">→</text>
+<rect x="223.0" y="154" width="128.6" height="28" rx="14" fill="#3987e5" fill-opacity="0.10" stroke="#3987e5" stroke-opacity="0.35"/>
+<text x="287.3" y="173.0" fill="#f0efec" font-size="12" font-weight="500" text-anchor="middle">Debezium · Kafka</text>
+<text x="362.6" y="173.0" fill="#898781" font-size="13" font-weight="400" text-anchor="middle">→</text>
+<rect x="373.6" y="154" width="164.1" height="28" rx="14" fill="#3987e5" fill-opacity="0.10" stroke="#3987e5" stroke-opacity="0.35"/>
+<text x="455.7" y="173.0" fill="#f0efec" font-size="12" font-weight="500" text-anchor="middle">Spark · Iceberg on S3</text>
+<text x="548.7" y="173.0" fill="#898781" font-size="13" font-weight="400" text-anchor="middle">→</text>
+<rect x="559.7" y="154" width="64.7" height="28" rx="14" fill="#3987e5" fill-opacity="0.10" stroke="#3987e5" stroke-opacity="0.35"/>
+<text x="592.1" y="173.0" fill="#f0efec" font-size="12" font-weight="500" text-anchor="middle">Airflow</text>
+<text x="635.4" y="173.0" fill="#898781" font-size="13" font-weight="400" text-anchor="middle">→</text>
+<rect x="646.4" y="154" width="178.3" height="28" rx="14" fill="#3987e5" fill-opacity="0.10" stroke="#3987e5" stroke-opacity="0.35"/>
+<text x="735.6" y="173.0" fill="#f0efec" font-size="12" font-weight="500" text-anchor="middle">Redis · Neo4j · FastAPI</text>
+</svg>

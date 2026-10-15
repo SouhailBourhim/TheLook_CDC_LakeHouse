@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="300" viewBox="0 0 1000 300" role="img" aria-label="GDPR erasure: seven steps from the request to verification; 1 h 45 min, 71 min of it the bronze purge" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>GDPR erasure: seven steps from the request to verification; 1 h 45 min, 71 min of it the bronze purge</title>
+<rect width="1000" height="300" rx="8" fill="#fcfcfb"/>
+<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#898781"/></marker></defs>
+<rect x="16.0" y="24" width="126.3" height="92" rx="10" fill="#fcfcfb" stroke="#dcdbd5" stroke-width="1"/>
+<text x="28.0" y="50.0" fill="#898781" font-size="11" font-weight="600" text-anchor="start">1</text>
+<text x="28.0" y="70.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Request</text>
+<text x="28.0" y="88.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">user id in the run</text>
+<polyline points="143.3,70.0 155.3,70.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<rect x="156.3" y="24" width="126.3" height="92" rx="10" fill="#fcfcfb" stroke="#dcdbd5" stroke-width="1"/>
+<text x="168.3" y="50.0" fill="#898781" font-size="11" font-weight="600" text-anchor="start">2</text>
+<text x="168.3" y="70.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Sources</text>
+<text x="168.3" y="88.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">PostgreSQL,</text>
+<text x="168.3" y="103.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">MongoDB</text>
+<polyline points="283.6,70.0 295.6,70.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<rect x="296.6" y="24" width="126.3" height="92" rx="10" fill="#fcfcfb" stroke="#dcdbd5" stroke-width="1"/>
+<text x="308.6" y="50.0" fill="#898781" font-size="11" font-weight="600" text-anchor="start">3</text>
+<text x="308.6" y="70.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Wait</text>
+<text x="308.6" y="88.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">until bronze holds</text>
+<text x="308.6" y="103.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">the deletes</text>
+<polyline points="423.9,70.0 435.9,70.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<rect x="436.9" y="24" width="126.3" height="92" rx="10" fill="#fcfcfb" stroke="#2a78d6" stroke-width="1.5"/>
+<text x="448.9" y="50.0" fill="#898781" font-size="11" font-weight="600" text-anchor="start">4</text>
+<text x="448.9" y="70.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Bronze purge</text>
+<text x="448.9" y="88.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">by the stream,</text>
+<text x="448.9" y="103.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">its own key</text>
+<polyline points="564.1,70.0 576.1,70.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<rect x="577.1" y="24" width="126.3" height="92" rx="10" fill="#fcfcfb" stroke="#dcdbd5" stroke-width="1"/>
+<text x="589.1" y="50.0" fill="#898781" font-size="11" font-weight="600" text-anchor="start">5</text>
+<text x="589.1" y="70.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Redis</text>
+<text x="589.1" y="88.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">feature keys</text>
+<polyline points="704.4,70.0 716.4,70.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<rect x="717.4" y="24" width="126.3" height="92" rx="10" fill="#fcfcfb" stroke="#dcdbd5" stroke-width="1"/>
+<text x="729.4" y="50.0" fill="#898781" font-size="11" font-weight="600" text-anchor="start">6</text>
+<text x="729.4" y="70.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Silver and gold</text>
+<text x="729.4" y="88.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">delete, compact,</text>
+<text x="729.4" y="103.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">expire, marts</text>
+<polyline points="844.7,70.0 856.7,70.0" fill="none" stroke="#898781" stroke-width="1.5" stroke-linejoin="round" marker-end="url(#head)"/>
+<rect x="857.7" y="24" width="126.3" height="92" rx="10" fill="#fcfcfb" stroke="#dcdbd5" stroke-width="1"/>
+<text x="869.7" y="50.0" fill="#898781" font-size="11" font-weight="600" text-anchor="start">7</text>
+<text x="869.7" y="70.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Verify</text>
+<text x="869.7" y="88.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">54 of 54 places</text>
+<text x="869.7" y="103.0" fill="#52514e" font-size="11" font-weight="400" text-anchor="start">empty</text>
+<text x="16.0" y="156.0" fill="#0b0b0b" font-size="13" font-weight="600" text-anchor="start">Where the 1 h 45 min goes</text>
+<rect x="16.0" y="176" width="2.0" height="22" rx="4" fill="#2a78d6" fill-opacity="0.45"/>
+<rect x="16.8" y="176" width="21.6" height="22" rx="4" fill="#2a78d6" fill-opacity="0.45"/>
+<rect x="40.4" y="176" width="668.0" height="22" rx="4" fill="#2a78d6" fill-opacity="1"/>
+<text x="50.4" y="191.0" fill="#ffffff" font-size="12" font-weight="600" text-anchor="start">Bronze purge: 71 min</text>
+<rect x="710.3" y="176" width="271.7" height="22" rx="4" fill="#2a78d6" fill-opacity="0.45"/>
+<text x="720.3" y="191.0" fill="#0b0b0b" font-size="12" font-weight="600" text-anchor="start">Silver and gold: 29 min</text>
+<text x="16.0" y="226.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">Sources 5 s, waiting for bronze 2.5 min: the thin slices at the start.</text>
+<text x="16.0" y="246.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">The purge is copy-on-write: each DELETE rewrites the files that hold the user's rows.</text>
+<text x="16.0" y="274.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="start">Target (O5): 24 hours. Kafka keeps the change events until its 3-day retention.</text>
+</svg>

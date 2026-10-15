@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="250" viewBox="0 0 1000 250" role="img" aria-label="Measured: Database commit to Kafka &lt; 1 s (Debezium on the WAL and change streams); Commit to queryable bronze 75 s (median, max 88 s · target 5 min); Commit to gold 10–36 min (bounded by the 30-min schedule · target 1 h); Commit to the features API 9.6 s (median, max 10.6 s · target 1 min); GDPR erasure, every store 1 h 45 min (sources, lake, Redis, time travel · target 24 h); Failure drills 0 lost (160,884 records reconciled, 0 appended twice)" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Measured: Database commit to Kafka &lt; 1 s (Debezium on the WAL and change streams); Commit to queryable bronze 75 s (median, max 88 s · target 5 min); Commit to gold 10–36 min (bounded by the 30-min schedule · target 1 h); Commit to the features API 9.6 s (median, max 10.6 s · target 1 min); GDPR erasure, every store 1 h 45 min (sources, lake, Redis, time travel · target 24 h); Failure drills 0 lost (160,884 records reconciled, 0 appended twice)</title>
+<rect width="1000" height="250" rx="8" fill="#fcfcfb"/>
+<rect x="14.0" y="14" width="314.7" height="110" rx="10" fill="#f3f2ee"/>
+<text x="32.0" y="44.0" fill="#52514e" font-size="13" font-weight="400" text-anchor="start">Database commit to Kafka</text>
+<text x="32.0" y="84.0" fill="#0b0b0b" font-size="30" font-weight="650" text-anchor="start">&lt; 1 s</text>
+<text x="32.0" y="108.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">Debezium on the WAL and change streams</text>
+<rect x="342.7" y="14" width="314.7" height="110" rx="10" fill="#f3f2ee"/>
+<text x="360.7" y="44.0" fill="#52514e" font-size="13" font-weight="400" text-anchor="start">Commit to queryable bronze</text>
+<text x="360.7" y="84.0" fill="#0b0b0b" font-size="30" font-weight="650" text-anchor="start">75 s</text>
+<text x="360.7" y="108.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">median, max 88 s · target 5 min</text>
+<rect x="671.3" y="14" width="314.7" height="110" rx="10" fill="#f3f2ee"/>
+<text x="689.3" y="44.0" fill="#52514e" font-size="13" font-weight="400" text-anchor="start">Commit to gold</text>
+<text x="689.3" y="84.0" fill="#0b0b0b" font-size="30" font-weight="650" text-anchor="start">10–36 min</text>
+<text x="689.3" y="108.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">bounded by the 30-min schedule · target 1 h</text>
+<rect x="14.0" y="138" width="314.7" height="110" rx="10" fill="#f3f2ee"/>
+<text x="32.0" y="168.0" fill="#52514e" font-size="13" font-weight="400" text-anchor="start">Commit to the features API</text>
+<text x="32.0" y="208.0" fill="#0b0b0b" font-size="30" font-weight="650" text-anchor="start">9.6 s</text>
+<text x="32.0" y="232.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">median, max 10.6 s · target 1 min</text>
+<rect x="342.7" y="138" width="314.7" height="110" rx="10" fill="#f3f2ee"/>
+<text x="360.7" y="168.0" fill="#52514e" font-size="13" font-weight="400" text-anchor="start">GDPR erasure, every store</text>
+<text x="360.7" y="208.0" fill="#0b0b0b" font-size="30" font-weight="650" text-anchor="start">1 h 45 min</text>
+<text x="360.7" y="232.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">sources, lake, Redis, time travel · target 24 h</text>
+<rect x="671.3" y="138" width="314.7" height="110" rx="10" fill="#f3f2ee"/>
+<text x="689.3" y="168.0" fill="#52514e" font-size="13" font-weight="400" text-anchor="start">Failure drills</text>
+<text x="689.3" y="208.0" fill="#0b0b0b" font-size="30" font-weight="650" text-anchor="start">0 lost</text>
+<text x="689.3" y="232.0" fill="#898781" font-size="12" font-weight="400" text-anchor="start">160,884 records reconciled, 0 appended twice</text>
+</svg>

@@ -1,100 +1,81 @@
-# theLook CDC Lakehouse
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
+  <img alt="theLook CDC Lakehouse: change data capture from PostgreSQL and MongoDB into an Apache Iceberg lakehouse on AWS, served as live features and recommendations" src="docs/images/banner-light.svg" width="100%">
+</picture>
+</p>
 
-**Every change in an online shop's databases, captured as it happens and turned into a
-governed lakehouse, live user features and product recommendations, with every
-correctness claim backed by a drill that could have failed.**
+<p align="center">
+<a href="https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml"><img src="https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+</p>
 
-[![ci](https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml/badge.svg)](https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white) ![MongoDB](https://img.shields.io/badge/MongoDB-8-47A248?logo=mongodb&logoColor=white) ![Kafka](https://img.shields.io/badge/Kafka-4%20KRaft-231F20?logo=apachekafka&logoColor=white) ![Debezium](https://img.shields.io/badge/Debezium-3.7-8E2C2C) ![Spark](https://img.shields.io/badge/Spark-4.1-E25A1C?logo=apachespark&logoColor=white) ![Iceberg](https://img.shields.io/badge/Iceberg-1.12-2A78D6) ![Airflow](https://img.shields.io/badge/Airflow-3-017CEE?logo=apacheairflow&logoColor=white) ![AWS](https://img.shields.io/badge/AWS-S3%20%7C%20Glue%20%7C%20Athena-232F3E) ![Redis](https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=white) ![Neo4j](https://img.shields.io/badge/Neo4j-2026.08-008CC1?logo=neo4j&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white) ![Terraform](https://img.shields.io/badge/Terraform-IaC-7B42BC?logo=terraform&logoColor=white)
+<p align="center">
+<img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
+<img src="https://img.shields.io/badge/MongoDB-8-47A248?logo=mongodb&logoColor=white" alt="MongoDB">
+<img src="https://img.shields.io/badge/Kafka-4%20KRaft-231F20?logo=apachekafka&logoColor=white" alt="Kafka">
+<img src="https://img.shields.io/badge/Debezium-3.7-8E2C2C" alt="Debezium">
+<img src="https://img.shields.io/badge/Spark-4.1-E25A1C?logo=apachespark&logoColor=white" alt="Spark">
+<img src="https://img.shields.io/badge/Iceberg-1.12-2A78D6" alt="Iceberg">
+<img src="https://img.shields.io/badge/Airflow-3-017CEE?logo=apacheairflow&logoColor=white" alt="Airflow">
+<img src="https://img.shields.io/badge/AWS-S3%20%7C%20Glue%20%7C%20Athena-232F3E" alt="AWS">
+<img src="https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=white" alt="Redis">
+<img src="https://img.shields.io/badge/Neo4j-2026.08-008CC1?logo=neo4j&logoColor=white" alt="Neo4j">
+<img src="https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white" alt="FastAPI">
+<img src="https://img.shields.io/badge/Terraform-IaC-7B42BC?logo=terraform&logoColor=white" alt="Terraform">
+</p>
 
-> **Status:** P1 to P8 built, accepted and drilled: capture from PostgreSQL and MongoDB,
-> bronze/silver/gold on AWS, online features (Redis) and recommendations (Neo4j) behind
-> FastAPI, contracts and alerting, GDPR erasure, backfill and failure drills. Next is P9
-> (hardening). A learning project: the [cahier des charges](docs/cahier-des-charges.md) is
-> the specification, the [ADRs](docs/adr/) hold the reasoning, [results](docs/results.md)
-> every measurement.
+<p align="center">
+<a href="#see-it-running"><b>See it running</b></a> &nbsp;·&nbsp;
+<a href="#architecture"><b>Architecture</b></a> &nbsp;·&nbsp;
+<a href="#proven-by-failure-drills"><b>Failure drills</b></a> &nbsp;·&nbsp;
+<a href="#gdpr-erasure"><b>GDPR erasure</b></a> &nbsp;·&nbsp;
+<a href="#run-it"><b>Run it</b></a> &nbsp;·&nbsp;
+<a href="docs/results.md"><b>Results</b></a>
+</p>
+
+<p align="center"><sub>
+P1 to P8 built, accepted and drilled; P9 (hardening) next. A learning project: the
+<a href="docs/cahier-des-charges.md">cahier des charges</a> is the specification, the
+<a href="docs/adr/">ADRs</a> hold the reasoning, <a href="docs/results.md">results</a> every measurement.
+</sub></p>
 
 ## At a glance
 
-| | Measured | Target |
-|---|---|---|
-| Database commit to Kafka | **< 1 s** | |
-| Commit to queryable bronze (O1) | median **75 s**, max 88 s | 5 min |
-| Commit to gold (O2) | **10 to 36 min** | 1 hour |
-| Commit to the features API (P5) | median **9.6 s**, max 10.6 s | 1 min |
-| GDPR erasure, every layer and store (O5) | **1 h 45 min** | 24 hours |
-| Failure drills (O9) | **160,884** records reconciled: **0 lost, 0 appended twice** | 0 / 0 |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/glance-dark.svg">
+  <img alt="Measured: database commit to Kafka under 1 s; commit to queryable bronze 75 s median, max 88 s, target 5 min; commit to gold 10 to 36 min, target 1 hour; commit to the features API 9.6 s median, max 10.6 s, target 1 min; GDPR erasure in every store 1 h 45 min, target 24 hours; failure drills 160,884 records reconciled, 0 lost, 0 appended twice" src="docs/images/glance-light.svg" width="100%">
+</picture>
 
 ## See it running
 
-<table>
-<tr>
-<td width="50%"><img src="docs/images/screens/airflow-transform.png" alt="Airflow graph of the transform DAG: silver, gold_dims, gold_facts, gold_marts, quality, all successful"><br>
-<sub><b>Airflow</b>: <code>transform</code>, every 30 minutes, silver to gold, then the data contracts.</sub></td>
-<td width="50%"><img src="docs/images/screens/airflow-gdpr_erasure.png" alt="Airflow graph of the gdpr_erasure DAG: seven successful steps"><br>
-<sub><b>Airflow</b>: one GDPR erasure, seven steps, from the sources to the lake (1 h 44 min).</sub></td>
-</tr>
-<tr>
-<td><img src="docs/images/screens/neo4j-recommendations.png" alt="Neo4j Browser: a board short and its five most co-purchased products"><br>
-<sub><b>Neo4j</b>: product 27809 and the five products most often bought with it.</sub></td>
-<td><img src="docs/images/screens/api-docs.png" alt="FastAPI docs: GET /products/27809/recommendations answering 200 with five products and their weights"><br>
-<sub><b>FastAPI</b>: the same recommendations served live, with their co-purchase weights.</sub></td>
-</tr>
-<tr>
-<td><img src="docs/images/screens/prometheus-slot-drill.png" alt="Prometheus: retained WAL climbing to 212 MB over an hour then dropping to zero, and ReplicationSlotInactive pending then firing"><br>
-<sub><b>Prometheus</b>: the slot drill as it was recorded. Retained WAL climbs while Debezium is stopped and falls to zero at the catch-up; the alert is pending for 30 minutes, then fires.</sub></td>
-<td><img src="docs/images/screens/prometheus-rules.png" alt="Prometheus rule health page: 14 alert rules in four groups"><br>
-<sub><b>Prometheus</b>: the 14 alert rules (slot, Connect and Debezium, MongoDB oplog, exporters), evaluated every 15 s. "OK" is the rule's health, not its state.</sub></td>
-</tr>
-</table>
+<p align="center">
+<img src="docs/images/screens/airflow-transform.png" alt="Airflow graph of the transform DAG: silver, gold_dims, gold_facts, gold_marts, quality, all successful" width="49%">
+<img src="docs/images/screens/airflow-gdpr_erasure.png" alt="Airflow graph of the gdpr_erasure DAG: seven successful steps, 1 h 44 min" width="49%">
+</p>
+<p align="center"><sub><b>Airflow</b>: <code>transform</code> refines silver and gold every 30 minutes, then checks the contracts &nbsp;·&nbsp; <b>Airflow</b>: one GDPR erasure, seven steps, 1 h 44 min</sub></p>
 
-Taken from the running stack by [`scripts/readme_screenshots.py`](scripts/readme_screenshots.py).
+<p align="center">
+<img src="docs/images/screens/prometheus-slot-drill.png" alt="Prometheus: retained WAL climbing to 212 MB over an hour then dropping to zero, and ReplicationSlotInactive pending then firing" width="49%">
+<img src="docs/images/screens/prometheus-rules.png" alt="Prometheus rule health page: 14 alert rules in four groups" width="49%">
+</p>
+<p align="center"><sub><b>Prometheus</b>: the slot drill as recorded, WAL piling up while Debezium is stopped and the alert firing after 30 minutes &nbsp;·&nbsp; <b>Prometheus</b>: the 14 alert rules</sub></p>
+
+<p align="center">
+<img src="docs/images/screens/neo4j-recommendations.png" alt="Neo4j Browser: a board short and its five most co-purchased products" width="49%">
+<img src="docs/images/screens/api-docs.png" alt="FastAPI docs: GET /products/27809/recommendations answering 200 with five products and their weights" width="49%">
+</p>
+<p align="center"><sub><b>Neo4j</b>: a product and the five products most often bought with it &nbsp;·&nbsp; <b>FastAPI</b>: the same recommendations served live</sub></p>
 
 ## Architecture
 
-Two operational databases change all the time. Debezium turns every committed change
-into an Avro event in Kafka; Spark lands the events in Apache Iceberg tables on S3,
-refines them every 30 minutes under Airflow, and feeds Redis and Neo4j for the API.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+  <img alt="Architecture: PostgreSQL and MongoDB captured by Debezium into Kafka; Spark lands bronze, refines silver and gold on AWS; a features stream feeds Redis, a graph job feeds Neo4j, FastAPI serves both; Airflow, Prometheus and data contracts across the stack" src="docs/images/architecture-light.svg" width="100%">
+</picture>
 
-```mermaid
-flowchart LR
-  subgraph onprem["On-prem (Docker Compose)"]
-    gen[theLook generator] -->|orders, users, items| pg[(PostgreSQL 17)]
-    gen -->|clickstream events| mongo[(MongoDB 8<br/>replica set)]
-    rev[review simulator] -->|reviews| mongo
-    pg -->|WAL / pgoutput| connect[Kafka Connect<br/>Debezium Postgres + MongoDB]
-    mongo -->|change streams| connect
-    connect -->|Avro| kafka[(Kafka 4 KRaft)]
-    connect <--> sr[Schema Registry]
-    spark[Spark Structured Streaming<br/>+ hourly bronze upkeep]
-    batch[Spark batch jobs<br/>silver, gold, upkeep, graph]
-    airflow[Airflow<br/>transform 30 min, maintenance and graph daily] -->|spark-submit| batch
-    features[Features stream<br/>Spark local mode]
-    redis[(Redis 8)]
-    neo[(Neo4j 2026.08<br/>co-purchase graph)]
-    api["FastAPI<br/>/users/{id}/features<br/>/products/{id}/recommendations"]
-    kafka --> spark
-    kafka -->|events topic| features
-    features -->|idempotent writes| redis
-    redis --> api
-    neo --> api
-  end
-  subgraph aws["AWS (S3, Glue, Athena only)"]
-    bronze[(Iceberg bronze<br/>+ batch ledger)]
-    silver[(silver)]
-    gold[(gold star schema)]
-    athena[Athena]
-  end
-  spark --> bronze
-  bronze -->|consistent cut| batch
-  batch -->|MERGE| silver
-  batch -->|SCD2, facts, marts| gold
-  gold --> athena
-  gold -->|graph job, daily| neo
-```
-
-Ten more diagrams, from deployment down to single mechanisms:
-[docs/architecture.md](docs/architecture.md).
+Every committed change becomes an Avro event in Kafka; Spark lands it in Apache Iceberg on S3 within
+a minute and refines it every 30 minutes under Airflow; Redis and Neo4j serve it through the API.
+A diagram for each mechanism: [docs/architecture.md](docs/architecture.md).
 
 ### One change, from commit to Athena
 
@@ -118,60 +99,46 @@ sequenceDiagram
   T->>L: gold: dimensions, facts, marts
 ```
 
-### The medallion layers
-
-```mermaid
-flowchart LR
-  K[("Kafka<br/>7 CDC topics")] --> B
-  subgraph lake["Apache Iceberg on S3, catalogued in Glue"]
-    B["<b>bronze</b><br/>every event, append-only<br/>envelope kept, batch ledger"]
-    S["<b>silver</b><br/>latest version per key<br/>MERGE by log position"]
-    G["<b>gold</b><br/>star schema: dim_user SCD2,<br/>facts, daily marts"]
-    B -- "consistent cut<br/>(the ledger)" --> S --> G
-  end
-  G --> A["Athena<br/>SQL, contracts"]
-  G --> N[("Neo4j<br/>co-purchase graph")]
-  K --> F["features stream"] --> R[("Redis")]
-  N --> API["FastAPI"]
-  R --> API
-```
-
 ### Exactly once into bronze
 
 Spark replays a batch after a crash (at least once); a mark on every Iceberg commit makes
 the replay skip what is already written (exactly once).
 
 ```mermaid
-flowchart TD
-  start(["micro-batch N<br/>offsets from the checkpoint"]) --> topic{"for each topic: does the table hold<br/>a commit marked with this query and batch N?"}
-  topic -- "yes: a replay" --> skip["skip it<br/>skipped(replay)"]
-  topic -- "no" --> append["append, commit marked<br/>query id + batch N"]
-  skip --> ledger["ledger row last:<br/>every table's snapshot id"]
+flowchart LR
+  batch(["batch N<br/>replayed after a crash"]) --> check{"table holds a<br/>commit marked N?"}
+  check -- "yes" --> skip["skip it"]
+  check -- "no" --> append["append,<br/>mark it N"]
+  skip --> ledger["ledger row,<br/>last"]
   append --> ledger
-  ledger --> done(["Spark commits the offsets"])
-  crash["crash anywhere"] -. "restart replays batch N" .-> start
+  ledger --> done(["offsets<br/>committed"])
 ```
 
 ## Proven by failure drills
 
 Each claim below ends with an exact check, and each check was first run against a case that
-must fail. The numbers come from [docs/results.md](docs/results.md); the charts are drawn
-from them by [`scripts/readme_charts.py`](scripts/readme_charts.py).
+must fail. The numbers come from [docs/results.md](docs/results.md).
 
+<p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/drills-reconciled-dark.svg">
   <img alt="Records reconciled in each failure drill: 113,570, 18,767, 16,625 and 11,922, all with 0 lost and 0 appended twice" src="docs/images/drills-reconciled-light.svg" width="760">
 </picture>
+</p>
 
+<p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/slot-drill-dark.svg">
   <img alt="Retained WAL grows linearly to 212 MB over an hour with Kafka Connect stopped; the slot alert fires at minute 31" src="docs/images/slot-drill-light.svg" width="760">
 </picture>
+</p>
 
+<p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/backfill-drill-dark.svg">
   <img alt="Bad rows counted during the backfill drill: 1, 2, 3 with the bug, then 2, 1, 0 with the fix" src="docs/images/backfill-drill-light.svg" width="760">
 </picture>
+</p>
 
 
 | Drill | What it shows | Result |
@@ -192,40 +159,17 @@ document, and a 120 s hang on a frozen Neo4j.
 One request removes a user from both sources, bronze, silver, gold, Redis and the time travel
 of every table, and leaves an audit that never holds the identifier.
 
-```mermaid
-flowchart LR
-  req(["request_erasure.py"]) --> src["delete_sources<br/>PostgreSQL + MongoDB"]
-  src --> wait["wait_bronze<br/>each key's latest event<br/>in bronze is a delete"]
-  wait --> purge[["bronze purged by the stream,<br/>with its own key (ADR 017)"]]
-  purge --> redis["erase_redis<br/>user feature keys"]
-  redis --> lake["erase_lake<br/>silver + gold: delete, compact,<br/>expire; recompute daily marts"]
-  lake --> verify(["verify_erasure.py<br/>54 of 54 places empty"])
-```
-
-```mermaid
-gantt
-  title Request to done, second run, under load: 1 h 45 min (target 24 h)
-  dateFormat HH:mm:ss
-  axisFormat %H:%M
-  section Sources
-  PostgreSQL and MongoDB deletes (5 s)      :a1, 00:00:00, 5s
-  section Bronze
-  wait until bronze holds the deletes      :a2, after a1, 150s
-  purge by the stream, DELETE and expiry   :a3, after a2, 71m
-  section Silver and gold
-  delete, compact, expire, marts           :a4, after a3, 29m
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/erasure-dark.svg">
+  <img alt="GDPR erasure in seven steps: request, sources, wait for bronze, bronze purge by the stream, Redis, silver and gold, verify. Of the 1 h 45 min, the bronze purge takes 71 min and silver and gold 29 min" src="docs/images/erasure-light.svg" width="100%">
+</picture>
 
 ## Roadmap
 
-```mermaid
-flowchart LR
-  P1["P1 CDC from<br/>PostgreSQL"]:::done --> P2["P2 MongoDB,<br/>Terraform, CI"]:::done --> P3["P3 bronze<br/>on AWS"]:::done --> P4["P4 silver, gold,<br/>Airflow"]:::done --> P5["P5 Redis<br/>features"]:::done
-  P5 --> P6["P6 Neo4j<br/>graph"]:::done --> P7["P7 contracts,<br/>alerting"]:::done --> P8["P8 erasure, backfill,<br/>failure drills"]:::done --> P9["P9 hardening,<br/>load test"]:::next --> P10["P10 optional:<br/>Kinesis, Flink"]:::optional
-  classDef done fill:#d4edda,stroke:#2e7d32,color:#1b4d20
-  classDef next fill:#fff3cd,stroke:#b8860b,color:#5c4400
-  classDef optional fill:#ffffff,stroke:#bbbbbb,stroke-dasharray: 2 4,color:#777777
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/roadmap-dark.svg">
+  <img alt="Roadmap: P1 to P8 done, P9 hardening next, P10 optional" src="docs/images/roadmap-light.svg" width="100%">
+</picture>
 
 ## What is built
 

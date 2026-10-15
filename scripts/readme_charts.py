@@ -12,6 +12,7 @@ Usage: python3 scripts/readme_charts.py   (writes docs/images/*.svg)
 """
 
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "images"
 
@@ -23,6 +24,8 @@ THEMES = {
         "muted": "#898781",
         "grid": "#e1e0d9",
         "axis": "#c3c2b7",
+        "panel": "#f3f2ee",
+        "border": "#dcdbd5",
         "series": ["#2a78d6", "#eb6834"],
     },
     "dark": {
@@ -32,6 +35,8 @@ THEMES = {
         "muted": "#898781",
         "grid": "#2c2c2a",
         "axis": "#383835",
+        "panel": "#232322",
+        "border": "#3a3a37",
         "series": ["#3987e5", "#d95926"],
     },
 }
@@ -64,6 +69,7 @@ DRILLS = [
 
 
 def svg(width: int, height: int, theme: dict, body: list[str], title: str) -> str:
+    title = escape(title, {'"': "&quot;"})  # also an attribute value
     return "\n".join(
         [
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
@@ -78,6 +84,7 @@ def svg(width: int, height: int, theme: dict, body: list[str], title: str) -> st
 
 
 def text(x, y, s, fill, size=12, anchor="start", weight=400) -> str:
+    s = escape(str(s))  # "<", "&" in a label would break the XML
     return (
         f'<text x="{x:.1f}" y="{y:.1f}" fill="{fill}" font-size="{size}" '
         f'font-weight="{weight}" text-anchor="{anchor}">{s}</text>'
@@ -283,12 +290,371 @@ def drills_chart(t: dict) -> str:
     return svg(w, h, t, body, "Records reconciled in each failure drill")
 
 
+# --- the README's header, headline numbers and architecture ------------------------
+
+# Measured (docs/results.md): label, value, detail.
+GLANCE = [
+    ("Database commit to Kafka", "< 1 s", "Debezium on the WAL and change streams"),
+    ("Commit to queryable bronze", "75 s", "median, max 88 s · target 5 min"),
+    ("Commit to gold", "10–36 min", "bounded by the 30-min schedule · target 1 h"),
+    ("Commit to the features API", "9.6 s", "median, max 10.6 s · target 1 min"),
+    (
+        "GDPR erasure, every store",
+        "1 h 45 min",
+        "sources, lake, Redis, time travel · target 24 h",
+    ),
+    ("Failure drills", "0 lost", "160,884 records reconciled, 0 appended twice"),
+]
+
+
+def box(x, y, w, h, t, title, sub="", accent=False) -> list[str]:
+    """A rounded component box: a title and an optional detail line."""
+    out = [
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{t["surface"]}" '
+        f'stroke="{t["series"][0] if accent else t["border"]}" stroke-width="{1.5 if accent else 1}"/>'
+    ]
+    cy = y + h / 2 + (-4 if sub else 5)
+    out.append(text(x + w / 2, cy, title, t["ink"], 13, "middle", 600))
+    if sub:
+        out.append(text(x + w / 2, cy + 17, sub, t["ink2"], 11, "middle"))
+    return out
+
+
+def arrow(points, t, label="", dashed=False) -> list[str]:
+    """A polyline ending in an arrowhead; an optional label at its middle."""
+    d = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    color = t["muted"]
+    out = [
+        f'<polyline points="{d}" fill="none" stroke="{color}" stroke-width="1.5" '
+        f'stroke-linejoin="round"{' stroke-dasharray="4 4"' if dashed else ""} marker-end="url(#head)"/>'
+    ]
+    if label:
+        (x1, y1), (x2, y2) = points[-2], points[-1]
+        out.append(
+            text((x1 + x2) / 2, (y1 + y2) / 2 - 6, label, t["muted"], 10, "middle")
+        )
+    return out
+
+
+def group(x, y, w, h, t, label) -> list[str]:
+    return [
+        f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="12" fill="{t["panel"]}"/>',
+        text(x + 14, y + 22, label.upper(), t["muted"], 10, weight=600),
+    ]
+
+
+def defs(t) -> str:
+    return (
+        '<defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+        f'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
+        f'fill="{t["muted"]}"/></marker></defs>'
+    )
+
+
+def banner(t: dict) -> str:
+    w, h = 1000, 210
+    blue = t["series"][0]
+    body = [
+        f'<rect x="0" y="0" width="6" height="{h}" fill="{blue}"/>',
+        text(44, 74, "theLook CDC Lakehouse", t["ink"], 38, weight=700),
+        text(
+            44,
+            108,
+            "Change data capture from PostgreSQL and MongoDB into an Apache Iceberg",
+            t["ink2"],
+            16,
+        ),
+        text(
+            44,
+            130,
+            "lakehouse on AWS, served as live features and recommendations.",
+            t["ink2"],
+            16,
+        ),
+    ]
+    chips = [
+        "PostgreSQL · MongoDB",
+        "Debezium · Kafka",
+        "Spark · Iceberg on S3",
+        "Airflow",
+        "Redis · Neo4j · FastAPI",
+    ]
+    x = 44
+    for i, chip in enumerate(chips):
+        cw = 15 + 7.1 * len(chip)
+        body.append(
+            f'<rect x="{x:.1f}" y="154" width="{cw:.1f}" height="28" rx="14" '
+            f'fill="{blue}" fill-opacity="0.10" stroke="{blue}" stroke-opacity="0.35"/>'
+        )
+        body.append(text(x + cw / 2, 173, chip, t["ink"], 12, "middle", 500))
+        x += cw
+        if i < len(chips) - 1:
+            body.append(text(x + 11, 173, "→", t["muted"], 13, "middle"))
+            x += 22
+    return svg(w, h, t, body, "theLook CDC Lakehouse")
+
+
+def glance(t: dict) -> str:
+    w, h = 1000, 250
+    cols, gap, tile_h = 3, 14, 110
+    tile_w = (w - gap * (cols + 1)) / cols
+    body = []
+    for i, (label, value, detail) in enumerate(GLANCE):
+        x = gap + (tile_w + gap) * (i % cols)
+        y = gap + (tile_h + gap) * (i // cols)
+        body.append(
+            f'<rect x="{x:.1f}" y="{y}" width="{tile_w:.1f}" height="{tile_h}" rx="10" '
+            f'fill="{t["panel"]}"/>'
+        )
+        body.append(text(x + 18, y + 30, label, t["ink2"], 13))
+        body.append(text(x + 18, y + 70, value, t["ink"], 30, weight=650))
+        body.append(text(x + 18, y + 94, detail, t["muted"], 12))
+    return svg(
+        w, h, t, body, "Measured: " + "; ".join(f"{a} {b} ({c})" for a, b, c in GLANCE)
+    )
+
+
+def architecture(t: dict) -> str:
+    w, h = 1000, 466
+    bw, bh = 128, 58
+    col = [24, 186, 348, 510, 672, 834]  # box x per column
+    body = [defs(t)]
+    # Groups first, boxes over them.
+    body += group(12, 40, 476, 240, t, "On-prem · Docker Compose")
+    body += group(498, 40, 490, 168, t, "AWS · Iceberg on S3, Glue catalog, Athena")
+    body += group(498, 222, 490, 230, t, "Serving · on-prem")
+    body += group(12, 296, 476, 156, t, "Across the stack")
+    # Capture, then the lake: one row.
+    top = 110
+    mid = top + bh / 2
+    body += box(col[0], 76, bw, 52, t, "PostgreSQL 17", "orders, users, items")
+    body += box(col[0], 144, bw, 52, t, "MongoDB 8", "events, reviews")
+    body += box(col[1], top, bw, bh, t, "Debezium", "change events, Avro")
+    body += box(col[1], 200, bw, 46, t, "Schema Registry", "compatibility")
+    body += box(col[2], top, bw, bh, t, "Kafka 4", "7 CDC topics", accent=True)
+    body += box(col[3], top, bw, bh, t, "bronze", "Spark stream, 60 s")
+    body += box(col[4], top, bw, bh, t, "silver", "MERGE latest per key")
+    body += box(col[5], top, bw, bh, t, "gold", "star schema, marts")
+    turn = col[0] + bw + 18
+    body += arrow(
+        [(col[0] + bw, 102), (turn, 102), (turn, mid - 8), (col[1], mid - 8)], t
+    )
+    body += arrow(
+        [(col[0] + bw, 170), (turn, 170), (turn, mid + 8), (col[1], mid + 8)], t
+    )
+    body += arrow([(col[1] + bw / 2, top + bh), (col[1] + bw / 2, 200)], t)
+    for a, b in ((1, 2), (2, 3), (3, 4), (4, 5)):
+        body += arrow([(col[a] + bw, mid), (col[b], mid)], t)
+    # Serving.
+    ys = 262
+    body += box(col[3], ys, bw, bh, t, "Features stream", "Spark, local mode")
+    body += box(col[4], ys, bw, bh, t, "Redis 8", "user features")
+    body += box(col[5], ys, bw, bh, t, "Neo4j", "co-purchase graph")
+    api_y = 368
+    body += box(
+        col[4],
+        api_y,
+        bw * 2 + 34,
+        bh,
+        t,
+        "FastAPI",
+        "features · recommendations",
+        accent=True,
+    )
+    kx = col[2] + bw / 2
+    body += arrow(
+        [(kx, top + bh), (kx, ys + bh / 2), (col[3], ys + bh / 2)], t, "events"
+    )
+    body += arrow([(col[3] + bw, ys + bh / 2), (col[4], ys + bh / 2)], t)
+    gx = col[5] + bw / 2
+    body += arrow([(gx, top + bh), (gx, ys)], t)
+    body.append(
+        text(gx + 8, (top + bh + ys) / 2 + 4, "graph job, daily", t["muted"], 10)
+    )
+    body += arrow([(col[4] + bw / 2, ys + bh), (col[4] + bw / 2, api_y)], t)
+    body += arrow([(gx, ys + bh), (gx, api_y)], t)
+    # Orchestration, observability and contracts.
+    notes = [
+        (
+            "Airflow",
+            "silver and gold every 30 min, maintenance, graph, erasure, backfill",
+        ),
+        (
+            "Prometheus + Alertmanager",
+            "slot, connector and lag alerts, emailed through SNS",
+        ),
+        (
+            "Data contracts",
+            "26 ODCS contracts checked in Athena, a daily quality report",
+        ),
+    ]
+    for i, (name, what) in enumerate(notes):
+        y = 344 + 36 * i
+        body.append(f'<circle cx="31" cy="{y - 4}" r="4" fill="{t["series"][0]}"/>')
+        body.append(text(43, y, name, t["ink"], 13, weight=600))
+        body.append(text(43, y + 16, what, t["ink2"], 12))
+    return svg(
+        w,
+        h,
+        t,
+        body,
+        "Architecture: PostgreSQL and MongoDB, Debezium, Kafka, bronze, silver and "
+        "gold on AWS, Redis, Neo4j and FastAPI",
+    )
+
+
+# The second erasure run (docs/results.md, P8 step 6): step, detail, minutes.
+ERASURE_STEPS = [
+    ("Request", "user id in the run", None),
+    ("Sources", "PostgreSQL,\nMongoDB", 5 / 60),
+    ("Wait", "until bronze holds\nthe deletes", 2.5),
+    ("Bronze purge", "by the stream,\nits own key", 71),
+    ("Redis", "feature keys", None),
+    ("Silver and gold", "delete, compact,\nexpire, marts", 29),
+    ("Verify", "54 of 54 places\nempty", None),
+]
+
+
+def erasure(t: dict) -> str:
+    w, h = 1000, 300
+    n, gap = len(ERASURE_STEPS), 14
+    bw = (w - 2 * 16 - gap * (n - 1)) / n
+    body = [defs(t)]
+    for i, (name, detail, _) in enumerate(ERASURE_STEPS):
+        x = 16 + i * (bw + gap)
+        accent = name == "Bronze purge"
+        body.append(
+            f'<rect x="{x:.1f}" y="24" width="{bw:.1f}" height="92" rx="10" fill="{t["surface"]}" '
+            f'stroke="{t["series"][0] if accent else t["border"]}" stroke-width="{1.5 if accent else 1}"/>'
+        )
+        body.append(text(x + 12, 50, f"{i + 1}", t["muted"], 11, weight=600))
+        body.append(text(x + 12, 70, name, t["ink"], 13, weight=600))
+        for j, part in enumerate(detail.split("\n")):
+            body.append(text(x + 12, 88 + 15 * j, part, t["ink2"], 11))
+        if i < n - 1:
+            body += arrow([(x + bw + 1, 70), (x + bw + gap - 1, 70)], t)
+    # Where the time goes: one bar, each timed step its share of it.
+    total = sum(m for *_, m in ERASURE_STEPS if m)
+    x0, x1, y = 16, w - 16, 176
+    body.append(text(16, 156, "Where the 1 h 45 min goes", t["ink"], 13, weight=600))
+    x = x0
+    blue = t["series"][0]
+    for name, _, minutes in ERASURE_STEPS:
+        if not minutes:
+            continue
+        seg = (x1 - x0) * minutes / total
+        opacity = 1 if name == "Bronze purge" else 0.45
+        body.append(
+            f'<rect x="{x:.1f}" y="{y}" width="{max(seg - 2, 2):.1f}" height="22" rx="4" '
+            f'fill="{blue}" fill-opacity="{opacity}"/>'
+        )
+        label = f"{minutes:.0f} min" if minutes >= 1 else "5 s"
+        if seg > 120:
+            body.append(
+                text(
+                    x + 10,
+                    y + 15,
+                    f"{name}: {label}",
+                    "#ffffff" if opacity == 1 else t["ink"],
+                    12,
+                    weight=600,
+                )
+            )
+        x += seg
+    body.append(
+        text(
+            16,
+            226,
+            "Sources 5 s, waiting for bronze 2.5 min: the thin slices at the start.",
+            t["muted"],
+            12,
+        )
+    )
+    body.append(
+        text(
+            16,
+            246,
+            "The purge is copy-on-write: each DELETE rewrites the files that hold the user's rows.",
+            t["muted"],
+            12,
+        )
+    )
+    body.append(
+        text(
+            16,
+            274,
+            "Target (O5): 24 hours. Kafka keeps the change events until its 3-day retention.",
+            t["ink2"],
+            12,
+        )
+    )
+    return svg(
+        w,
+        h,
+        t,
+        body,
+        "GDPR erasure: seven steps from the request to verification; 1 h 45 min, 71 min of it the bronze purge",
+    )
+
+
+ROADMAP = [
+    ("P1", "CDC from", "PostgreSQL"), ("P2", "MongoDB,", "Terraform, CI"),
+    ("P3", "bronze", "on AWS"), ("P4", "silver, gold,", "Airflow"),
+    ("P5", "Redis", "features"), ("P6", "Neo4j", "graph"),
+    ("P7", "contracts,", "alerting"), ("P8", "erasure, backfill,", "drills"),
+    ("P9", "hardening,", "load test"), ("P10", "optional:", "Kinesis, Flink"),
+]  # fmt: skip
+DONE = 8  # phases built and accepted
+
+
+def roadmap(t: dict) -> str:
+    w, h = 1000, 150
+    margin = 64  # room for the end labels
+    step = (w - 2 * margin) / (len(ROADMAP) - 1)
+    y = 52
+    blue = t["series"][0]
+    body = [
+        f'<line x1="{margin}" y1="{y}" x2="{margin + step * DONE:.1f}" y2="{y}" stroke="{blue}" stroke-width="3"/>',
+        f'<line x1="{margin + step * DONE:.1f}" y1="{y}" x2="{w - margin}" y2="{y}" stroke="{t["axis"]}" '
+        'stroke-width="3" stroke-dasharray="6 6"/>',
+    ]
+    for i, (phase, l1, l2) in enumerate(ROADMAP):
+        x = margin + step * i
+        if i < DONE:  # done: filled, a check mark
+            body.append(f'<circle cx="{x:.1f}" cy="{y}" r="15" fill="{blue}"/>')
+            body.append(
+                f'<path d="M{x - 6:.1f},{y} l4,4 l8,-9" fill="none" stroke="#ffffff" '
+                'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+        else:  # next, then optional: an outlined circle
+            ring = blue if i == DONE else t["axis"]
+            body.append(
+                f'<circle cx="{x:.1f}" cy="{y}" r="15" fill="{t["surface"]}" stroke="{ring}" stroke-width="2.5"/>'
+            )
+        body.append(
+            text(x, 20, phase, t["ink"] if i <= DONE else t["muted"], 13, "middle", 700)
+        )
+        body.append(
+            text(x, y + 38, l1, t["ink2"] if i <= DONE else t["muted"], 11, "middle")
+        )
+        body.append(
+            text(x, y + 53, l2, t["ink2"] if i <= DONE else t["muted"], 11, "middle")
+        )
+    body.append(text(margin + step * DONE, y + 74, "next", t["ink"], 11, "middle", 700))
+    return svg(w, h, t, body, "Roadmap: P1 to P8 done, P9 hardening next, P10 optional")
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, draw in (
         ("slot-drill", slot_chart),
         ("backfill-drill", backfill_chart),
         ("drills-reconciled", drills_chart),
+        ("banner", banner),
+        ("glance", glance),
+        ("architecture", architecture),
+        ("erasure", erasure),
+        ("roadmap", roadmap),
     ):
         for theme_name, theme in THEMES.items():
             path = OUT / f"{name}-{theme_name}.svg"

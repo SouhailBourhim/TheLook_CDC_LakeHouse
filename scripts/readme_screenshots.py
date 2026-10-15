@@ -4,11 +4,13 @@
 # ///
 """Screenshots of the running UIs for the README (docs/images/screens/).
 
-Needs Airflow (its UI reads past runs from its database; the scheduler can
-stay stopped), Neo4j, Redis and the API up, onprem/.env, and a headless
-Chromium: `uv run --with playwright==1.55.0 python -m playwright install
-chromium-headless-shell` (on WSL it may also need libnss3, libnspr4 and
-libasound2 on LD_LIBRARY_PATH).
+Every capture is 1440 x 900 (16:10), then set in the same browser-window
+frame, so the README's gallery rows line up. Needs Airflow's UI (it reads
+past runs from its database; the scheduler can stay stopped), Prometheus
+(7 days of history), Neo4j, Redis and the API up, onprem/.env, and a
+headless Chromium: `uv run --with playwright==1.55.0 python -m playwright
+install chromium-headless-shell` (on WSL it may also need libnss3, libnspr4
+and libasound2 on LD_LIBRARY_PATH).
 
 Usage: uv run scripts/readme_screenshots.py [name ...]   (default: all)
 """
@@ -21,17 +23,28 @@ from playwright.sync_api import Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "images" / "screens"
+RAW = OUT / "raw"  # unframed captures, git-ignored
 ENV = dict(
     line.split("=", 1)
     for line in (ROOT / "onprem" / ".env").read_text().splitlines()
     if "=" in line and not line.startswith("#")
 )
+W, H = 1440, 900
 AIRFLOW = "http://localhost:8088"
+PROMETHEUS = "http://localhost:9090"
 # Fully successful runs to show (a graph view colours its nodes by one run).
 RUNS = {
     "transform": "scheduled__2026-10-15T02:30:00+00:00",
     "gdpr_erasure": "manual__2026-10-13T05:17:08.798503+00:00",
 }
+# The P8 step 11 drill, 2026-10-14 21:52-23:01 UTC (Prometheus keeps 7 days).
+DRILL_END, DRILL_RANGE = "2026-10-14 23:30:00", "2h"
+
+
+def zoom(page: Page, factor: float) -> None:
+    """Show more of a page in the same frame (CSS zoom, crisp at 2x)."""
+    page.evaluate(f"document.documentElement.style.zoom = '{factor}'")
+    page.wait_for_timeout(800)
 
 
 def airflow_login(page: Page) -> None:
@@ -42,83 +55,25 @@ def airflow_login(page: Page) -> None:
     page.wait_for_url(lambda url: "/auth/login" not in url, timeout=30_000)
 
 
-def airflow_graph(page: Page, dag: str, panel: bool) -> None:
-    """The DAG's graph view, nodes coloured by one successful run; without
-    the run's side panel when the DAG is too wide to read beside it."""
+def airflow_graph(page: Page, dag: str) -> None:
+    """The DAG's graph, top to bottom, nodes coloured by one successful run,
+    beside that run's details (state, dates, duration)."""
     page.goto(f"{AIRFLOW}/dags/{dag}/runs/{RUNS[dag]}", wait_until="networkidle")
-    # The second toggle above the grid switches it to the graph.
     page.locator("button[aria-label*='raph'], [title*='raph']").first.click()
-    page.wait_for_timeout(2000)
-    if not panel:
-        page.locator("button[aria-label='Collapse Details Panel']").click()
-        page.wait_for_timeout(1000)
-    page.locator(".react-flow__controls-fitview").click()  # zoom to the tasks
     page.wait_for_timeout(1500)
-    page.screenshot(path=OUT / f"airflow-{dag}.png")
-
-
-def neo4j_graph(page: Page) -> None:
-    """Neo4j Browser: the most bought product and its 5 companions."""
-    page.goto("http://localhost:7474/browser/", wait_until="networkidle")
-    page.fill("input[name=username]", "neo4j")
-    page.fill("input[name=password]", ENV["NEO4J_PASSWORD"])
-    page.click("[data-testid=connection-form-submit]")
-    page.wait_for_timeout(4000)
-    editor = page.locator(
-        ".monaco-editor, .cm-content, [data-testid=activeEditor]"
-    ).first
-    editor.click()
-    page.keyboard.type(
-        "MATCH (p:Product {id: 27809})-[r:BOUGHT_WITH]-(o:Product) "
-        "RETURN p, r, o ORDER BY r.weight DESC LIMIT 5"
-    )
-    page.locator("[data-testid=run-button]").first.click()
-    dismiss = page.locator("button:has-text('Dismiss')")
-    if dismiss.count():
-        dismiss.first.click()  # a "new feature" tip over the result
-    page.wait_for_timeout(6000)  # the force layout settles
-    # The result card: the nearest element holding both the drawing (a
-    # canvas) and its "Results overview" side panel.
-    frame = page.locator("text=Results overview").locator(
-        "xpath=ancestor::*[.//canvas][1]"
-    )
-    frame.first.screenshot(path=OUT / "neo4j-recommendations.png")
-
-
-def api_docs(page: Page) -> None:
-    """The API's OpenAPI page, the recommendations endpoint tried."""
-    page.goto("http://localhost:8000/docs", wait_until="networkidle")
-    block = page.locator(".opblock", has_text="/products/{product_id}/recommendations")
-    block.locator(".opblock-summary").click()
-    block.locator("button.try-out__btn").click()
-    block.locator("input[placeholder='product_id']").fill("27809")
-    block.locator("button.execute").click()
-    block.locator(".responses-wrapper .live-responses-table").wait_for()
-    page.wait_for_timeout(1000)
-    # From the endpoint's header down to the live response, not the
-    # generic examples below it.
-    top = block.bounding_box()
-    end = block.locator(".live-responses-table").bounding_box()
-    page.screenshot(
-        path=OUT / "api-docs.png",
-        full_page=True,
-        clip={
-            "x": top["x"],
-            "y": top["y"],
-            "width": top["width"],
-            "height": end["y"] + end["height"] - top["y"] + 12,
-        },
-    )
-
-
-PROMETHEUS = "http://localhost:9090"
-# The P8 step 11 drill, 2026-10-14 21:52-23:01 UTC (Prometheus keeps 7 days).
-DRILL_END, DRILL_RANGE = "2026-10-14 23:30:00", "2h"
+    page.locator("button[aria-label='Options']").first.click()
+    page.locator("button", has_text="Left to Right").click()
+    page.get_by_text("Top to Bottom", exact=True).last.click()
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(1500)
+    page.locator(".react-flow__controls-fitview").click()
+    page.wait_for_timeout(1500)
+    page.screenshot(path=RAW / f"airflow-{dag}.png")
 
 
 def prometheus_drill(page: Page) -> None:
     """The slot drill as Prometheus recorded it: retained WAL, and the alert
-    going pending then firing."""
+    pending then firing."""
     panels = {}
     for i, expr in enumerate(
         [
@@ -135,50 +90,138 @@ def prometheus_drill(page: Page) -> None:
     # The UI polls for ever: wait for the charts, not for network idle.
     page.goto(f"{PROMETHEUS}/query?{urllib.parse.urlencode(panels)}", wait_until="load")
     page.wait_for_selector(".uplot", timeout=30_000)
-    page.wait_for_timeout(3000)
-    bottom = page.locator("button:has-text('Add query')").bounding_box()["y"] - 16
-    page.screenshot(
-        path=OUT / "prometheus-slot-drill.png",
-        full_page=True,
-        clip={"x": 0, "y": 0, "width": 1440, "height": bottom},
-    )
+    zoom(page, 0.52)  # both panels in one frame
+    page.wait_for_timeout(2500)
+    page.screenshot(path=RAW / "prometheus-slot-drill.png")
 
 
 def prometheus_rules(page: Page) -> None:
-    """The alert rules: what is watched, and from when it alerts."""
+    """The alert rules: what is watched."""
     page.goto(f"{PROMETHEUS}/rules", wait_until="load")
-    page.wait_for_timeout(3000)
-    page.screenshot(path=OUT / "prometheus-rules.png", full_page=True)
+    page.wait_for_timeout(2500)
+    zoom(page, 0.72)  # the four groups in one frame
+    page.screenshot(path=RAW / "prometheus-rules.png")
+
+
+def neo4j_graph(page: Page) -> None:
+    """Neo4j Browser: the most bought product and its 5 companions."""
+    page.goto("http://localhost:7474/browser/", wait_until="networkidle")
+    page.fill("input[name=username]", "neo4j")
+    page.fill("input[name=password]", ENV["NEO4J_PASSWORD"])
+    page.click("[data-testid=connection-form-submit]")
+    # Connected once the query editor's Run button is there.
+    page.wait_for_selector("[data-testid=run-button]", timeout=30_000)
+    page.wait_for_timeout(1500)
+    page.locator("button[title='Collapse Sidebar']").click(timeout=10_000)
+    remove = page.locator("button[aria-label='Remove frame']")
+    while remove.count():  # the welcome cards; each removal shifts the rest
+        remove.first.click()
+        page.wait_for_timeout(300)
+    page.locator(
+        ".monaco-editor, .cm-content, [data-testid=activeEditor]"
+    ).first.click()
+    page.keyboard.type(
+        "MATCH (p:Product {id: 27809})-[r:BOUGHT_WITH]-(o:Product) "
+        "RETURN p, r, o ORDER BY r.weight DESC LIMIT 5"
+    )
+    page.locator("[data-testid=run-button]").first.click()
+    page.wait_for_timeout(1500)
+    dismiss = page.locator("button:has-text('Dismiss')")
+    if dismiss.count():
+        dismiss.first.click()  # a "new feature" tip over the result
+    page.wait_for_timeout(6000)  # the force layout settles
+    zoom(page, 1.2)  # the result fills the frame
+    page.screenshot(path=RAW / "neo4j-recommendations.png")
+
+
+def api_docs(page: Page) -> None:
+    """The API's OpenAPI page: the recommendations endpoint, tried live."""
+    page.goto("http://localhost:8000/docs", wait_until="networkidle")
+    block = page.locator(".opblock", has_text="/products/{product_id}/recommendations")
+    block.locator(".opblock-summary").click()
+    block.locator("button.try-out__btn").click()
+    block.locator("input[placeholder='product_id']").fill("27809")
+    block.locator("button.execute").click()
+    block.locator(".responses-wrapper .live-responses-table").wait_for()
+    zoom(page, 0.8)  # from the endpoint down to the live response
+    page.evaluate(
+        "window.scrollTo(0, document.querySelector('.opblock.is-open').offsetTop * 0.8 - 12)"
+    )
+    page.wait_for_timeout(800)
+    page.screenshot(path=RAW / "api-docs.png")
+
+
+FRAME = """<!doctype html><html><head><meta charset="utf-8"><style>
+body {{ margin: 0; background: transparent; font-family: system-ui, sans-serif; }}
+.pad {{ padding: 28px 32px 40px; display: inline-block; }}
+.win {{ width: {w}px; border-radius: 14px; overflow: hidden; background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08), 0 18px 40px rgba(0, 0, 0, 0.20); }}
+.bar {{ height: 44px; background: #ececef; border-bottom: 1px solid #dcdce0;
+  display: flex; align-items: center; padding: 0 18px; gap: 9px; }}
+.dot {{ width: 13px; height: 13px; border-radius: 50%; }}
+.url {{ margin: 0 auto; transform: translateX(-30px); background: #fff;
+  border-radius: 8px; padding: 6px 18px; font-size: 15px; color: #52514e;
+  min-width: 420px; text-align: center; }}
+img {{ display: block; width: {w}px; }}
+</style></head><body><div class="pad"><div class="win">
+<div class="bar"><span class="dot" style="background:#ff5f57"></span>
+<span class="dot" style="background:#febc2e"></span>
+<span class="dot" style="background:#28c840"></span>
+<span class="url">{url}</span></div>
+<img src="file://{img}"></div></div></body></html>"""
+
+
+def frame(page: Page, name: str, url: str) -> None:
+    """Set a raw capture in a browser window, on a transparent background
+    (the frame's shadow then sits on GitHub's light and dark pages alike)."""
+    html = RAW / f"{name}.html"
+    html.write_text(FRAME.format(w=W, url=url, img=RAW / f"{name}.png"))
+    page.set_viewport_size({"width": W + 100, "height": H + 160})
+    page.goto(f"file://{html}")
+    page.wait_for_timeout(300)
+    page.locator(".pad").screenshot(path=OUT / f"{name}.png", omit_background=True)
+    html.unlink()
+
+
+SHOTS = {
+    "airflow-transform": (
+        "localhost:8088 · dags / transform",
+        lambda p: airflow_graph(p, "transform"),
+    ),
+    "airflow-gdpr_erasure": (
+        "localhost:8088 · dags / gdpr_erasure",
+        lambda p: airflow_graph(p, "gdpr_erasure"),
+    ),
+    "prometheus-slot-drill": ("localhost:9090 · query", prometheus_drill),
+    "prometheus-rules": ("localhost:9090 · rules", prometheus_rules),
+    "neo4j-recommendations": ("localhost:7474 · browser", neo4j_graph),
+    "api-docs": ("localhost:8000 · docs", api_docs),
+}
 
 
 def main() -> int:
-    OUT.mkdir(parents=True, exist_ok=True)
-    wanted = set(sys.argv[1:])
+    RAW.mkdir(parents=True, exist_ok=True)
+    wanted = sys.argv[1:] or list(SHOTS)
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        # Short viewport for the graphs: fit view centres one row of tasks.
         # An explicit locale: Prometheus's UI fails on this host's default
         # ("en-US@posix" is not a valid language tag); UTC like the logs.
+        # 2x pixels: the gallery shows each shot at half width.
         page = browser.new_page(
-            viewport={"width": 1440, "height": 560}, locale="en-US", timezone_id="UTC"
+            viewport={"width": W, "height": H},
+            device_scale_factor=2,
+            locale="en-US",
+            timezone_id="UTC",
         )
-        if not wanted or wanted & {"transform", "gdpr_erasure"}:
+        if any(name.startswith("airflow") for name in wanted):
             airflow_login(page)
-            for dag in ("transform", "gdpr_erasure"):
-                if not wanted or dag in wanted:
-                    airflow_graph(page, dag, panel=dag == "transform")
-                    print(f"airflow-{dag}.png")
-        page.set_viewport_size({"width": 1440, "height": 860})
-        if not wanted or "prometheus" in wanted:
-            prometheus_drill(page)
-            prometheus_rules(page)
-            print("prometheus-slot-drill.png, prometheus-rules.png")
-        if not wanted or "neo4j" in wanted:
-            neo4j_graph(page)
-            print("neo4j-recommendations.png")
-        if not wanted or "api" in wanted:
-            api_docs(page)
-            print("api-docs.png")
+        for name in wanted:
+            url, capture = SHOTS[name]
+            page.set_viewport_size({"width": W, "height": H})
+            capture(page)
+            frame(page, name, url)
+            print(f"{name}.png")
         browser.close()
     return 0
 
