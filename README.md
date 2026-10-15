@@ -40,6 +40,12 @@ correctness claim backed by a drill that could have failed.**
 <td><img src="docs/images/screens/api-docs.png" alt="FastAPI docs: GET /products/27809/recommendations answering 200 with five products and their weights"><br>
 <sub><b>FastAPI</b>: the same recommendations served live, with their co-purchase weights.</sub></td>
 </tr>
+<tr>
+<td><img src="docs/images/screens/prometheus-slot-drill.png" alt="Prometheus: retained WAL climbing to 212 MB over an hour then dropping to zero, and ReplicationSlotInactive pending then firing"><br>
+<sub><b>Prometheus</b>: the slot drill as it was recorded. Retained WAL climbs while Debezium is stopped and falls to zero at the catch-up; the alert is pending for 30 minutes, then fires.</sub></td>
+<td><img src="docs/images/screens/prometheus-rules.png" alt="Prometheus rule health page: 14 alert rules in four groups"><br>
+<sub><b>Prometheus</b>: the 14 alert rules (slot, Connect and Debezium, MongoDB oplog, exporters), evaluated every 15 s. "OK" is the rule's health, not its state.</sub></td>
+</tr>
 </table>
 
 Taken from the running stack by [`scripts/readme_screenshots.py`](scripts/readme_screenshots.py).

@@ -14,6 +14,7 @@ Usage: uv run scripts/readme_screenshots.py [name ...]   (default: all)
 """
 
 import sys
+import urllib.parse
 from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
@@ -110,13 +111,57 @@ def api_docs(page: Page) -> None:
     )
 
 
+PROMETHEUS = "http://localhost:9090"
+# The P8 step 11 drill, 2026-10-14 21:52-23:01 UTC (Prometheus keeps 7 days).
+DRILL_END, DRILL_RANGE = "2026-10-14 23:30:00", "2h"
+
+
+def prometheus_drill(page: Page) -> None:
+    """The slot drill as Prometheus recorded it: retained WAL, and the alert
+    going pending then firing."""
+    panels = {}
+    for i, expr in enumerate(
+        [
+            "pg_replication_slots_pg_wal_lsn_diff / 1024 / 1024",
+            'ALERTS{alertname="ReplicationSlotInactive"}',
+        ]
+    ):
+        panels |= {
+            f"g{i}.expr": expr,
+            f"g{i}.tab": "graph",
+            f"g{i}.range_input": DRILL_RANGE,
+            f"g{i}.end_input": DRILL_END,
+        }
+    # The UI polls for ever: wait for the charts, not for network idle.
+    page.goto(f"{PROMETHEUS}/query?{urllib.parse.urlencode(panels)}", wait_until="load")
+    page.wait_for_selector(".uplot", timeout=30_000)
+    page.wait_for_timeout(3000)
+    bottom = page.locator("button:has-text('Add query')").bounding_box()["y"] - 16
+    page.screenshot(
+        path=OUT / "prometheus-slot-drill.png",
+        full_page=True,
+        clip={"x": 0, "y": 0, "width": 1440, "height": bottom},
+    )
+
+
+def prometheus_rules(page: Page) -> None:
+    """The alert rules: what is watched, and from when it alerts."""
+    page.goto(f"{PROMETHEUS}/rules", wait_until="load")
+    page.wait_for_timeout(3000)
+    page.screenshot(path=OUT / "prometheus-rules.png", full_page=True)
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     wanted = set(sys.argv[1:])
     with sync_playwright() as p:
         browser = p.chromium.launch()
         # Short viewport for the graphs: fit view centres one row of tasks.
-        page = browser.new_page(viewport={"width": 1440, "height": 560})
+        # An explicit locale: Prometheus's UI fails on this host's default
+        # ("en-US@posix" is not a valid language tag); UTC like the logs.
+        page = browser.new_page(
+            viewport={"width": 1440, "height": 560}, locale="en-US", timezone_id="UTC"
+        )
         if not wanted or wanted & {"transform", "gdpr_erasure"}:
             airflow_login(page)
             for dag in ("transform", "gdpr_erasure"):
@@ -124,6 +169,10 @@ def main() -> int:
                     airflow_graph(page, dag, panel=dag == "transform")
                     print(f"airflow-{dag}.png")
         page.set_viewport_size({"width": 1440, "height": 860})
+        if not wanted or "prometheus" in wanted:
+            prometheus_drill(page)
+            prometheus_rules(page)
+            print("prometheus-slot-drill.png, prometheus-rules.png")
         if not wanted or "neo4j" in wanted:
             neo4j_graph(page)
             print("neo4j-recommendations.png")
