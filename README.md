@@ -25,6 +25,25 @@ correctness claim backed by a drill that could have failed.**
 | GDPR erasure, every layer and store (O5) | **1 h 45 min** | 24 hours |
 | Failure drills (O9) | **160,884** records reconciled: **0 lost, 0 appended twice** | 0 / 0 |
 
+## See it running
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/screens/airflow-transform.png" alt="Airflow graph of the transform DAG: silver, gold_dims, gold_facts, gold_marts, quality, all successful"><br>
+<sub><b>Airflow</b>: <code>transform</code>, every 30 minutes, silver to gold, then the data contracts.</sub></td>
+<td width="50%"><img src="docs/images/screens/airflow-gdpr_erasure.png" alt="Airflow graph of the gdpr_erasure DAG: seven successful steps"><br>
+<sub><b>Airflow</b>: one GDPR erasure, seven steps, from the sources to the lake (1 h 44 min).</sub></td>
+</tr>
+<tr>
+<td><img src="docs/images/screens/neo4j-recommendations.png" alt="Neo4j Browser: a board short and its five most co-purchased products"><br>
+<sub><b>Neo4j</b>: product 27809 and the five products most often bought with it.</sub></td>
+<td><img src="docs/images/screens/api-docs.png" alt="FastAPI docs: GET /products/27809/recommendations answering 200 with five products and their weights"><br>
+<sub><b>FastAPI</b>: the same recommendations served live, with their co-purchase weights.</sub></td>
+</tr>
+</table>
+
+Taken from the running stack by [`scripts/readme_screenshots.py`](scripts/readme_screenshots.py).
+
 ## Architecture
 
 Two operational databases change all the time. Debezium turns every committed change
