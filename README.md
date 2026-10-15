@@ -1,27 +1,35 @@
 # theLook CDC Lakehouse
 
-Real-time change data capture from an operational PostgreSQL database and a
-MongoDB document store into a governed, cost-controlled Apache Iceberg
-lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
+**Every change in an online shop's databases, captured as it happens and turned into a
+governed lakehouse, live user features and product recommendations, with every
+correctness claim backed by a drill that could have failed.**
 
-> **Status:** P1 to P7 are built and accepted: capture from PostgreSQL and
-> MongoDB, bronze/silver/gold on AWS with Spark and Airflow, online user
-> features in Redis and co-purchase recommendations from Neo4j, both
-> served by FastAPI, and data contracts, quality checks and email alerts
-> over all of it. P8 is built and its drills pass: GDPR erasure through every
-> layer and store, day-range backfill, and the failure drills of FR14 (its
-> checkpoint is pending). Next is P9. This is a learning project; the full
-> specification is the [cahier des charges](docs/cahier-des-charges.md) (v2.3), the
-> reasoning is in the [ADRs](docs/adr/), measured results in
-> [results](docs/results.md).
+[![ci](https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml/badge.svg)](https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white) ![MongoDB](https://img.shields.io/badge/MongoDB-8-47A248?logo=mongodb&logoColor=white) ![Kafka](https://img.shields.io/badge/Kafka-4%20KRaft-231F20?logo=apachekafka&logoColor=white) ![Debezium](https://img.shields.io/badge/Debezium-3.7-8E2C2C) ![Spark](https://img.shields.io/badge/Spark-4.1-E25A1C?logo=apachespark&logoColor=white) ![Iceberg](https://img.shields.io/badge/Iceberg-1.12-2A78D6) ![Airflow](https://img.shields.io/badge/Airflow-3-017CEE?logo=apacheairflow&logoColor=white) ![AWS](https://img.shields.io/badge/AWS-S3%20%7C%20Glue%20%7C%20Athena-232F3E) ![Redis](https://img.shields.io/badge/Redis-8-DC382D?logo=redis&logoColor=white) ![Neo4j](https://img.shields.io/badge/Neo4j-2026.08-008CC1?logo=neo4j&logoColor=white) ![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white) ![Terraform](https://img.shields.io/badge/Terraform-IaC-7B42BC?logo=terraform&logoColor=white)
 
-![ci](https://github.com/SouhailBourhim/TheLook_CDC_LakeHouse/actions/workflows/ci.yml/badge.svg)
+> **Status:** P1 to P8 built, accepted and drilled: capture from PostgreSQL and MongoDB,
+> bronze/silver/gold on AWS, online features (Redis) and recommendations (Neo4j) behind
+> FastAPI, contracts and alerting, GDPR erasure, backfill and failure drills. Next is P9
+> (hardening). A learning project: the [cahier des charges](docs/cahier-des-charges.md) is
+> the specification, the [ADRs](docs/adr/) hold the reasoning, [results](docs/results.md)
+> every measurement.
+
+## At a glance
+
+| | Measured | Target |
+|---|---|---|
+| Database commit to Kafka | **< 1 s** | |
+| Commit to queryable bronze (O1) | median **75 s**, max 88 s | 5 min |
+| Commit to gold (O2) | **10 to 36 min** | 1 hour |
+| Commit to the features API (P5) | median **9.6 s**, max 10.6 s | 1 min |
+| GDPR erasure, every layer and store (O5) | **1 h 45 min** | 24 hours |
+| Failure drills (O9) | **160,884** records reconciled: **0 lost, 0 appended twice** | 0 / 0 |
 
 ## Architecture
 
-More diagrams, from deployment down to single mechanisms (CDC sequence,
-exactly-once bronze, gold star schema, orchestration, Redis and Neo4j
-serving): [docs/architecture.md](docs/architecture.md).
+Two operational databases change all the time. Debezium turns every committed change
+into an Avro event in Kafka; Spark lands the events in Apache Iceberg tables on S3,
+refines them every 30 minutes under Airflow, and feeds Redis and Neo4j for the API.
 
 ```mermaid
 flowchart LR
@@ -59,6 +67,142 @@ flowchart LR
   gold --> athena
   gold -->|graph job, daily| neo
 ```
+
+Ten more diagrams, from deployment down to single mechanisms:
+[docs/architecture.md](docs/architecture.md).
+
+### One change, from commit to Athena
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant G as generator
+  participant PG as PostgreSQL
+  participant D as Debezium
+  participant K as Kafka + Registry
+  participant B as bronze stream
+  participant L as Iceberg on S3
+  participant T as transform DAG
+  G->>PG: INSERT order, COMMIT
+  PG->>D: decoded WAL record (replication slot)
+  D->>K: Avro change event
+  D-->>PG: confirm the LSN: the slot advances
+  B->>K: read new offsets (micro-batch every 60 s)
+  B->>L: append to bronze, one commit per table, then the ledger row
+  T->>L: silver: MERGE the latest version per key
+  T->>L: gold: dimensions, facts, marts
+```
+
+### The medallion layers
+
+```mermaid
+flowchart LR
+  K[("Kafka<br/>7 CDC topics")] --> B
+  subgraph lake["Apache Iceberg on S3, catalogued in Glue"]
+    B["<b>bronze</b><br/>every event, append-only<br/>envelope kept, batch ledger"]
+    S["<b>silver</b><br/>latest version per key<br/>MERGE by log position"]
+    G["<b>gold</b><br/>star schema: dim_user SCD2,<br/>facts, daily marts"]
+    B -- "consistent cut<br/>(the ledger)" --> S --> G
+  end
+  G --> A["Athena<br/>SQL, contracts"]
+  G --> N[("Neo4j<br/>co-purchase graph")]
+  K --> F["features stream"] --> R[("Redis")]
+  N --> API["FastAPI"]
+  R --> API
+```
+
+### Exactly once into bronze
+
+Spark replays a batch after a crash (at least once); a mark on every Iceberg commit makes
+the replay skip what is already written (exactly once).
+
+```mermaid
+flowchart TD
+  start(["micro-batch N<br/>offsets from the checkpoint"]) --> topic{"for each topic: does the table hold<br/>a commit marked with this query and batch N?"}
+  topic -- "yes: a replay" --> skip["skip it<br/>skipped(replay)"]
+  topic -- "no" --> append["append, commit marked<br/>query id + batch N"]
+  skip --> ledger["ledger row last:<br/>every table's snapshot id"]
+  append --> ledger
+  ledger --> done(["Spark commits the offsets"])
+  crash["crash anywhere"] -. "restart replays batch N" .-> start
+```
+
+## Proven by failure drills
+
+Each claim below ends with an exact check, and each check was first run against a case that
+must fail. The numbers come from [docs/results.md](docs/results.md); the charts are drawn
+from them by [`scripts/readme_charts.py`](scripts/readme_charts.py).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/drills-reconciled-dark.svg">
+  <img alt="Records reconciled in each failure drill: 113,570, 18,767, 16,625 and 11,922, all with 0 lost and 0 appended twice" src="docs/images/drills-reconciled-light.svg" width="760">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/slot-drill-dark.svg">
+  <img alt="Retained WAL grows linearly to 212 MB over an hour with Kafka Connect stopped; the slot alert fires at minute 31" src="docs/images/slot-drill-light.svg" width="760">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/backfill-drill-dark.svg">
+  <img alt="Bad rows counted during the backfill drill: 1, 2, 3 with the bug, then 2, 1, 0 with the fix" src="docs/images/backfill-drill-light.svg" width="760">
+</picture>
+
+
+| Drill | What it shows | Result |
+|---|---|---|
+| Connect `kill -9`, Kafka restarted | exactly-once source: records and offsets in one Kafka transaction | back in 8 s and 10 s; 0 lost, 0 duplicated |
+| Debezium stopped for an hour | the replication slot keeps the WAL; the alert reaches an inbox | alert at minute 31, caught up in 44 s |
+| Bronze stream killed mid-batch | the replayed batch skips the table it had committed | restarted by Docker in 2 s; no offset twice |
+| Connector offsets rewound | bronze takes duplicates, silver's MERGE ignores them | 16,625 duplicates; silver fingerprint unchanged |
+| A logic bug backfilled, then fixed | the revenue contract catches it; the fix restores the mart | 15 columns x 3 days equal to the pre-bug snapshot |
+| Neo4j frozen (`docker pause`) | the API fails fast instead of hanging | 503 within 2 s, back 0.1 s after unpause |
+
+The drills found four real defects, all fixed and tested: a partial bronze purge, a source
+check blind once Kafka retention trims a topic, MongoDB updates read late arriving without a
+document, and a 120 s hang on a frozen Neo4j.
+
+## GDPR erasure
+
+One request removes a user from both sources, bronze, silver, gold, Redis and the time travel
+of every table, and leaves an audit that never holds the identifier.
+
+```mermaid
+flowchart LR
+  req(["request_erasure.py"]) --> src["delete_sources<br/>PostgreSQL + MongoDB"]
+  src --> wait["wait_bronze<br/>each key's latest event<br/>in bronze is a delete"]
+  wait --> purge[["bronze purged by the stream,<br/>with its own key (ADR 017)"]]
+  purge --> redis["erase_redis<br/>user feature keys"]
+  redis --> lake["erase_lake<br/>silver + gold: delete, compact,<br/>expire; recompute daily marts"]
+  lake --> verify(["verify_erasure.py<br/>54 of 54 places empty"])
+```
+
+```mermaid
+gantt
+  title Request to done, second run, under load: 1 h 45 min (target 24 h)
+  dateFormat HH:mm:ss
+  axisFormat %H:%M
+  section Sources
+  PostgreSQL and MongoDB deletes (5 s)      :a1, 00:00:00, 5s
+  section Bronze
+  wait until bronze holds the deletes      :a2, after a1, 150s
+  purge by the stream, DELETE and expiry   :a3, after a2, 71m
+  section Silver and gold
+  delete, compact, expire, marts           :a4, after a3, 29m
+```
+
+## Roadmap
+
+```mermaid
+flowchart LR
+  P1["P1 CDC from<br/>PostgreSQL"]:::done --> P2["P2 MongoDB,<br/>Terraform, CI"]:::done --> P3["P3 bronze<br/>on AWS"]:::done --> P4["P4 silver, gold,<br/>Airflow"]:::done --> P5["P5 Redis<br/>features"]:::done
+  P5 --> P6["P6 Neo4j<br/>graph"]:::done --> P7["P7 contracts,<br/>alerting"]:::done --> P8["P8 erasure, backfill,<br/>failure drills"]:::done --> P9["P9 hardening,<br/>load test"]:::next --> P10["P10 optional:<br/>Kinesis, Flink"]:::optional
+  classDef done fill:#d4edda,stroke:#2e7d32,color:#1b4d20
+  classDef next fill:#fff3cd,stroke:#b8860b,color:#5c4400
+  classDef optional fill:#ffffff,stroke:#bbbbbb,stroke-dasharray: 2 4,color:#777777
+```
+
+## What is built
 
 | Component | Built in | Topics / location |
 |---|---|---|
@@ -171,7 +315,12 @@ Every command of the project, grouped by task (stack, capture, Spark,
 Airflow, queries, serving, drills, tests, AWS), with ports and UIs:
 [docs/commands.md](docs/commands.md).
 
-## How to demo P2 (about 3 minutes)
+## Demos, phase by phase
+
+About three minutes each, with the talking points an interviewer would probe.
+
+<details>
+<summary><b>How to demo P2 (about 3 minutes)</b></summary>
 
 ```bash
 make up && make connector-status            # 2 connectors RUNNING
@@ -193,7 +342,10 @@ Talking points: why a replica set for one node, oplog vs replication slot,
 why `thelook_mongo` and not `thelook-mongo` (Avro names), why the history
 was copied before the connector's snapshot.
 
-## How to demo P4 (about 3 minutes)
+</details>
+
+<details>
+<summary><b>How to demo P4 (about 3 minutes)</b></summary>
 
 With `core stream airflow` up and both DAGs unpaused:
 
@@ -218,7 +370,10 @@ the batch ledger and consistent cut; why silver's watermark is an
 not optional (a 487 KB metadata file slowed the stream); what each run
 costs in S3 transfer and why it does not go lower (random keys).
 
-## How to demo P5 (about 3 minutes)
+</details>
+
+<details>
+<summary><b>How to demo P5 (about 3 minutes)</b></summary>
 
 With `core serving` up (no AWS cost):
 
@@ -244,7 +399,10 @@ same expiries; a TTL bounds a key, not its members (the 72 h window on
 viewed); why `failOnDataLoss=false` here and `true` for bronze; the 503 that
 took 60 s (redis-py's default retries and DNS for a stopped container).
 
-## How to demo P6 (about 3 minutes)
+</details>
+
+<details>
+<summary><b>How to demo P6 (about 3 minutes)</b></summary>
 
 With `core serving` up, and a graph built by the `graph` DAG (it needs
 `stream` and `airflow` to have run; serving the graph does not):
@@ -275,7 +433,10 @@ exact); liveness vs readiness, and why a readiness probe on shared stores
 turns a partial outage into a total one; the 500 a fake could not find
 (Neo4j reports a query timeout as a `ClientError`).
 
-## How to demo P7 (about 3 minutes)
+</details>
+
+<details>
+<summary><b>How to demo P7 (about 3 minutes)</b></summary>
 
 With `core stream airflow monitoring` up:
 
@@ -299,7 +460,10 @@ of the batch ledger (tables commit one by one); why a failed task gets no
 "resolved" email; the recovery that failed
 the first time (restoring a value while the column still had the bad type).
 
-## How to demo P8 (about 3 minutes)
+</details>
+
+<details>
+<summary><b>How to demo P8 (about 3 minutes)</b></summary>
 
 With `core stream airflow` up:
 
@@ -324,6 +488,8 @@ for the range on its last day only; how the drills found a silver bug
 (MongoDB updates read late have no document) and a 120 s hang (a frozen
 Neo4j and the driver's read timeout); why a check is first run against a
 case that must fail.
+
+</details>
 
 ## Design decisions
 

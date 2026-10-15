@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="346" viewBox="0 0 760 346" role="img" aria-label="Retained WAL while Kafka Connect was stopped for an hour" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Retained WAL while Kafka Connect was stopped for an hour</title>
+<rect width="760" height="346" rx="8" fill="#fcfcfb"/>
+<text x="24.0" y="32.0" fill="#0b0b0b" font-size="16" font-weight="600" text-anchor="start">Kafka Connect stopped for an hour: PostgreSQL keeps the WAL</text>
+<text x="24.0" y="52.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="start">Retained WAL of the replication slot while the generator kept writing (P8 step 11). Cap: 10 GB.</text>
+<text x="24.0" y="69.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="start">After the restart, Debezium caught up in 44 s: 0 rows lost, 0 duplicated.</text>
+<line x1="64.0" y1="300.0" x2="708.0" y2="300.0" stroke="#c3c2b7" stroke-width="1"/>
+<text x="56.0" y="304.0" fill="#898781" font-size="11" font-weight="400" text-anchor="end">0</text>
+<line x1="64.0" y1="260.8" x2="708.0" y2="260.8" stroke="#e1e0d9" stroke-width="1"/>
+<text x="56.0" y="264.8" fill="#898781" font-size="11" font-weight="400" text-anchor="end">50</text>
+<line x1="64.0" y1="221.6" x2="708.0" y2="221.6" stroke="#e1e0d9" stroke-width="1"/>
+<text x="56.0" y="225.6" fill="#898781" font-size="11" font-weight="400" text-anchor="end">100</text>
+<line x1="64.0" y1="182.4" x2="708.0" y2="182.4" stroke="#e1e0d9" stroke-width="1"/>
+<text x="56.0" y="186.4" fill="#898781" font-size="11" font-weight="400" text-anchor="end">150</text>
+<line x1="64.0" y1="143.2" x2="708.0" y2="143.2" stroke="#e1e0d9" stroke-width="1"/>
+<text x="56.0" y="147.2" fill="#898781" font-size="11" font-weight="400" text-anchor="end">200</text>
+<line x1="64.0" y1="104.0" x2="708.0" y2="104.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="56.0" y="108.0" fill="#898781" font-size="11" font-weight="400" text-anchor="end">250</text>
+<text x="56.0" y="92.0" fill="#898781" font-size="11" font-weight="400" text-anchor="end">MB</text>
+<text x="64.0" y="318.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">0 min</text>
+<text x="171.3" y="318.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">10 min</text>
+<text x="278.7" y="318.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">20 min</text>
+<text x="386.0" y="318.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">30 min</text>
+<text x="493.3" y="318.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">40 min</text>
+<text x="600.7" y="318.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">50 min</text>
+<text x="708.0" y="318.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">60 min</text>
+<polygon points="64.0,300.0 64.0,299.5 74.7,296.4 85.5,293.7 96.2,290.6 106.9,288.2 117.7,285.9 128.4,282.8 139.1,279.6 149.9,277.3 160.6,274.9 171.3,271.8 182.1,268.6 192.8,266.3 203.5,263.2 214.3,260.8 225.0,257.7 235.7,254.5 246.5,252.2 257.2,249.0 267.9,246.7 278.7,243.6 289.4,241.2 300.1,238.1 310.9,234.9 321.6,232.6 332.3,230.2 343.1,227.1 353.8,224.0 364.5,221.6 375.3,219.2 386.0,216.1 396.7,213.0 407.5,210.6 418.2,207.5 428.9,205.1 439.7,202.0 450.4,199.6 461.1,196.5 471.9,194.2 482.6,191.0 493.3,188.7 504.1,186.3 514.8,183.2 525.5,180.0 536.3,177.7 547.0,174.6 557.7,171.4 568.5,169.1 579.2,166.7 589.9,163.6 600.7,161.2 611.4,158.1 622.1,155.7 632.9,152.6 643.6,150.3 654.3,147.1 665.1,144.8 675.8,141.6 686.5,139.3 697.3,136.9 708.0,133.8 708.0,300.0" fill="#2a78d6" fill-opacity="0.10"/>
+<polyline points="64.0,299.5 74.7,296.4 85.5,293.7 96.2,290.6 106.9,288.2 117.7,285.9 128.4,282.8 139.1,279.6 149.9,277.3 160.6,274.9 171.3,271.8 182.1,268.6 192.8,266.3 203.5,263.2 214.3,260.8 225.0,257.7 235.7,254.5 246.5,252.2 257.2,249.0 267.9,246.7 278.7,243.6 289.4,241.2 300.1,238.1 310.9,234.9 321.6,232.6 332.3,230.2 343.1,227.1 353.8,224.0 364.5,221.6 375.3,219.2 386.0,216.1 396.7,213.0 407.5,210.6 418.2,207.5 428.9,205.1 439.7,202.0 450.4,199.6 461.1,196.5 471.9,194.2 482.6,191.0 493.3,188.7 504.1,186.3 514.8,183.2 525.5,180.0 536.3,177.7 547.0,174.6 557.7,171.4 568.5,169.1 579.2,166.7 589.9,163.6 600.7,161.2 611.4,158.1 622.1,155.7 632.9,152.6 643.6,150.3 654.3,147.1 665.1,144.8 675.8,141.6 686.5,139.3 697.3,136.9 708.0,133.8" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<line x1="396.7" y1="104.0" x2="396.7" y2="300.0" stroke="#52514e" stroke-width="1"/>
+<text x="390.7" y="118.0" fill="#0b0b0b" font-size="12" font-weight="600" text-anchor="end">ReplicationSlotInactive fires,</text>
+<text x="390.7" y="134.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="end">minute 31: email received</text>
+<circle cx="708.0" cy="133.8" r="5" fill="#fcfcfb"/><circle cx="708.0" cy="133.8" r="4" fill="#2a78d6"/>
+<text x="698.0" y="123.8" fill="#0b0b0b" font-size="12" font-weight="600" text-anchor="end">212 MB</text>
+</svg>

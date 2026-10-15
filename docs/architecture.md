@@ -576,9 +576,9 @@ flowchart LR
   P4["P4 silver, gold, Airflow"]:::done
   P5["P5 Redis features, API"]:::done
   P6["P6 Neo4j recommendations"]:::done
-  P7["P7 data contracts, quality,<br/>schema evolution"]:::active
-  P8["P8 GDPR erasure, backfill,<br/>failure drills"]:::planned
-  P9["P9 hardening, load test,<br/>CI/CD, docs"]:::planned
+  P7["P7 data contracts, quality,<br/>schema evolution"]:::done
+  P8["P8 GDPR erasure, backfill,<br/>failure drills"]:::done
+  P9["P9 hardening, load test,<br/>CI/CD, docs"]:::active
   P10["P10 optional: Kinesis,<br/>Managed Flink"]:::optional
   P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> P10
   classDef done fill:#d4edda,stroke:#2e7d32,color:#1b4d20
@@ -587,5 +587,5 @@ flowchart LR
   classDef optional fill:#ffffff,stroke:#bbbbbb,stroke-dasharray: 2 4,color:#777777
 ```
 
-Green: built and accepted. Yellow: next (P7). Dashed: planned. P1 to P4 form the core project; P5 and P6 add serving; P10
+Green: built and accepted. Yellow: next (P9). Dashed: planned. P1 to P4 form the core project; P5 and P6 add serving; P10
 only makes sense after P9 (spec section 9).

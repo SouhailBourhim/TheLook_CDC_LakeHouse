@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="300" viewBox="0 0 760 300" role="img" aria-label="Records reconciled in each failure drill" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Records reconciled in each failure drill</title>
+<rect width="760" height="300" rx="8" fill="#fcfcfb"/>
+<text x="24.0" y="32.0" fill="#0b0b0b" font-size="16" font-weight="600" text-anchor="start">Failure drills: every committed record lands in bronze exactly once</text>
+<text x="24.0" y="52.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="start">Kafka records committed during each drill, counted against bronze rows and distinct offsets (P8 steps 10-12).</text>
+<text x="236.0" y="112.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="end">Debezium stopped for an hour</text>
+<path d="M252.0,97.0 H454.3 Q458.3,97.0 458.3,101.0 V115.0 Q458.3,119.0 454.3,119.0 H252.0 Z" fill="#2a78d6"/>
+<text x="466.3" y="112.0" fill="#0b0b0b" font-size="12" font-weight="600" text-anchor="start">113,570</text>
+<text x="736.0" y="112.0" fill="#898781" font-size="12" font-weight="400" text-anchor="end">0 lost, 0 appended twice</text>
+<text x="236.0" y="156.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="end">Bronze stream killed mid-batch</text>
+<path d="M252.0,141.0 H282.1 Q286.1,141.0 286.1,145.0 V159.0 Q286.1,163.0 282.1,163.0 H252.0 Z" fill="#2a78d6"/>
+<text x="294.1" y="156.0" fill="#0b0b0b" font-size="12" font-weight="600" text-anchor="start">18,767</text>
+<text x="736.0" y="156.0" fill="#898781" font-size="12" font-weight="400" text-anchor="end">0 lost, 0 appended twice</text>
+<text x="236.0" y="200.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="end">Connector offsets replayed</text>
+<path d="M252.0,185.0 H278.2 Q282.2,185.0 282.2,189.0 V203.0 Q282.2,207.0 278.2,207.0 H252.0 Z" fill="#2a78d6"/>
+<text x="290.2" y="200.0" fill="#0b0b0b" font-size="12" font-weight="600" text-anchor="start">16,625</text>
+<text x="736.0" y="200.0" fill="#898781" font-size="12" font-weight="400" text-anchor="end">0 lost, 0 appended twice</text>
+<text x="236.0" y="244.0" fill="#52514e" font-size="12" font-weight="400" text-anchor="end">Connect killed, Kafka restarted</text>
+<path d="M252.0,229.0 H269.7 Q273.7,229.0 273.7,233.0 V247.0 Q273.7,251.0 269.7,251.0 H252.0 Z" fill="#2a78d6"/>
+<text x="281.7" y="244.0" fill="#0b0b0b" font-size="12" font-weight="600" text-anchor="start">11,922</text>
+<text x="736.0" y="244.0" fill="#898781" font-size="12" font-weight="400" text-anchor="end">0 lost, 0 appended twice</text>
+<line x1="252.0" y1="80.0" x2="252.0" y2="262.0" stroke="#c3c2b7" stroke-width="1"/>
+<text x="24.0" y="278.0" fill="#898781" font-size="11" font-weight="400" text-anchor="start">The replay drill's records are duplicates in bronze by design; silver ignored all of them (same fingerprint before and after).</text>
+</svg>
