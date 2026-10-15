@@ -2697,7 +2697,7 @@ Written afterwards (session 17), from the commits, the working tree and
 - Waiting for Docker Desktop's WSL integration. Then run step 9:
   `uv run drills/backfill_drill.py <first> <last>` on 3 days with returns.
 
-## Session 18 — 2026-10-14 (evening) — P8 steps 9 and 10 passed
+## Session 18 — 2026-10-14/15 (evening, night) — P8 steps 9 to 13
 
 - A drill run started at 18:03 (not logged before) passed the baseline and
   the catch, then was killed with WSL during step 5. Airflow resumed the
@@ -2748,12 +2748,62 @@ days were bad: a 3 would appear even if 10-07 itself were right.
   markers and aborted records take offsets (users: 154 records over 267
   offsets).
 
-### Where we stopped (2026-10-14) — LATEST, start here
+### Step 11: Debezium stopped for an hour
 
-- **Next: step 11**, `drills/slot-drill.sh` (Debezium stopped for an hour;
-  needs the monitoring profile up, and the stream profile for the bronze
-  check), then 12 (no script yet), 13 (`neo4j_freeze.py`, serving
-  profile), 14 wrap-up and the P8 checkpoint.
+- ~200 MB WAL retained, `ReplicationSlotInactive` at minute 31, email
+  received (Souhail confirmed), catch-up in 44 s, everything exact.
+- The drill counted emails on `integration="email"`: the label is the
+  integration *type* (`sns`); it would have failed with the email sent.
+- **Defect found: MongoDB updates read late have no document.** The
+  connector looks the document up when it reads the event
+  (`change_streams_update_full`), not when it happened. An hour late, a
+  review updated then deleted came with `after = null` (9 in bronze).
+  Silver would have nulled the row until the delete; now an update
+  without a document is a delete (test fails without the fix).
+
+### Step 12: stream killed mid-batch, offsets replayed
+
+- Kill: `pkill -9 java` inside the container after a table commit (a
+  crash; `docker kill` is a manual stop and Docker never restarts it).
+  Restarted in 2 s; the replayed batch logged `skipped(replay)` for the
+  table it held; no offset twice in bronze. The capture window missed
+  the killed batch's start (a batch reads from where the previous one
+  ended, planned when that one started): the drill now kills the third
+  batch after its capture.
+- Replay: MongoDB rewound 20 min through Connect's REST API (stop, PATCH
+  offsets, resume). Postgres cannot be rewound: the slot sends nothing
+  before `confirmed_flush_lsn`; its only replay is a re-snapshot (P4).
+  Result: 16,277 events and 348 reviews replayed, every one a duplicate in
+  bronze; silver unchanged (same fingerprint, replayed keys identical),
+  because the MERGE applies only newer positions. A full-table EXCEPT hit
+  the Athena 1 GiB scan guard: compare a fingerprint (count, positions,
+  newest `_merged_at`) and the touched keys instead.
+
+### Step 13: Neo4j frozen
+
+- Souhail's `docker pause` found what a stop would not: the first request
+  on a pooled connection got no answer for 30 s. The query timeout is the
+  server's; the driver's read timeout is the server's hint
+  `connection.recv_timeout_seconds` = keep-alive x probes = 120 s. Now
+  1 s x 2: the hint is 2 s, the server NOOPs every second while it works.
+  Rerun: 503 in 2.00 s, then 1.01 s.
+
+### Debugging method this session
+
+- Tonight's network failed silver three times on DNS: always read the
+  `Caused by` before retrying, to tell the network from the code.
+- A check that cannot fail proves nothing: the horizon rule, the silver
+  test and the duplicate query were each run against a case that must
+  fail first.
+- A log written through `grep` to a file lags (block buffering): ask the
+  system (Airflow, Connect), not the log, when progress looks stuck.
+
+### Where we stopped (2026-10-15) — LATEST, start here
+
+- **P8 steps 9 to 13 all passed** and are committed. The graph job ran
+  fine with the 2 s Neo4j read timeout.
+- Then **step 14**: P8 wrap-up (README, runbook: erasure, backfill, drills;
+  results summary) and the **P8 checkpoint** (3-5 interview questions).
 - Still open: answers on the marts change, the merge-on-read follow-up,
   the session 16 fixes' questions.
 
