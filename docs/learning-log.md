@@ -2802,8 +2802,31 @@ days were bad: a 3 would appear even if 10-07 itself were right.
 
 - **P8 steps 9 to 13 all passed** and are committed. The graph job ran
   fine with the 2 s Neo4j read timeout.
-- Then **step 14**: P8 wrap-up (README, runbook: erasure, backfill, drills;
-  results summary) and the **P8 checkpoint** (3-5 interview questions).
+- **Step 14 (wrap-up) done:** README (status, P8 components, "How to demo
+  P8", ADR 021 row), runbook (GDPR erasure: request, verify, failed task,
+  partial-purge repair, removing the user id from Airflow, replays after
+  an erasure; Failure drills: commands, profiles, durations, a drill
+  killed with the host), results (P8 summary and the erasure runs).
+- **Next: the P8 checkpoint**, answered by Souhail without the code (rule 8;
+  not answered for him, unlike the step questions tonight):
+  1. A user asks to be erased. Where can their data still be after the
+     DELETE statements in PostgreSQL and MongoDB, and how is each place
+     cleaned? Why is bronze purged by the stream and not by Airflow?
+  2. Why does the erasure wait until each key's *latest* event in bronze
+     is a delete, instead of counting delete events?
+  3. How do you prove a backfill created no duplicates and repaired the
+     bug? Why is "caught" judged on the first day and "repaired" on the
+     last?
+  4. Connect is killed mid-transaction, and the bronze stream is killed
+     after one table committed. Why does neither duplicate a row?
+  5. A connector's offsets are rewound 15 minutes. Why does bronze get
+     duplicates and silver not? Why can't the Postgres connector be
+     rewound the same way?
+- Then P9. Open from before: the marts-change answers, the merge-on-read
+  follow-up, the session 16 fixes' questions; the spec's header still says
+  version 2.2 (revisions list 2.3); `drills/throughput-baseline.sh` holds a
+  VS Code `-- Active:` line on line 1 that breaks its shebang (not
+  committed: Souhail's editor).
 - Still open: answers on the marts change, the merge-on-read follow-up,
   the session 16 fixes' questions.
 

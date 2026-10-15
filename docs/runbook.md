@@ -489,6 +489,74 @@ read-only user for the API to switch to (ADR 019).
 throwaway Neo4j on port 17687 and removes it afterwards. They delete every
 node: never point `NEO4J_TEST_URI` at the serving Neo4j (7687).
 
+## GDPR erasure (P8, ADR 021)
+
+One request erases one user from PostgreSQL, MongoDB, bronze, silver, gold
+(facts and the daily marts of the user's days), Redis and the time travel
+of every affected table. Kafka keeps the user's change events until its
+3-day retention deletes them (O5 says so). Needs the core, stream and
+airflow profiles up.
+
+```bash
+uv run drills/verify_erasure.py --capture <user_id>   # keys, before they are gone
+uv run drills/request_erasure.py <user_id> --wait     # prints the request id (= run id)
+uv run drills/verify_erasure.py <user_id> <request_id> # every place 0, time travel gone
+```
+
+The capture goes to `drills/logs/` (git-ignored): it identifies a person;
+delete it once the verification passes.
+
+**How long.** Measured (P8 step 6, under load, on a bad network): sources
+5 s, waiting for bronze to hold the deletes ~2.5 min, bronze purge ~1 h
+(the stream holds that batch, so bronze misses O1 for the hour: accepted),
+silver and gold ~30 min once the `lake` slot is free. Request to done:
+1 h 45 min (O5: 24 h).
+
+**A task failed.** Every step is safe to run again (deletes by key, an
+audit row per step). In the Airflow UI, *clear* the failed task with its
+downstream tasks **in the same run**: a new run is a new request id, and the
+bronze `erasure_log` and the audit are keyed on it. `AirflowTaskFailed`
+emails name the task; the log shows counts only (the user id is masked).
+
+### Repair a partial bronze purge
+
+Symptom: `verify_erasure.py` finds rows left in one bronze table, usually
+order items, after the request succeeded. Cause: an attempt died after
+deleting the parents (orders), so a retry could no longer find the
+children through them (P8 step 6: 115 item rows). The keys are in the
+capture file. Run as the stream's identity, with the stream stopped:
+
+```bash
+docker compose -f onprem/compose.yaml stop bronze-stream
+docker compose -f onprem/compose.yaml --profile stream run --rm --no-deps \
+  bronze-stream /opt/spark/bin/spark-submit --master spark://spark-master:7077 \
+  /opt/lakehouse/jobs/repair_erasure.py lake.thelook_bronze.shop_order_items <key> [<key> ...]
+docker compose -f onprem/compose.yaml --profile stream up -d bronze-stream
+```
+
+It deletes the rows, then drops the table's history (keeping the stream's
+newest batch marks, so the next batch is not appended twice). Run the
+verification again.
+
+### Remove the user id from Airflow's database
+
+The run's conf keeps `{"user_id": ...}` in Airflow's metadata database.
+Once the verification passes, delete the run (UI: Browse > DAG Runs, or
+`DELETE /api/v2/dags/gdpr_erasure/dagRuns/<request_id>`). The proof stays
+in `thelook_silver.erasure_audit` and `thelook_bronze.erasure_log`, which
+hold the request id and the sha256 of the user id, never the id itself.
+
+### Replays after an erasure
+
+For 3 days after an erasure, Kafka still holds the user's change events.
+A replay of that window brings them back into **bronze**: a connector
+rewound to before the erasure (`drills/offsets_replay.py` does that), or
+the bronze stream restarted without its checkpoint. Silver stays clean
+(each key's latest event is the delete). Avoid such a replay; if one
+happened, run the erasure again for every user erased since the replayed
+position (the request is idempotent). A re-snapshot is safe: it reads the
+sources, where the user no longer exists.
+
 ## Backfill (P8, ADR 021)
 
 Recompute gold for past days from silver, for example after fixing a logic
@@ -510,6 +578,34 @@ docker compose -f onprem/compose.yaml exec airflow-scheduler \
 - The backfill DAG stays unpaused (a paused DAG starts no backfill run).
 - If `drills/backfill_drill.py` is killed (a closed WSL, Docker Desktop
   restart), its `finally` does not run: unpause `transform` by hand.
+
+## Failure drills (P8, FR14)
+
+Each drill ends with an exact check and exits 0 only if it held; results
+in `docs/results.md`. Run them with `UV_OFFLINE=1` on a flaky network (a
+PyPI timeout must not end a drill), one at a time (several stop Connect or
+the load), and with no erasure in progress (a purge removes bronze rows on
+purpose).
+
+| Drill | Command | Needs | Takes |
+|---|---|---|---|
+| Backfill repairs a logic bug | `uv run drills/backfill_drill.py <first> <last>` (3 days with returns) | core, stream, airflow; `gold.py` clean | ~1.5 h |
+| Connect killed, Kafka restarted | `uv run drills/connect_kafka_restarts.py` | core, stream, airflow | ~15 min |
+| Debezium stopped for an hour | `drills/slot-drill.sh` | + monitoring | ~75 min |
+| Bronze stream killed mid-batch | `uv run drills/bronze_stream_kill.py` | core, stream | ~15 min |
+| Connector offsets reset | `uv run drills/offsets_replay.py` | core, stream, airflow | 30-90 min (two transforms) |
+| Neo4j frozen | `uv run drills/neo4j_freeze.py` | neo4j, redis, api | ~3 min |
+
+- **A drill killed with the host** (WSL or Docker Desktop stopping) runs no
+  `finally`: unpause `transform` (backfill drill), start Connect, the
+  connector (`PUT /connectors/mongo-source/resume`) or the load
+  (`docker compose -f onprem/compose.yaml start generator review-simulator`)
+  by hand, whichever it had stopped.
+- **Memory:** the serving profile's features stream needs ~2 GiB; with the
+  other profiles up, start only `neo4j redis api` for the Neo4j drill.
+- **What each proves and how** (bronze counted against Kafka's committed
+  records, sources against Kafka with the retention horizon, silver by
+  fingerprint): the drill's docstring.
 
 ## Contracts, quality checks and alerts (P7, ADR 020)
 

@@ -8,7 +8,9 @@ lakehouse on AWS, with Spark for processing and Redis/Neo4j for serving.
 > MongoDB, bronze/silver/gold on AWS with Spark and Airflow, online user
 > features in Redis and co-purchase recommendations from Neo4j, both
 > served by FastAPI, and data contracts, quality checks and email alerts
-> over all of it. Next is P8 (GDPR erasure, backfill, failure drills). This is a learning project; the full
+> over all of it. P8 is built and its drills pass: GDPR erasure through every
+> layer and store, day-range backfill, and the failure drills of FR14 (its
+> checkpoint is pending). Next is P9. This is a learning project; the full
 > specification is the [cahier des charges](docs/cahier-des-charges.md) (v2.3), the
 > reasoning is in the [ADRs](docs/adr/), measured results in
 > [results](docs/results.md).
@@ -78,6 +80,9 @@ flowchart LR
 | Data contracts: 26 ODCS files (silver and gold with quality rules, bronze schema only), linted in CI, tested in Athena as a read-only identity; our own drift check (datacontract-cli ignores new columns) | P7 | `contracts/` |
 | Quality: a `quality` task ending `transform`; a daily `quality_report` DAG (contracts, drift, freshness, exact source-to-silver reconciliation, health); dead letters kept in silver | P7 | `airflow/dags/quality_report.py`, `lake.thelook_silver.dead_letters` |
 | Alerting: one hub, Alertmanager, emailing through SNS; every failed Airflow task alerts; MongoDB oplog window alert | P7 | `onprem/monitoring/`, `infra/terraform/lake/alerts.tf` |
+| GDPR erasure: one request removes a user from both sources, bronze (by the stream), silver, gold, the daily marts, Redis and time travel, with an audit that never holds the id; 1 h 45 min measured (O5: 24 h) | P8 | `airflow/dags/gdpr_erasure.py`, `drills/request_erasure.py`, `drills/verify_erasure.py` |
+| Backfill: recompute gold for a day range from silver, a day replaced whole, contracts checked after each day | P8 | `airflow/dags/backfill.py`, `drills/backfill_drill.py` |
+| Failure drills (FR14): Connect killed, Kafka restarted, Debezium stopped an hour, stream killed mid-batch, offsets replayed, Neo4j frozen; each ends with an exact check | P8 | `drills/`, runbook "Failure drills" |
 
 ## Repository layout
 
@@ -294,6 +299,32 @@ of the batch ledger (tables commit one by one); why a failed task gets no
 "resolved" email; the recovery that failed
 the first time (restoring a value while the column still had the bad type).
 
+## How to demo P8 (about 3 minutes)
+
+With `core stream airflow` up:
+
+```bash
+# 1. Erase a user everywhere, then prove it (time travel included):
+uv run drills/verify_erasure.py --capture <user_id>
+uv run drills/request_erasure.py <user_id> --wait   # ~1 h 45 min under load
+uv run drills/verify_erasure.py <user_id> <request_id>
+# 2. A logic bug reaches the revenue mart through a backfill, the contract
+#    catches it, the fix is backfilled, the mart equals its pre-bug snapshot:
+uv run drills/backfill_drill.py 2026-10-05 2026-10-07
+# 3. Kill Connect and restart Kafka under load: 0 lost, 0 duplicated
+uv run drills/connect_kafka_restarts.py
+# 4. Replay 15 minutes of MongoDB changes: bronze duplicates, silver unchanged
+uv run drills/offsets_replay.py
+```
+
+Talking points: why bronze is purged by the stream and not by Airflow (one
+writer, one key that can delete it); why the erasure waits until each key's
+*latest* event in bronze is a delete; why a backfill's quality check speaks
+for the range on its last day only; how the drills found a silver bug
+(MongoDB updates read late have no document) and a 120 s hang (a frozen
+Neo4j and the driver's read timeout); why a check is first run against a
+case that must fail.
+
 ## Design decisions
 
 Each has an ADR with the alternatives and consequences.
@@ -319,6 +350,7 @@ Each has an ADR with the alternatives and consequences.
 | Features: a separate Spark stream in local mode; max/union values in Redis; TTLs from event time | No AWS key, cannot slow bronze; replays and rebuilds give the same state | [018](docs/adr/018-online-features.md) |
 | Graph: companion products in the generator, full rebuild stamped with a run id, one writer, liveness `/health` + readiness `/ready` | Exact acceptance; idempotent and erasure-proof; never an empty graph; a store outage never restarts the API | [019](docs/adr/019-co-purchase-graph.md) |
 | Contracts per table, checks in Athena as a read-only user, own drift check, dead letters, one alert hub (Alertmanager -> SNS email) | A drift or a broken rule fails a check instead of passing silently; no laptop transfer; every alert reaches one inbox | [020](docs/adr/020-contracts-quality-alerting.md) |
+| Erasure through every layer (bronze purged by the stream), day-range backfill as an Airflow DAG, failure drills with exact checks | Erased everywhere within O5 with an audit that holds no identifier; a backfill can never duplicate; each FR14 claim is evidence | [021](docs/adr/021-erasure-and-backfill.md) |
 
 ## After cloning
 

@@ -745,7 +745,46 @@ Order to return, 515 returns in silver: p50 4.2 days, p90 9.9, p99 10.9,
 max 11.1, on 12 days of history (right-censored). Window: 14 days;
 `mart_daily_revenue.provisional_until` = order day + 14.
 
-## P8: backfill repairs a logic bug — 2026-10-14
+## P8: GDPR erasure, backfill and failure drills — 2026-10-13 to 2026-10-15
+
+| Acceptance (spec section 9) | Evidence | Result |
+|---|---|---|
+| Erasure verified in every layer and store, incl. clickstream, Redis, time travel | `drills/verify_erasure.py`, a fresh user | 54/54 places empty; request to done 1 h 45 min (O5: 24 h) |
+| Backfill leaves no duplicates | `drills/backfill_drill.py` | bug caught, repaired, mart equal to the pre-bug snapshot, `date_key` unique |
+| Connect killed, Kafka restarted (FR14) | `drills/connect_kafka_restarts.py` | 0 lost, 0 duplicated |
+| Debezium stopped for an hour (FR14) | `drills/slot-drill.sh` | alert emailed, catch-up 44 s, 0 lost, 0 duplicated |
+| Offsets reset (FR14) | `drills/offsets_replay.py` | bronze duplicates 16,625 of 16,625, silver unchanged |
+| Stream killed mid-batch (FR14) | `drills/bronze_stream_kill.py` | replay skipped the committed table, no offset twice |
+| Neo4j frozen (P8 plan) | `drills/neo4j_freeze.py` | 503 within 2 s throughout, recovered in 0.1 s |
+
+The two FR14 schema drills (nullable column, incompatible type) ran in P7
+(`drills/schema_compatible.py`, `drills/schema_breaks.py`, above).
+
+Defects the drills found, all fixed: an erasure attempt that died between
+orders and items left 115 item rows (children are now deleted first); the
+source check could not tell a change lost in a drill from one expired by
+retention; MongoDB updates read an hour late have no document, which
+silver would have turned into a row of nulls; a frozen Neo4j held a pooled
+request for up to 120 s.
+
+### GDPR erasure (step 6, acceptance part 1), 2026-10-13
+
+`drills/verify_erasure.py` captures the user's keys, `request_erasure.py`
+triggers `gdpr_erasure`, the verification checks every place of ADR 021's
+map by user id and by captured key, and that time travel to every captured
+snapshot fails.
+
+| Run | User | Result | Request to done |
+|---|---|---|---|
+| 1 | 31 orders, 48 items, 193 events, 6 reviews, 7 Redis keys | 53/54: **115 bronze item rows left** (an attempt died after deleting the orders, so the retry could not find the items through them); repaired with `jobs/repair_erasure.py`, then 54/54 | sources 5 s, bronze wait 2.5 min, bronze purge 58 min, lake 26 min once it had the slot |
+| 2 (every fix deployed, no manual step) | 34 orders, 45 items, 189 events, 5 reviews, 4 Redis keys | **54/54** | **1 h 45 min**: bronze purge 71 min, lake 29 min |
+
+The bronze purge costs about an hour under load: each copy-on-write DELETE
+re-reads its whole table to find the files (web_events: 11 min) before
+rewriting them. Bronze misses O1 for that hour (accepted, ADR 021). The
+raw user id appears 0 times in the task logs. Kafka keeps the change
+events until its 3-day retention (O5).
+
 
 ### `drills/backfill_drill.py` on 2026-10-05..07 (step 9, acceptance part 2)
 
