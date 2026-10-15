@@ -2838,6 +2838,16 @@ days were bad: a 3 would appear even if 10-07 itself were right.
   Rewind detail: 14 min replayed (the token pointed to 01:20), and
   Postgres cannot rewind because the slot sends nothing before
   `confirmed_flush_lsn`.
+- **README redesign (2026-10-15, after the checkpoint).** Banner, stat
+  tiles, six screenshots of the running stack (all 16:10, one browser
+  frame; Prometheus shows the slot drill from its own 7-day history), and
+  every diagram as an SVG drawn from measured results, light and dark
+  (`scripts/readme_charts.py`, `scripts/readme_screenshots.py`). Lessons:
+  Mermaid flowcharts wider than ~5 boxes shrink to unreadable text at
+  README width; a picture's shape decides how a gallery lines up; check a
+  rendered page, not the source (labels clipped, a raw `<` breaking SVG,
+  Prometheus's UI failing on the host locale `en-US@posix`).
+  `docs/architecture.md` keeps its 10 Mermaid diagrams.
 - Then P9. Open from before: the marts-change answers, the merge-on-read
   follow-up, the session 16 fixes' questions; the spec's header still says
   version 2.2 (revisions list 2.3); `drills/throughput-baseline.sh` holds a
