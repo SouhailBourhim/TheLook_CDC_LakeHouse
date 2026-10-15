@@ -2822,6 +2822,22 @@ days were bad: a 3 would appear even if 10-07 itself were right.
   5. A connector's offsets are rewound 15 minutes. Why does bronze get
      duplicates and silver not? Why can't the Postgres connector be
      rewound the same way?
+- **P8 checkpoint (2026-10-15): passed.** Right: Kafka (retention), bronze
+  by the stream (ADR 017, and the wait past the source deletion), silver
+  (merge-on-read: DELETE writes delete files, compaction rewrites, expiry
+  removes), Redis, Neo4j (products only), "no key alive", the backfill
+  proof and first/last day. Corrected: gold's marts are not left as they
+  are: `erase_lake` recomputes both for the user's days (session 15), for
+  correctness (they counted erased sessions), not privacy; gold also
+  deletes `dim_user`. Added: the run's conf in Airflow's database; no S3
+  versioning on purpose (`storage.tf`: old versions would keep every
+  rewritten file); the empty commit that lets the removing snapshot
+  expire. To state as mechanisms, not evidence: Connect's records and
+  offsets in one transaction, aborted on the crash, `read_committed`
+  readers; the stream's batch marks in snapshot properties, ledger last.
+  Rewind detail: 14 min replayed (the token pointed to 01:20), and
+  Postgres cannot rewind because the slot sends nothing before
+  `confirmed_flush_lsn`.
 - Then P9. Open from before: the marts-change answers, the merge-on-read
   follow-up, the session 16 fixes' questions; the spec's header still says
   version 2.2 (revisions list 2.3); `drills/throughput-baseline.sh` holds a
