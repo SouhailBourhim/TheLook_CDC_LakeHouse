@@ -891,3 +891,30 @@ the previous one ended, planned when that one started, so 2184 began before
 the capture and its `dist_centers` rows were outside the window. The
 offsets check since 22:30 covers it. The script now kills only in the third
 batch after the capture, which starts after it.
+
+### `drills/neo4j_freeze.py`: Neo4j frozen (step 13), 2026-10-15 ~01:40 UTC
+
+`docker pause neo4j` for 120 s (Souhail's idea): a paused process keeps
+its TCP connections open and never answers, unlike a stopped one. Neo4j,
+Redis and the API up (not the features stream: 4 GB free with the rest).
+
+| Run | First request (pooled connection) | Later requests | `/ready`, `/health` | After unpause |
+|---|---|---|---|---|
+| 1, defaults | **no answer within the client's 30 s** | 503 in 1.01 s | 503 naming neo4j, 200 | 200 after 0.1 s, no API restart |
+| 2, keep-alive 1 s x 2 | **503 in 2.00 s** | 503 in 1.00-1.01 s | 503 naming neo4j, 200 | 200 after 0.1 s, no API restart |
+
+**Why run 1 hung.** The 2 s query timeout (`neo4j.Query(timeout=2)`) is a
+transaction timeout the server enforces: a frozen server enforces nothing.
+The driver's only read timeout comes from the server's
+`connection.recv_timeout_seconds` hint, which our Neo4j sent as 120 (its
+keep-alive, 1 min, x 2 probes; read from the driver's debug log of the
+handshake). A request on an open pooled connection waited up to 120 s,
+holding an API thread. New connections failed in 1 s: the paused
+container's kernel still completes the TCP handshake, but the Bolt
+handshake gets no answer and the 1 s connection timeout ends it.
+
+**Fix:** `server.bolt.connection_keep_alive` 1 s, probes 2, scheduling
+interval 1 s: the hint becomes 2 s (checked), and the server sends a NOOP
+every second while a query runs, so only silence trips the timeout, never
+a slow query. A client-side deadline thread in the API was rejected: each
+timeout would leave a blocked thread and a held connection behind.
