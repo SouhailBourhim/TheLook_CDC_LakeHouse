@@ -644,6 +644,175 @@ def roadmap(t: dict) -> str:
     return svg(w, h, t, body, "Roadmap: P1 to P8 done, P9 hardening next, P10 optional")
 
 
+# One change, commit to Athena (docs/architecture.md, section 3).
+PARTICIPANTS = [
+    "generator",
+    "PostgreSQL",
+    "Debezium",
+    "Kafka",
+    "bronze stream",
+    "Iceberg on S3",
+    "transform DAG",
+]
+# (phase label, [(from, to, label, dashed)]); participants by index.
+SEQUENCE = [
+    ("Capture · under 1 s", [
+        (0, 1, "INSERT order, COMMIT", False),
+        (1, 2, "decoded WAL record, from the slot", False),
+        (2, 3, "Avro change event", False),
+        (2, 1, "confirm the LSN: the slot advances", True),
+    ]),
+    ("Ingestion · queryable in 75 s (median)", [
+        (4, 3, "read new offsets, every 60 s", False),
+        (4, 5, "append per table, then the ledger row", False),
+    ]),
+    ("Refinement · every 30 min, gold in 10–36 min", [
+        (6, 5, "silver: MERGE the latest version per key", False),
+        (6, 5, "gold: dimensions, facts, marts", False),
+    ]),
+]  # fmt: skip
+
+
+def sequence(t: dict) -> str:
+    w = 1000
+    xs = [
+        76 + i * (w - 152) / (len(PARTICIPANTS) - 1) for i in range(len(PARTICIPANTS))
+    ]
+    row, band_gap, top = 38, 40, 82
+    n_rows = sum(len(m) for _, m in SEQUENCE)
+    h = top + n_rows * row + len(SEQUENCE) * band_gap + 20
+    blue = t["series"][0]
+    body = [defs(t)]
+    # Phase bands first, under everything.
+    y = top
+    bands = []
+    for label, messages in SEQUENCE:
+        height = band_gap + len(messages) * row
+        body.append(
+            f'<rect x="10" y="{y:.1f}" width="{w - 20}" height="{height - 8:.1f}" rx="10" fill="{t["panel"]}"/>'
+        )
+        bands.append((y, messages, label))
+        y += height
+    # Lifelines and participant boxes.
+    for x, name in zip(xs, PARTICIPANTS, strict=True):
+        body.append(
+            f'<line x1="{x:.1f}" y1="56" x2="{x:.1f}" y2="{h - 16}" stroke="{t["border"]}" stroke-width="1.5"/>'
+        )
+        bw = 7.4 * len(name) + 24
+        body.append(
+            f'<rect x="{x - bw / 2:.1f}" y="16" width="{bw:.1f}" height="38" rx="8" fill="{t["surface"]}" stroke="{t["border"]}"/>'
+        )
+        body.append(text(x, 40, name, t["ink"], 13, "middle", 600))
+    # Phase labels over the lifelines, with a halo.
+    for y0, _, label in bands:
+        body.append(
+            text(24, y0 + 21, label.upper(), t["muted"], 10, weight=600).replace(
+                "<text ",
+                f'<text stroke="{t["panel"]}" stroke-width="5" paint-order="stroke" ',
+                1,
+            )
+        )
+    # Messages, numbered.
+    k = 0
+    for y0, messages, _ in bands:
+        for i, (a, b, label, dashed) in enumerate(messages):
+            k += 1
+            yy = y0 + band_gap + i * row + 12
+            x1, x2 = xs[a], xs[b]
+            gap = 6 if x2 > x1 else -6
+            body += arrow([(x1 + gap, yy), (x2 - gap, yy)], t, dashed=dashed)
+            # Beside the number, towards the arrow's end; a halo in the band's
+            # colour so the lifelines pass behind the words.
+            lx, anchor = (x1 + 16, "start") if x2 > x1 else (x1 - 16, "end")
+            body.append(
+                text(lx, yy - 8, label, t["ink2"], 12, anchor).replace(
+                    "<text ",
+                    f'<text stroke="{t["panel"]}" stroke-width="5" paint-order="stroke" ',
+                    1,
+                )
+            )
+            body.append(f'<circle cx="{x1:.1f}" cy="{yy:.1f}" r="9" fill="{blue}"/>')
+            body.append(text(x1, yy + 4, str(k), "#ffffff", 10, "middle", 700))
+    return svg(
+        w,
+        h,
+        t,
+        body,
+        "One change from commit to Athena: capture in under a second, bronze in 75 s, gold within 10 to 36 minutes",
+    )
+
+
+def exactly_once(t: dict) -> str:
+    w, h = 1000, 250
+    body = [defs(t)]
+    blue = t["series"][0]
+
+    def node(x, y, bw, bh, title, sub, accent=False, pill=False):
+        r = bh / 2 if pill else 10
+        out = [
+            f'<rect x="{x}" y="{y}" width="{bw}" height="{bh}" rx="{r}" fill="{t["surface"]}" '
+            f'stroke="{blue if accent else t["border"]}" stroke-width="{1.5 if accent else 1}"/>',
+            text(
+                x + bw / 2,
+                y + bh / 2 - (3 if sub else -5),
+                title,
+                t["ink"],
+                13,
+                "middle",
+                600,
+            ),
+        ]
+        for j, part in enumerate(sub.split("\n") if sub else []):
+            out.append(
+                text(
+                    x + bw / 2, y + bh / 2 + 14 + 14 * j, part, t["ink2"], 11, "middle"
+                )
+            )
+        return out
+
+    body += node(16, 74, 150, 64, "batch N", "offsets from\nthe checkpoint", pill=True)
+    body += node(
+        196,
+        64,
+        220,
+        84,
+        "Already written?",
+        "a commit on the table marked\nwith this query and batch N",
+        accent=True,
+    )
+    body += node(456, 30, 190, 58, "skip the table", "logged skipped(replay)")
+    body += node(456, 124, 190, 58, "append the rows", "commit marked: query, batch N")
+    body += node(686, 74, 150, 64, "ledger row, last", "every table's\nsnapshot id")
+    body += node(866, 74, 118, 64, "offsets", "committed", pill=True)
+    body += arrow([(166, 106), (196, 106)], t)
+    body += arrow([(416, 92), (436, 92), (436, 59), (456, 59)], t)
+    body.append(text(426, 52, "yes", t["ink"], 11, "end", 600))
+    body += arrow([(416, 120), (436, 120), (436, 153), (456, 153)], t)
+    body.append(text(430, 170, "no", t["ink"], 11, "end", 600))
+    body += arrow([(646, 59), (666, 59), (666, 98), (686, 98)], t)
+    body += arrow([(646, 153), (666, 153), (666, 114), (686, 114)], t)
+    body += arrow([(836, 106), (866, 106)], t)
+    # A crash anywhere: the restart replays batch N from the checkpoint.
+    body += arrow([(925, 138), (925, 220), (91, 220), (91, 140)], t, dashed=True)
+    body.append(
+        text(
+            503,
+            214,
+            "crash anywhere: the restart runs batch N again, and every table already written is skipped",
+            t["muted"],
+            11,
+            "middle",
+        )
+    )
+    return svg(
+        w,
+        h,
+        t,
+        body,
+        "Exactly once into bronze: a replayed batch skips the tables already marked with it; the ledger row comes last",
+    )
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, draw in (
@@ -655,6 +824,8 @@ def main() -> None:
         ("architecture", architecture),
         ("erasure", erasure),
         ("roadmap", roadmap),
+        ("sequence", sequence),
+        ("exactly-once", exactly_once),
     ):
         for theme_name, theme in THEMES.items():
             path = OUT / f"{name}-{theme_name}.svg"

@@ -79,40 +79,20 @@ A diagram for each mechanism: [docs/architecture.md](docs/architecture.md).
 
 ### One change, from commit to Athena
 
-```mermaid
-sequenceDiagram
-  autonumber
-  participant G as generator
-  participant PG as PostgreSQL
-  participant D as Debezium
-  participant K as Kafka + Registry
-  participant B as bronze stream
-  participant L as Iceberg on S3
-  participant T as transform DAG
-  G->>PG: INSERT order, COMMIT
-  PG->>D: decoded WAL record (replication slot)
-  D->>K: Avro change event
-  D-->>PG: confirm the LSN: the slot advances
-  B->>K: read new offsets (micro-batch every 60 s)
-  B->>L: append to bronze, one commit per table, then the ledger row
-  T->>L: silver: MERGE the latest version per key
-  T->>L: gold: dimensions, facts, marts
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/sequence-dark.svg">
+  <img alt="One change from commit to Athena: the generator commits to PostgreSQL; Debezium reads the WAL record, writes an Avro event to Kafka and confirms the LSN; the bronze stream reads new offsets every 60 s and appends per table, then the ledger row; the transform DAG MERGEs silver and builds gold" src="docs/images/sequence-light.svg" width="100%">
+</picture>
 
 ### Exactly once into bronze
 
 Spark replays a batch after a crash (at least once); a mark on every Iceberg commit makes
 the replay skip what is already written (exactly once).
 
-```mermaid
-flowchart LR
-  batch(["batch N<br/>replayed after a crash"]) --> check{"table holds a<br/>commit marked N?"}
-  check -- "yes" --> skip["skip it"]
-  check -- "no" --> append["append,<br/>mark it N"]
-  skip --> ledger["ledger row,<br/>last"]
-  append --> ledger
-  ledger --> done(["offsets<br/>committed"])
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/exactly-once-dark.svg">
+  <img alt="Exactly once into bronze: batch N, from the checkpoint; if a table already holds a commit marked with this query and batch, skip it, otherwise append and mark it; the ledger row last; then Spark commits the offsets. A crash anywhere replays batch N" src="docs/images/exactly-once-light.svg" width="100%">
+</picture>
 
 ## Proven by failure drills
 
