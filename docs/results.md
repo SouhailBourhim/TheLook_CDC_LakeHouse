@@ -918,3 +918,39 @@ interval 1 s: the hint becomes 2 s (checked), and the server sends a NOOP
 every second while a query runs, so only silence trips the timeout, never
 a slow query. A client-side deadline thread in the API was rejected: each
 timeout would leave a blocked thread and a held connection behind.
+
+### `drills/offsets_replay.py`: connector offsets reset (step 12), 2026-10-15 01:34-02:46 UTC
+
+The MongoDB connector, rewound through Connect's REST API (stop, `PATCH
+/connectors/mongo-source/offsets` with an offset read from
+`_connect-offsets`, resume). Not Postgres: the slot sends nothing before
+its `confirmed_flush_lsn`, so a rewound Postgres offset replays nothing;
+its only replay is a re-snapshot, measured in P4. Load stopped throughout,
+so only the replay could change silver.
+
+| What | Result |
+|---|---|
+| baseline | bronze complete and covered by the ledger, transform, silver snapshots recorded |
+| replay | 14 min of change stream (01:20:54-01:34:55) in ~75 s: 16,277 events, 348 reviews |
+| Kafka = bronze over the window | exact for every topic |
+| **bronze duplicates** | 16,277 of 16,277 event rows and 348 of 348 review rows repeat an earlier row (same `doc_id`, `source_ts_ms`, `ord`) |
+| **silver after the next transform** | events 7,518,404 rows, reviews 27,695: count, sum of positions and newest `_merged_at` equal to the baseline; the 16,277 and 310 replayed keys' rows identical in every column. The MERGE commits added and deleted nothing |
+
+Silver ignores the replay because its MERGE applies an event only if its
+position is newer than the row's (ADR 014); a replayed event has the same
+position.
+
+- The offset found 20 min before the stop held only a resume token
+  (`sec = -1`), which pointed to 01:20: the replay was 14 min, not 20.
+- The first attempt's baseline transform failed three times on DNS
+  (`UnknownHostException` on the bucket); the drill now triggers up to three
+  transform runs. The second attempt's final comparison, a full-table
+  `EXCEPT` on silver events, hit the workgroup's 1 GiB scan limit; the
+  comparison above (fingerprint + replayed keys) was run on the recorded
+  snapshots and is now what the drill does.
+
+### Graph job with the 2 s Neo4j read timeout (after step 13)
+
+`graph` DAG triggered by hand: `rebuild_graph` succeeded on its first try
+(1 min 55 s); recommendations served in 0.1 s afterwards. The server's NOOP
+every second keeps a long write alive under the 2 s limit.
