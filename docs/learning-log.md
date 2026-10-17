@@ -2943,9 +2943,41 @@ the wrap-up (Claude writes the script, Souhail records it).
 - **Backfill retries**: right (total span, not count: attempts at 0/2/4
   min inside a 6-min outage, now 0/5/10; the test guards the delay).
 
-### Where we stopped (2026-10-17, 02:10 UTC) — LATEST, start here
+### Step 1: maintenance retries each operation (`810d4a6`)
 
-- Step 0: P8 leftovers closed. The link baseline waits for daytime (it is
-  02:10 UTC; a night measurement would not be the reference the later
-  steps compare against).
-- Then step 1.
+- The bug, reproduced on the old code before fixing: the job wrapped
+  `with_retries` around a whole database; a blip during expiry re-ran the
+  compaction, which found nothing left, and the report said **0 files
+  rewritten instead of 6**.
+- Changed from the plan's "per table" to **per operation**: retrying a
+  whole table would repeat the compaction after an expiry blip and hide
+  its count the same way. Each operation commits atomically, so retrying
+  one alone is safe.
+- A table that still fails gets `error` in the report, skips its orphan
+  removal, and the other tables go on; the job exits 1 naming it. Each
+  table counts its `retries`. Two tests; full suite 152 passed, 7 skipped;
+  CI green.
+- Method: a failing test that only raises `TypeError` (new argument)
+  proves the API changed, not the bug; the bug was reproduced with the
+  old job's exact call shape in a throwaway test.
+
+### Check answers (Souhail)
+
+1. Compaction retry: right (new files, then one atomic commit; before it
+   the table is unchanged, after it the retry finds less). Found a real
+   gap: a commit that landed with its response lost under-counts the
+   rewrites (the retry count shows the blip). Added: Iceberg deletes its
+   own new files on a known-failed commit; files are left only when the
+   process dies or the state is unknown (`CommitStateUnknownException`,
+   kept on purpose, since deleting could corrupt a commit that landed);
+   orphan removal (3-day cutoff) clears them.
+2. AccessDenied: right (not transient; retries are for blips). Exit 1:
+   right (a silently skipped table degrades unseen); the red task reaches
+   a person through Alertmanager and SNS (ADR 020).
+
+### Where we stopped (2026-10-17, 02:30 UTC) — LATEST, start here
+
+- Steps 0 (except the daytime link baseline) and 1 done.
+- **Next: step 2** (DNS blips: find the throwing layer, then SDK retries,
+  drill with the worker's network cut). Needs the stack and AWS in
+  daytime, with the link baseline from step 0 first.
