@@ -16,12 +16,25 @@
   "panels": [
     {
       "id": 1,
+      "type": "row",
+      "title": "Capture and bronze",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
       "type": "stat",
       "title": "Source \u2192 bronze: time since the last bronze batch",
       "description": "Seconds since the bronze stream last finished a micro-batch (or found nothing new). 600 s = StreamStalled alert.",
       "gridPos": {
         "x": 0,
-        "y": 0,
+        "y": 1,
         "w": 6,
         "h": 4
       },
@@ -67,13 +80,13 @@
       }
     },
     {
-      "id": 2,
+      "id": 3,
       "type": "stat",
       "title": "Capture lag (Debezium, worst connector)",
       "description": "Source commit -> Debezium, the slowest of the PostgreSQL and MongoDB connectors.",
       "gridPos": {
         "x": 6,
-        "y": 0,
+        "y": 1,
         "w": 6,
         "h": 4
       },
@@ -119,13 +132,13 @@
       }
     },
     {
-      "id": 3,
+      "id": 4,
       "type": "stat",
       "title": "Replication slot: WAL retained",
-      "description": "WAL PostgreSQL keeps for Debezium. Alert at 1 GiB; the slot is invalidated at 10 GiB (max_slot_wal_keep_size).",
+      "description": "WAL PostgreSQL keeps for Debezium. Alert at 1 GiB; the slot is invalidated at 10 GiB (max_slot_wal_keep_size). Short peaks follow checkpoints (full-page writes).",
       "gridPos": {
         "x": 12,
-        "y": 0,
+        "y": 1,
         "w": 6,
         "h": 4
       },
@@ -171,13 +184,13 @@
       }
     },
     {
-      "id": 4,
+      "id": 5,
       "type": "stat",
       "title": "Alerts firing",
       "description": "Prometheus alerts firing now; each one is also an email (Alertmanager -> SNS).",
       "gridPos": {
         "x": 18,
-        "y": 0,
+        "y": 1,
         "w": 6,
         "h": 4
       },
@@ -218,13 +231,13 @@
       }
     },
     {
-      "id": 5,
+      "id": 6,
       "type": "timeseries",
       "title": "Change events captured per second",
       "description": "Records Debezium wrote to Kafka, per connector.",
       "gridPos": {
         "x": 0,
-        "y": 4,
+        "y": 5,
         "w": 12,
         "h": 8
       },
@@ -251,13 +264,13 @@
       }
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "timeseries",
       "title": "Bronze micro-batch duration (60 s trigger)",
-      "description": "Batches longer than the trigger run back to back and the lag grows (BronzeBatchesOverTrigger). Load test: docs/results.md.",
+      "description": "Batches longer than the trigger run back to back and the lag grows (BronzeBatchesOverTrigger). Load test: ~36 s fixed + 0.18 ms per record (docs/results.md).",
       "gridPos": {
         "x": 12,
-        "y": 4,
+        "y": 5,
         "w": 12,
         "h": 8
       },
@@ -319,13 +332,13 @@
       }
     },
     {
-      "id": 7,
+      "id": 8,
       "type": "timeseries",
       "title": "Bronze: records per batch",
       "description": "Records read by each bronze micro-batch, all 7 topics.",
       "gridPos": {
         "x": 0,
-        "y": 12,
+        "y": 13,
         "w": 12,
         "h": 8
       },
@@ -352,13 +365,13 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "timeseries",
       "title": "Replication slot WAL retained",
       "description": "Grows when Debezium stops reading (slot drill, docs/results.md).",
       "gridPos": {
         "x": 12,
-        "y": 12,
+        "y": 13,
         "w": 12,
         "h": 8
       },
@@ -385,13 +398,13 @@
       }
     },
     {
-      "id": 9,
+      "id": 10,
       "type": "timeseries",
       "title": "MongoDB oplog window",
       "description": "How long the MongoDB connector can be down before losing its resume point. Alert under 24 h.",
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 21,
         "w": 12,
         "h": 8
       },
@@ -418,13 +431,13 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "timeseries",
       "title": "Features stream batch duration (10 s trigger)",
       "description": "The Redis features writer (serving profile).",
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 21,
         "w": 12,
         "h": 8
       },
@@ -451,13 +464,621 @@
       }
     },
     {
-      "id": 11,
+      "id": 12,
+      "type": "row",
+      "title": "Orchestration (Airflow)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Gold age (O2: under 1 hour)",
+      "description": "Since the start of the last successful transform run: a run reads bronze up to its start, so gold holds changes up to then.",
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT EXTRACT(EPOCH FROM now() - max(start_date)) AS gold_age FROM dag_run WHERE dag_id = 'transform' AND state = 'success'",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1800
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Tasks running now",
+      "description": "All DAGs. The lake pool lets one Spark job write silver and gold at a time (ADR 017).",
+      "gridPos": {
+        "x": 6,
+        "y": 30,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT count(*) AS running FROM task_instance WHERE state = 'running'",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Failed tasks, last 24 h",
+      "description": "Each final failure is also an email (AirflowTaskFailed, ADR 020).",
+      "gridPos": {
+        "x": 12,
+        "y": 30,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT count(*) AS failed FROM task_instance WHERE state = 'failed' AND end_date > now() - interval '24 hours'",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Tasks retried, last 24 h",
+      "description": "Tasks that needed an Airflow retry. Network blips should be absorbed inside the jobs (with_retries, ~6.6 min): a retry here means a longer outage or a real error.",
+      "gridPos": {
+        "x": 18,
+        "y": 30,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT count(*) AS retried FROM task_instance WHERE try_number > 1 AND start_date > now() - interval '24 hours'",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 17,
+      "type": "table",
+      "title": "Running now",
+      "description": "Each running task, its try and how long it has run. Silver's catch-up after two days of downtime: ~30-40 min.",
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT dag_id AS dag, task_id AS task, try_number AS try, start_date AS started, round((EXTRACT(EPOCH FROM now() - start_date) / 60)::numeric, 1) AS running_min FROM task_instance WHERE state = 'running' ORDER BY start_date",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "type": "table",
+      "title": "Last run of each DAG",
+      "description": "transform (every 30 min), maintenance and graph (daily), quality_report (daily), gdpr_erasure and backfill (on demand).",
+      "gridPos": {
+        "x": 12,
+        "y": 34,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT DISTINCT ON (dag_id) dag_id AS dag, run_type AS type, state, start_date AS started, end_date AS ended, round((EXTRACT(EPOCH FROM coalesce(end_date, now()) - start_date) / 60)::numeric, 1) AS minutes FROM dag_run WHERE start_date IS NOT NULL ORDER BY dag_id, start_date DESC",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "transform: duration of each task (minutes)",
+      "description": "silver, gold_dims, gold_facts, gold_marts, quality. Normal run: ~6-7 min in all (P4).",
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT end_date AS time, task_id AS metric, duration / 60 AS value FROM task_instance WHERE dag_id = 'transform' AND state = 'success' AND $__timeFilter(end_date) ORDER BY 1",
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 6
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "transform: run duration (minutes)",
+      "description": "From start to end, retries included. O2 holds while schedule (30 min) + run stays under an hour.",
+      "gridPos": {
+        "x": 12,
+        "y": 41,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "airflow"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "airflow"
+          },
+          "rawSql": "SELECT end_date AS time, EXTRACT(EPOCH FROM end_date - start_date) / 60 AS run FROM dag_run WHERE dag_id = 'transform' AND state IN ('success', 'failed') AND $__timeFilter(end_date) ORDER BY 1",
+          "format": "time_series",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 6
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 21,
+      "type": "row",
+      "title": "Sources and Connect internals",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Connector tasks",
+      "description": "Each connector task's state from Connect's JMX metrics (ConnectorTaskFailed alerts on failed).",
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "kafka_connect_task_status == 1",
+          "legendFormat": "{{connector}}: {{status}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "textMode": "name",
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Connect record errors, last 24 h",
+      "description": "Records Connect could not convert or write.",
+      "gridPos": {
+        "x": 6,
+        "y": 50,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(kafka_connect_task_error_metrics_total_record_errors[24h])) or vector(0)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "PostgreSQL database size",
+      "description": "The source database (the generator only adds rows).",
+      "gridPos": {
+        "x": 12,
+        "y": 50,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "pg_database_size_bytes{datname=\"thelook\"}",
+          "legendFormat": "",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 25,
+      "type": "stat",
+      "title": "Debezium queue: free capacity (min)",
+      "description": "Events Debezium can still buffer before Kafka (8192 = empty). Near 0: Kafka or the producer is the bottleneck.",
+      "gridPos": {
+        "x": 18,
+        "y": 50,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "min(debezium_streaming_queueremainingcapacity)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "green",
+                "value": 4000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "PostgreSQL rows written per second, by table",
+      "description": "The source workload: inserts, updates and deletes.",
+      "gridPos": {
+        "x": 0,
+        "y": 54,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (relname) (rate(pg_stat_user_tables_n_tup_ins[2m]) + rate(pg_stat_user_tables_n_tup_upd[2m]) + rate(pg_stat_user_tables_n_tup_del[2m]))",
+          "legendFormat": "{{relname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "PostgreSQL rows read by sequential scans, by table",
+      "description": "Rows read by full table scans. P9's load test found order_items scanned whole for each order update (no index on order_id): 57 billion rows. Should stay near 0.",
+      "gridPos": {
+        "x": 12,
+        "y": 54,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (relname) (rate(pg_stat_user_tables_seq_tup_read[5m]))",
+          "legendFormat": "{{relname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 28,
+      "type": "row",
+      "title": "Alerts",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 62,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 29,
       "type": "table",
       "title": "Alerts firing now",
       "description": "Name, labels and severity of each firing alert.",
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 63,
         "w": 24,
         "h": 6
       },

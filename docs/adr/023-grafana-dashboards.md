@@ -69,6 +69,30 @@ correctness, cost), since the business data is synthetic.
   fail every `docker compose` command until `.env` has them); the container
   refuses to start without them instead.
 
+## Amendment (2026-10-17): orchestration and source panels
+
+Asked by Souhail during the silver catch-up ("a section where I can
+monitor this"). The pipeline-health dashboard gets rows: *Capture and
+bronze* (as before), *Orchestration (Airflow)*, *Sources and Connect
+internals*, *Alerts*.
+
+- **Airflow's own metadata database** as a third data source (Grafana's
+  bundled PostgreSQL plugin), not StatsD: it answers "what runs now, which
+  try, for how long", needs no new container, and its schema is pinned
+  with Airflow 3.3.2. Role `grafana_reader`, created and reset at each
+  start by a one-shot service (`airflow-reader.sql`): **column-level
+  SELECT** on `dag`, `dag_run`, `task_instance`, `slot_pool`, never
+  `dag_run.conf` (it holds the erasure requests' user ids) nor hostnames,
+  PIDs or executor settings; read-only by default and a 10 s statement
+  timeout. Tested: `conf` and `hostname` refused, an UPDATE refused.
+- Orchestration panels: gold age (O2), tasks running, failures and retries
+  over 24 h, running tasks with their try and duration, the last run of
+  each DAG, task and run durations of transform.
+- Source panels from metrics already collected: connector task states,
+  Connect record errors, Debezium's free queue capacity, PostgreSQL
+  writes and sequential-scan reads per table (the missing index found by
+  the load test shows there), database size.
+
 ## References
 
 - Grafana, Provision Grafana: grafana.com/docs/grafana/latest/administration/provisioning

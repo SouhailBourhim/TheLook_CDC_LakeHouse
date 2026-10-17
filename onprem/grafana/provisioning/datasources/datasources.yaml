@@ -28,3 +28,19 @@ datasources:
     secureJsonData:
       accessKey: $GRAFANA_AWS_ACCESS_KEY_ID
       secretKey: $GRAFANA_AWS_SECRET_ACCESS_KEY
+
+  # Airflow's metadata database, read-only role grafana_reader (column-level
+  # grants, never dag_run.conf: onprem/grafana/airflow-reader.sql). Only
+  # reachable while the airflow profile is up.
+  - name: Airflow
+    uid: airflow
+    type: grafana-postgresql-datasource
+    editable: false
+    url: airflow-db:5432
+    user: grafana_reader
+    jsonData:
+      database: airflow
+      sslmode: disable
+      postgresVersion: 1700
+    secureJsonData:
+      password: $GRAFANA_AIRFLOW_DB_PASSWORD

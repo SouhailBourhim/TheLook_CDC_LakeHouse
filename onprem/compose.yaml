@@ -479,6 +479,26 @@ services:
       - -c
       - airflow db migrate && airflow pools set lake 1 "Spark jobs writing silver and gold, one at a time (ADR 017)"
 
+  # Grafana's read-only role on Airflow's metadata (onprem/grafana/
+  # airflow-reader.sql): created or reset at each start, once the tables
+  # exist. With the pinned Postgres image, for its psql.
+  airflow-grafana-reader:
+    image: postgres:17.11-trixie@sha256:d74eeac9a635390a49bc21bd49fccd973de707e2a53a76ac49b552b8712ec46f
+    profiles: [airflow]
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      PGPASSWORD: ${AIRFLOW_DB_PASSWORD:?set AIRFLOW_DB_PASSWORD in onprem/.env}
+      READER_PASSWORD: ${GRAFANA_AIRFLOW_DB_PASSWORD:-}
+    volumes:
+      - ./grafana/airflow-reader.sql:/airflow-reader.sql:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        test -n "$$READER_PASSWORD" || { echo "set GRAFANA_AIRFLOW_DB_PASSWORD in onprem/.env"; exit 1; };
+        exec psql -h airflow-db -U airflow -d airflow -q -v pw="$$READER_PASSWORD" -f /airflow-reader.sql
+
   airflow-apiserver:
     image: thelook-airflow:local
     profiles: [airflow]
@@ -869,6 +889,10 @@ services:
       # only. Read by provisioning/datasources/datasources.yaml.
       GRAFANA_AWS_ACCESS_KEY_ID: ${GRAFANA_AWS_ACCESS_KEY_ID:-}
       GRAFANA_AWS_SECRET_ACCESS_KEY: ${GRAFANA_AWS_SECRET_ACCESS_KEY:-}
+      # The grafana_reader role on Airflow's metadata database (orchestration
+      # panels; airflow-reader.sql). Optional: those panels need the airflow
+      # profile anyway.
+      GRAFANA_AIRFLOW_DB_PASSWORD: ${GRAFANA_AIRFLOW_DB_PASSWORD:-}
     # The variables above are optional for Compose (":?" would fail every
     # `docker compose` command, any profile, until .env has them): the
     # container refuses to start without them instead.

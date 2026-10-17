@@ -792,6 +792,10 @@ Rotate and revoke as in "Spark AWS credentials" (user `thelook-grafana`).
 - **The container exits with "set ... in onprem/.env"**: one of the three
   variables is empty (Compose does not require them, so other profiles
   start without them; the container checks).
+- **Orchestration panels say "No data" or a connection error**: the
+  `airflow` profile is down (Grafana reads Airflow's own database), or
+  `GRAFANA_AIRFLOW_DB_PASSWORD` changed after the role was created: `make
+  up` reruns `airflow-grafana-reader`, which resets the role's password.
 - **Pipeline panels say "No data"**: the `monitoring` profile is not up
   (Grafana reads its Prometheus), or the stream profile is stopped (the
   bronze panels come from the stream's own metrics).
