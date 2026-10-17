@@ -1,55 +1,60 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="150" viewBox="0 0 1000 150" role="img" aria-label="Roadmap: P1 to P8 done, P9 hardening next, P10 optional" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
-<title>Roadmap: P1 to P8 done, P9 hardening next, P10 optional</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="150" viewBox="0 0 1000 150" role="img" aria-label="Roadmap: P1, P2, P3, P4, P5, P6, P7, P8, P9, P9b done; P10 optional" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>Roadmap: P1, P2, P3, P4, P5, P6, P7, P8, P9, P9b done; P10 optional</title>
 <rect width="1000" height="150" rx="8" fill="#1a1a19"/>
-<line x1="64" y1="52" x2="839.1" y2="52" stroke="#3987e5" stroke-width="3"/>
-<line x1="839.1" y1="52" x2="936" y2="52" stroke="#383835" stroke-width="3" stroke-dasharray="6 6"/>
+<line x1="64" y1="52" x2="936.0" y2="52" stroke="#3987e5" stroke-width="3"/>
+<line x1="936.0" y1="52" x2="936" y2="52" stroke="#383835" stroke-width="3" stroke-dasharray="6 6"/>
 <circle cx="64.0" cy="52" r="15" fill="#3987e5"/>
 <path d="M58.0,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="64.0" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P1</text>
 <text x="64.0" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">CDC from</text>
 <text x="64.0" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">PostgreSQL</text>
-<circle cx="160.9" cy="52" r="15" fill="#3987e5"/>
-<path d="M154.9,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="160.9" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P2</text>
-<text x="160.9" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">MongoDB,</text>
-<text x="160.9" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Terraform, CI</text>
-<circle cx="257.8" cy="52" r="15" fill="#3987e5"/>
-<path d="M251.8,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="257.8" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P3</text>
-<text x="257.8" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">bronze</text>
-<text x="257.8" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">on AWS</text>
-<circle cx="354.7" cy="52" r="15" fill="#3987e5"/>
-<path d="M348.7,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="354.7" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P4</text>
-<text x="354.7" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">silver, gold,</text>
-<text x="354.7" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Airflow</text>
-<circle cx="451.6" cy="52" r="15" fill="#3987e5"/>
-<path d="M445.6,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="451.6" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P5</text>
-<text x="451.6" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Redis</text>
-<text x="451.6" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">features</text>
-<circle cx="548.4" cy="52" r="15" fill="#3987e5"/>
-<path d="M542.4,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="548.4" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P6</text>
-<text x="548.4" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Neo4j</text>
-<text x="548.4" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">graph</text>
-<circle cx="645.3" cy="52" r="15" fill="#3987e5"/>
-<path d="M639.3,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="645.3" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P7</text>
-<text x="645.3" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">contracts,</text>
-<text x="645.3" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">alerting</text>
-<circle cx="742.2" cy="52" r="15" fill="#3987e5"/>
-<path d="M736.2,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="742.2" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P8</text>
-<text x="742.2" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">erasure, backfill,</text>
-<text x="742.2" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">drills</text>
-<circle cx="839.1" cy="52" r="15" fill="#1a1a19" stroke="#3987e5" stroke-width="2.5"/>
-<text x="839.1" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P9</text>
-<text x="839.1" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">hardening,</text>
-<text x="839.1" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">load test</text>
-<circle cx="936.0" cy="52" r="15" fill="#1a1a19" stroke="#383835" stroke-width="2.5"/>
-<text x="936.0" y="20.0" fill="#898781" font-size="13" font-weight="700" text-anchor="middle">P10</text>
-<text x="936.0" y="90.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">optional:</text>
-<text x="936.0" y="105.0" fill="#898781" font-size="11" font-weight="400" text-anchor="middle">Kinesis, Flink</text>
-<text x="839.1" y="126.0" fill="#f0efec" font-size="11" font-weight="700" text-anchor="middle">next</text>
+<circle cx="151.2" cy="52" r="15" fill="#3987e5"/>
+<path d="M145.2,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="151.2" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P2</text>
+<text x="151.2" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">MongoDB,</text>
+<text x="151.2" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Terraform, CI</text>
+<circle cx="238.4" cy="52" r="15" fill="#3987e5"/>
+<path d="M232.4,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="238.4" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P3</text>
+<text x="238.4" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">bronze</text>
+<text x="238.4" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">on AWS</text>
+<circle cx="325.6" cy="52" r="15" fill="#3987e5"/>
+<path d="M319.6,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="325.6" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P4</text>
+<text x="325.6" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">silver, gold,</text>
+<text x="325.6" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Airflow</text>
+<circle cx="412.8" cy="52" r="15" fill="#3987e5"/>
+<path d="M406.8,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="412.8" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P5</text>
+<text x="412.8" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Redis</text>
+<text x="412.8" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">features</text>
+<circle cx="500.0" cy="52" r="15" fill="#3987e5"/>
+<path d="M494.0,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="500.0" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P6</text>
+<text x="500.0" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Neo4j</text>
+<text x="500.0" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">graph</text>
+<circle cx="587.2" cy="52" r="15" fill="#3987e5"/>
+<path d="M581.2,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="587.2" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P7</text>
+<text x="587.2" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">contracts,</text>
+<text x="587.2" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">alerting</text>
+<circle cx="674.4" cy="52" r="15" fill="#3987e5"/>
+<path d="M668.4,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="674.4" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P8</text>
+<text x="674.4" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">erasure, backfill,</text>
+<text x="674.4" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">drills</text>
+<circle cx="761.6" cy="52" r="15" fill="#3987e5"/>
+<path d="M755.6,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="761.6" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P9</text>
+<text x="761.6" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">hardening,</text>
+<text x="761.6" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">load test</text>
+<circle cx="848.8" cy="52" r="15" fill="#3987e5"/>
+<path d="M842.8,52 l4,4 l8,-9" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="848.8" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P9b</text>
+<text x="848.8" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Grafana</text>
+<text x="848.8" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">dashboards</text>
+<circle cx="936.0" cy="52" r="15" fill="#1a1a19" stroke="#3987e5" stroke-width="2.5"/>
+<text x="936.0" y="20.0" fill="#f0efec" font-size="13" font-weight="700" text-anchor="middle">P10</text>
+<text x="936.0" y="90.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">optional:</text>
+<text x="936.0" y="105.0" fill="#c3c2b7" font-size="11" font-weight="400" text-anchor="middle">Kinesis, Flink</text>
 </svg>

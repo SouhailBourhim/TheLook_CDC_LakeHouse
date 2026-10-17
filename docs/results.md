@@ -1235,6 +1235,92 @@ maintenance since 10-15):
   old versions masked by merge-on-read delete files (no maintenance since
   10-15); every read of the table still opens them.
 
+## P9: scan cost — after compaction and day ordering (steps 9-11), 2026-10-17
+
+Maintenance had been paused since 10-15 (the stack was down, then paused
+on purpose for the "before" measurement). Order: the first maintenance in
+two days (17:27-17:48, silver 606 s, gold 652 s, `retries: 0` on every
+table), the Athena benchmark, the day ordering (`jobs/sort_gold.py`,
+2 min 48 s), the benchmark again. The data grew in between (the load test
+added ~560 k orders on 10-17, a third of fct_orders): compare per row, not
+in absolute bytes.
+
+**Storage, fct_orders:**
+
+| | Before (03:21) | After compaction (17:48) | After day ordering (18:00) |
+|---|---|---|---|
+| live rows | 1.08 M | 1.70 M | 1.72 M |
+| rows stored in data files | 2.70 M (60 % dead versions) | 1.70 M | 1.72 M |
+| data files | 31 | 1 | 3 |
+| size | 159 MB | 106 MB | 98 MB |
+| bytes per live row | ~147 | ~62 | ~57 |
+
+**Transform run time (task seconds), the visible cost of merge-on-read
+without compaction:** each run adds delete files that every later read
+must apply.
+
+| Task | 08:00 run | 16:00 run (2 days of delete files) | 17:00 run (after compaction) |
+|---|---|---|---|
+| silver | 184 | 553 | **148** |
+| gold_dims | 137 | 119 | 96 |
+| gold_facts | 325 | 762 | **119** |
+| gold_marts | 161 | 168 | 66 |
+| quality | 89 | ~85 | 82 |
+| total | 896 | ~1,690 | **511** |
+
+Without compaction a run outgrew the 30-minute schedule (no idle gap left:
+the planned "before" S3-bytes measurement could not get an idle baseline,
+and pausing the DAG mid-queue stalled a run; dropped, the durations above
+stand for it).
+
+**Athena (bytes scanned):**
+
+| Query | Before | After compaction | After day ordering |
+|---|---|---|---|
+| q1 last 7 days | 3,004,661 | 3,746,022 | **2,181,264** |
+| q2 last month | 15,853,498 | 18,319,240 | 22,398,694 |
+| q3 one day | 20,143 | 4,221,552 | **1,356,351** |
+| q4 mart, 30 days | 1,812 | 1,915 | 1,880 |
+| q5 all time | 14,696,053 | 8,523,507 | 9,891,099 |
+
+- **Compaction removed the dead rows** (q5, a full scan of two columns:
+  -42 % despite +60 % data) **but bin-packed every day into one file**: q3
+  lost the per-file date pruning it had for free (each transform run had
+  written its own files, so files were grouped by day).
+- **Day ordering brought it back without partitioning:** a sort order on
+  `order_date_key`, 32 MB files, 8 MB row groups; compaction now uses the
+  sort strategy, so it keeps the order. Date-filtered queries -42 % (q1)
+  and -68 % (q3) against the compacted layout; full scans +16-22 % (smaller
+  row groups compress less). The right trade for date-filtered dashboards.
+- **In dollars, nothing at this volume:** Athena bills at least 10 MB per
+  query, and every query but q2 is under it. The design matters at scale;
+  here the cost that grows is the laptop's S3 egress (below).
+
+**S3 egress of one transform run** (`scripts/transform_bytes.py`, after
+compaction and day ordering; idle baseline 18:23-18:27, the run
+18:27-18:36, every task on its first try):
+
+| Container | Received | Idle baseline | Net |
+|---|---|---|---|
+| airflow-scheduler (Spark drivers) | 45 MB | 0.8 MB/min | 37 MB |
+| spark-worker (executors; bronze's share removed by the baseline) | 725 MB | 4.2 MB/min | 685 MB |
+| **run total** | | | **723 MB in 9.5 min** |
+
+- **Incremental vs full reload (computed, not run):** rebuilding silver
+  from all of bronze (1,885 MB today) and gold from all of silver
+  (1,726 MB) would download ~3.6 GB per run; the incremental run downloads
+  0.72 GB: **-80 %**, every 30 minutes. Writes are uploads (free).
+- **It grows with the tables, not only with the changes:** P4 measured
+  290-340 MB per run with about 2.5x less data. The fixed part is the
+  MERGE scanning the target's keys and dim_user rebuilt from all of
+  bronze's user history (ADR 015). At this size the full stack downloads
+  ~1.6 GB per hour up (transform ~1.45, stream ~0.2): the 100 GB free
+  allowance covers ~60 hours a month, then $0.09/GB. The P4 rule holds and
+  matters more: the `stream` and `airflow` profiles run while working, not
+  around the clock. Levers if it had to: an incremental dim_user (step 10,
+  not built: the run measured here is under the 30-minute schedule) and
+  narrower MERGE key scans (the key range of the batch).
+
 ## P9b: Grafana dashboards — 2026-10-17
 
 Grafana 13.2.3 with the Athena plugin 3.3.6 (`bi` profile, ADR 023),

@@ -602,9 +602,10 @@ ROADMAP = [
     ("P3", "bronze", "on AWS"), ("P4", "silver, gold,", "Airflow"),
     ("P5", "Redis", "features"), ("P6", "Neo4j", "graph"),
     ("P7", "contracts,", "alerting"), ("P8", "erasure, backfill,", "drills"),
-    ("P9", "hardening,", "load test"), ("P10", "optional:", "Kinesis, Flink"),
+    ("P9", "hardening,", "load test"), ("P9b", "Grafana", "dashboards"),
+    ("P10", "optional:", "Kinesis, Flink"),
 ]  # fmt: skip
-DONE = 8  # phases built and accepted
+DONE = 10  # phases built and accepted
 
 
 def roadmap(t: dict) -> str:
@@ -640,8 +641,13 @@ def roadmap(t: dict) -> str:
         body.append(
             text(x, y + 53, l2, t["ink2"] if i <= DONE else t["muted"], 11, "middle")
         )
-    body.append(text(margin + step * DONE, y + 74, "next", t["ink"], 11, "middle", 700))
-    return svg(w, h, t, body, "Roadmap: P1 to P8 done, P9 hardening next, P10 optional")
+    if DONE < len(ROADMAP) and not ROADMAP[DONE][1].startswith("optional"):
+        body.append(
+            text(margin + step * DONE, y + 74, "next", t["ink"], 11, "middle", 700)
+        )
+    done = ", ".join(p for p, _, _ in ROADMAP[:DONE])
+    rest = ", ".join(p for p, _, _ in ROADMAP[DONE:])
+    return svg(w, h, t, body, f"Roadmap: {done} done; {rest} optional")
 
 
 # One change, commit to Athena (docs/architecture.md, section 3).
