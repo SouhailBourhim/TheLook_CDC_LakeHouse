@@ -3085,6 +3085,30 @@ the offline steps first.
   next running-xacts snapshot (~15 s): ~10 MB/s x ~12 s = ~120 MB. Fine:
   1/8 of the alert, ~1 % of the cap; inside the level's warm-up.
 
+### Silver catch-up, a natural outage, a quality failure traced (05:54-07:15)
+
+- Catch-up after two days: silver 36 min (3,869,028 event keys), on the
+  same Airflow attempt despite a **real DNS outage 06:13-06:21**: bronze's
+  batch 2419 waited 591 s inside Iceberg's and the SDK's retries (55
+  commit retries, then `with_retries` once) and committed, **no restart**
+  (under the old 75 s it would have crashed). StreamStalled went pending
+  at 10 min and cleared 12 s later.
+- The catch-up's **quality check failed**: one fct_orders row with a NULL
+  user_sk. Method (P8's): rule or crash? The log said a rule (`missing_count
+  was 1`). Then trace the row through every layer: the user exists in the
+  source, bronze, silver and dim_user; **the order has no items in the
+  source itself**, the only one of ~1.8 M, created at 03:05:10, the second
+  my ramp recreated the generator. Two bugs: the generator wrote an order
+  and its items as separate commits (two threads, one connection), and
+  fct_orders took user_sk from its items (NULL with none). Both fixed
+  (`ac110fa`), each with a test failing on the old code. The next run's
+  repair fixed the row; quality green.
+- Asked by Souhail, added to Grafana: an orchestration row from Airflow's
+  own database (column grants, never `dag_run.conf`), and source panels
+  from metrics already scraped. It showed at once the MongoDB oplog window
+  at 2.6 h: the 2 GiB oplog filled by the load test (alerts firing since
+  05:37); it recovers at the normal rate.
+
 ### Where we stopped (2026-10-17, 02:30 UTC) — LATEST, start here
 
 - Steps 0 (except the daytime link baseline) and 1 done.

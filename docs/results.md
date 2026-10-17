@@ -1160,6 +1160,27 @@ bronze runs back to back, with no slack left. The model predicted 60 s.
   rate ~5x for a minute and the slot retains up to ~127 MB (level 4,
   04:48). Inside the 3-minute warm-up, never in a window.
 
+## P9: network outages absorbed inside the jobs (step 2) — 2026-10-17
+
+**Diagnosis first** (46 Airflow task logs with `UnknownHostException`,
+P4-P8): every layer retried, but briefly. The AWS SDK made 5 attempts and
+Spark retried each task 4 times, all within ~10 s; `with_retries` added
+75 s: ~1.5 min in all, against host DNS outages of ~6 min (P8). Jobs
+failed and Airflow re-ran them whole (a silver run 33 min late,
+maintenance holding the lake pool 30 min). **Fix:** `with_retries` now
+waits 5, 10, 20, 40, 80, 120, 120 s (~6.6 min), in the one layer where
+every step is idempotent and commits atomically.
+
+| Outage | What happened | Result |
+|---|---|---|
+| **Natural**, 06:13-06:21 UTC (~8 min; DNS: `UnknownHostException` on the bucket) | bronze batch 2419 waited inside Iceberg's commit retries (55 attempts, 06:13-06:20), then `with_retries` once (06:21:31, 5 s), committed at 06:22:50: **591 s**, then 37-44 s again; silver's catch-up, running, kept going | bronze **0 restarts**; silver on the same Airflow attempt; StreamStalled pending at 10 min, cleared 12 s later (never fired) |
+| **Drill** `drills/aws_outage.py 180`: traffic to non-private addresses dropped from the Spark drivers' container (airflow-scheduler) and the worker, 07:29:58-07:32:59 | silver lost one Spark task to `Unable to execute HTTP request ... timed out` (07:33:10, DNS answers still cached: connections timed out instead), Spark retried it; silver 378 s (290 s in the run before) | **PASS**: silver, gold_dims, gold_facts, gold_marts, quality each succeeded on **try 1** |
+
+Before the fix, the same outage failed jobs at ~1.5 min and Airflow re-ran
+them 2-5 min later (transform: 2 retries 2 min apart, P4), and bronze
+crashed and was restarted by Docker. The stream alert keeps its meaning:
+an outage longer than ~11 minutes fires StreamStalled, and should.
+
 ## P9: scan cost — method and baseline (steps 7-8)
 
 **Question:** where does reading the lake cost money, how much did the
