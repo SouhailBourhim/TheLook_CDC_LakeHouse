@@ -41,9 +41,13 @@ Facts found in P9:
 
 - **Role `thelook-ci-drift`** (`infra/terraform/lake/ci.tf`), assumable
   only with a GitHub OIDC token whose `aud` is `sts.amazonaws.com` and
-  whose `sub` is `repo:SouhailBourhim/TheLook_CDC_LakeHouse:ref:refs/heads/main`
+  whose `sub` is
+  `repo:SouhailBourhim@184526894/TheLook_CDC_LakeHouse@1396083316:ref:refs/heads/main`
   (pushes and the schedule; pull requests, other branches and forks get a
-  different `sub`). Sessions last at most 1 hour.
+  different `sub`). Sessions last at most 1 hour. The repository uses
+  GitHub's immutable subject (owner and repository ids next to the names):
+  a repository created later under the same name has other ids and is
+  refused. Found by the first run, refused against the name-only form.
 - **Read-only, configuration only:** the state object; bucket settings on
   the three buckets' ARNs (object ARNs are different, so no lake data);
   IAM metadata (IAM never returns secrets); Glue databases and the Athena

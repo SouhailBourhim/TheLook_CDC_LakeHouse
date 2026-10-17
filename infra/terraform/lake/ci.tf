@@ -13,8 +13,13 @@ data "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
-  github_repository = "SouhailBourhim/TheLook_CDC_LakeHouse"
-  tfstate_bucket    = "thelook-tfstate-${data.aws_caller_identity.current.account_id}"
+  # GitHub's immutable subject: owner and repository with their numeric ids
+  # (gh api repos/<owner>/<repo>/actions/oidc/customization/sub). A name can
+  # be renamed away and taken by someone else; the ids cannot, so a token
+  # from a later repository with the same name is refused. The first drift
+  # run failed with AccessDenied against the name-only form.
+  github_subject = "repo:SouhailBourhim@184526894/TheLook_CDC_LakeHouse@1396083316"
+  tfstate_bucket = "thelook-tfstate-${data.aws_caller_identity.current.account_id}"
 }
 
 # Who may assume the role: a token GitHub issued for this repository's main
@@ -35,7 +40,7 @@ data "aws_iam_policy_document" "ci_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${local.github_repository}:ref:refs/heads/main"]
+      values   = ["${local.github_subject}:ref:refs/heads/main"]
     }
   }
 }
