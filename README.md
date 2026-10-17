@@ -35,7 +35,7 @@
 </p>
 
 <p align="center"><sub>
-P1 to P9b built, accepted and drilled; P10 (Kinesis, Flink) optional. A learning project: the
+Complete: P1 to P9b built, accepted and drilled. A learning project: the
 <a href="docs/cahier-des-charges.md">cahier des charges</a> is the specification, the
 <a href="docs/adr/">ADRs</a> hold the reasoning, <a href="docs/results.md">results</a> every measurement.
 </sub></p>
@@ -155,7 +155,7 @@ of every table, and leaves an audit that never holds the identifier.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/roadmap-dark.svg">
-  <img alt="Roadmap: P1 to P9b done; P10 optional" src="docs/images/roadmap-light.svg" width="100%">
+  <img alt="Roadmap: P1 to P9b done" src="docs/images/roadmap-light.svg" width="100%">
 </picture>
 
 ## What is built

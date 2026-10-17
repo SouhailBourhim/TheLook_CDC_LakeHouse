@@ -10,9 +10,9 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 2.5                                           |
+| Version      | 2.6                                           |
 | Date         | 17 October 2026                               |
-| Status       | P1 to P9b built; P10 optional                 |
+| Status       | Complete: P1 to P9b built and accepted        |
 
 ### Revision history
 
@@ -34,6 +34,7 @@ governed, cost-controlled analytics lakehouse
 | 2.3         | 11/10/2026 | Contracts, quality and alerting (ADR 020): Alertmanager is the single alert hub (Prometheus rules and Airflow failures and quality results), delivered by SNS email, replacing the planned CloudWatch alarms (NFR observability). O8 rewritten (option B): source-to-bronze lag below 2 minutes (p95) at 200 change events/s, measured in P9. FR6: provisional days in the revenue mart. FR7: Kafka topics guarded by Schema Registry, not by datacontract-cli's experimental Kafka test; a drift check compares each contract with the table's columns. datacontract-cli and mongodb_exporter pinned (5.3). |
 | 2.4         | 17/10/2026 | Dashboards (Souhail's decision, P9): new phase P9b, Grafana in a `bi` profile, with a pipeline-health dashboard on the existing Prometheus and a business dashboard on the gold marts through Athena; dashboards as code. The demo video's "dashboard" (section 10) is this one. Scope 3.1, architecture, versions, milestones and checkpoints updated; the stale "CloudWatch for AWS" monitoring line corrected (Alertmanager since 2.3). |
 | 2.5         | 17/10/2026 | Demo (Souhail's decision, P9 wrap-up): the demo video of section 10 is replaced by a screenshot walkthrough of the same story (`docs/demo.md`): a real order created and returned, its two versions in bronze, the Airflow run that carried it, the Grafana dashboards. |
+| 2.6         | 17/10/2026 | Scope (Souhail's decision, after P9): the optional P10 (Kinesis and Managed Flink) removed from scope and listed as out of scope; its milestone and budget rows removed. The project is complete at P9b. |
 
 ## 1. Context and problem
 
@@ -120,15 +121,16 @@ become the figures used on the CV.
 
 - Automated tests (pytest, chispa) and continuous integration.
 
-- Optional extension: AWS-managed streaming on Kinesis and Managed Flink
-  (phase P10).
-
 ### 3.2 Out of scope
 
 - Machine learning models (covered by a separate project). The
   recommendations are co-purchase counts, not a trained model.
 
 - A BI tool beyond basic dashboards.
+
+- AWS-managed streaming (Kinesis, Managed Flink): planned as the optional
+  P10, removed from scope in v2.6 (the self-hosted Kafka path covers the
+  streaming objectives; ADR 001).
 
 - Multi-region deployment and disaster recovery.
 
@@ -744,11 +746,10 @@ and a "how to demo" note.
 | P8             | GDPR erasure and backfill, both as Airflow DAGs; failure drills (FR14)                                                                                                                            | Erasure verified in every layer and store, including clickstream, Redis and time travel; backfill leaves no duplicates; every drill passes reconciliation |
 | P9             | Hardening: optimisation, load test, CI/CD completed (terraform validate, OIDC), ADRs, documentation; optional OpenLineage lineage                                                                 | Scan cost reduction and throughput limit measured; README, ADRs and runbook complete                                                     |
 | P9b            | Dashboards: Grafana (`bi` profile) with a pipeline-health dashboard (Prometheus: slot WAL, capture lag, bronze batches and lag, alerts) and a business dashboard (gold marts through Athena, read-only analyst identity); provisioned as code                     | Both dashboards provisioned from the repository on a fresh start; a change made in the source is visible on them; Athena reads per refresh measured |
-| P10 (optional) | AWS-managed streaming: clickstream events forwarded to a Kinesis stream and processed by Managed Flink (sessions, live funnel, late events), for the AWS Data Engineer exam                      | Live conversion funnel updated in \< 1 minute; late events handled with watermarks                                                       |
 
 **Rule:** finish P1 to P4 before starting anything else. They already form
 a complete, presentable project (the must-have for job applications). P5
-and P6 add the serving layer; P10 only makes sense once P9 is done.
+and P6 add the serving layer.
 
 ## 10. Deliverables
 
@@ -817,7 +818,6 @@ September 2026. Real costs must be checked in AWS Cost Explorer.
 | Athena                                | \$5 per TB scanned, with a per-query scan limit                    | Under \$1                                                        |
 | Airflow, Spark, MongoDB, Redis, Neo4j | Self-hosted in Docker on the local machine                         | \$0                                                              |
 | CloudWatch                            | A few alarms and metrics                                           | Near zero                                                        |
-| Kinesis + Managed Flink (P10 only)    | 1 shard (\$0.015/hour) + 2 KPUs at \$0.11/hour, only while running | About \$0.24 per hour of use; must be stopped after each session |
 | MSK (not used)                        | Smallest provisioned cluster, for reference                        | Under \$2.50/day; MSK Serverless about \$0.75/hour               |
 | Development                           | On-prem stack in Docker; unit tests on in-memory DataFrames         | \$0                                                              |
 | GitHub Actions                        | Public repository                                                  | \$0                                                              |

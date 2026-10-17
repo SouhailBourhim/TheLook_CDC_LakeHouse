@@ -603,7 +603,6 @@ ROADMAP = [
     ("P5", "Redis", "features"), ("P6", "Neo4j", "graph"),
     ("P7", "contracts,", "alerting"), ("P8", "erasure, backfill,", "drills"),
     ("P9", "hardening,", "load test"), ("P9b", "Grafana", "dashboards"),
-    ("P10", "optional:", "Kinesis, Flink"),
 ]  # fmt: skip
 DONE = 10  # phases built and accepted
 
@@ -614,11 +613,15 @@ def roadmap(t: dict) -> str:
     step = (w - 2 * margin) / (len(ROADMAP) - 1)
     y = 52
     blue = t["series"][0]
+    last = min(DONE, len(ROADMAP) - 1)  # the solid line ends at the last phase done
     body = [
-        f'<line x1="{margin}" y1="{y}" x2="{margin + step * DONE:.1f}" y2="{y}" stroke="{blue}" stroke-width="3"/>',
-        f'<line x1="{margin + step * DONE:.1f}" y1="{y}" x2="{w - margin}" y2="{y}" stroke="{t["axis"]}" '
-        'stroke-width="3" stroke-dasharray="6 6"/>',
+        f'<line x1="{margin}" y1="{y}" x2="{margin + step * last:.1f}" y2="{y}" stroke="{blue}" stroke-width="3"/>',
     ]
+    if DONE < len(ROADMAP):  # phases left: a dashed line to the end
+        body.append(
+            f'<line x1="{margin + step * DONE:.1f}" y1="{y}" x2="{w - margin}" y2="{y}" stroke="{t["axis"]}" '
+            'stroke-width="3" stroke-dasharray="6 6"/>'
+        )
     for i, (phase, l1, l2) in enumerate(ROADMAP):
         x = margin + step * i
         if i < DONE:  # done: filled, a check mark
@@ -647,7 +650,9 @@ def roadmap(t: dict) -> str:
         )
     done = ", ".join(p for p, _, _ in ROADMAP[:DONE])
     rest = ", ".join(p for p, _, _ in ROADMAP[DONE:])
-    return svg(w, h, t, body, f"Roadmap: {done} done; {rest} optional")
+    return svg(
+        w, h, t, body, f"Roadmap: {done} done" + (f"; {rest} next" if rest else "")
+    )
 
 
 # One change, commit to Athena (docs/architecture.md, section 3).

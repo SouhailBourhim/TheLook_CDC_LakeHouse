@@ -578,14 +578,11 @@ flowchart LR
   P6["P6 Neo4j recommendations"]:::done
   P7["P7 data contracts, quality,<br/>schema evolution"]:::done
   P8["P8 GDPR erasure, backfill,<br/>failure drills"]:::done
-  P9["P9 hardening, load test,<br/>CI/CD, docs"]:::active
-  P10["P10 optional: Kinesis,<br/>Managed Flink"]:::optional
-  P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> P10
+  P9["P9 hardening, load test,<br/>CI/CD, docs"]:::done
+  P9b["P9b Grafana dashboards"]:::done
+  P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> P9b
   classDef done fill:#d4edda,stroke:#2e7d32,color:#1b4d20
-  classDef active fill:#fff3cd,stroke:#b8860b,color:#5c4400
-  classDef planned fill:#ffffff,stroke:#888888,stroke-dasharray: 5 5,color:#333333
-  classDef optional fill:#ffffff,stroke:#bbbbbb,stroke-dasharray: 2 4,color:#777777
 ```
 
-Green: built and accepted. Yellow: next (P9). Dashed: planned. P1 to P4 form the core project; P5 and P6 add serving; P10
-only makes sense after P9 (spec section 9).
+Green: built and accepted. P1 to P4 form the core project; P5 and P6 add serving; P7 to P9b
+govern, prove and show it. The optional P10 (Kinesis, Managed Flink) was removed from scope (spec v2.6).

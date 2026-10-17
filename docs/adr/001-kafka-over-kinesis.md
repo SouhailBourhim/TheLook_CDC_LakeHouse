@@ -52,7 +52,9 @@ and the Apache Iceberg sink, and Schema Registry with Avro.
 - ❌ Personal data stays in Kafka until topic retention expires, which puts an
   upper bound on the erasure delay (see the open issue on O5 vs retention).
 - ❌ No hands-on practice with AWS-managed streaming. Kinesis is kept for the
-  optional P7 (clickstream with Managed Flink).
+  optional P7 (clickstream with Managed Flink). *(Note, 2026-10-17: that
+  phase became P10 and was removed from scope in spec v2.6; the project
+  has no Kinesis part.)*
 - ℹ️ Confluent Schema Registry uses the Confluent Community License
   (source-available). That is acceptable here; Apicurio Registry (Apache 2.0)
   is the open-source alternative.

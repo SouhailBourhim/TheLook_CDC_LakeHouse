@@ -3185,7 +3185,8 @@ the job layer guaranteeing the total span.
   screenshots instead** (spec v2.5): `docs/demo.md` walks one real order
   (18:39, `de66aba8`) through bronze (both versions, queried), the Airflow
   run that carried it, and the Grafana dashboards. O6 measured: $0.99 for
-  October 1-17. Left: P10 only if wanted (optional); O7 from a fresh
-  clone never shown (works in daily use).
+  October 1-17. **Decision (Souhail): P10 (Kinesis, Managed Flink)
+  removed from scope** (spec v2.6; out of scope in 3.2; ADR 001 noted).
+  The project is complete at P9b. Left: O7 from a fresh clone (next).
 - Open: step 13's two check questions (not answered yet); the MongoDB
   oplog window recovering from the load test (alerts until ~24 h).
