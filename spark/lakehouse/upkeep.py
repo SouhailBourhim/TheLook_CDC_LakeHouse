@@ -101,10 +101,23 @@ def compact(spark: SparkSession, table: str, where: str | None = None) -> int:
     sequence number, not by file), so they are removed too."""
     catalog = table.split(".", 1)[0]
     condition = "" if where is None else f', where => "{where}"'
+    # A table with a sort order (gold facts by day, P9) is compacted with the
+    # sort strategy, so the rewrite keeps rows clustered by that key: plain
+    # bin-packing merged a fact table's day-grouped files into one file
+    # spanning every day, and one-day queries lost their pruning.
+    strategy = ", strategy => 'sort'" if sorted_table(spark, table) else ""
     return spark.sql(
-        f"CALL {catalog}.system.rewrite_data_files(table => '{table}'{condition}, "
-        "options => map('remove-dangling-deletes', 'true'))"
+        f"CALL {catalog}.system.rewrite_data_files(table => '{table}'{condition}"
+        f"{strategy}, options => map('remove-dangling-deletes', 'true'))"
     ).first()["rewritten_data_files_count"]
+
+
+def sorted_table(spark: SparkSession, table: str) -> bool:
+    """True if the table has a sort order (ALTER TABLE ... WRITE ORDERED BY)."""
+    iceberg = spark._jvm.org.apache.iceberg.spark.Spark3Util.loadIcebergTable(
+        spark._jsparkSession, table
+    )
+    return not iceberg.sortOrder().isUnsorted()
 
 
 def apply_deletes(spark: SparkSession, table: str) -> int:

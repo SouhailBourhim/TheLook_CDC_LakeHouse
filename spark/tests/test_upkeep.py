@@ -139,3 +139,42 @@ def test_a_table_that_keeps_failing_does_not_stop_the_others(spark, lake, monkey
     assert "orphans_deleted" not in report["users"]  # skipped after a failure
     assert report["orders"]["files_rewritten"] == 6
     assert "error" not in report["orders"]
+
+
+def test_a_sorted_table_is_compacted_in_its_sort_order(spark, lake):
+    # P9: bin-packing merged day-grouped files into one file spanning every
+    # day; with a sort order, compaction keeps each file on a narrow range.
+    _, silver = lake
+    table = f"{silver}.facts"
+    days = [20261001 + d for d in range(10)]
+    first = True
+    for day in reversed(days):  # files written in reverse order of days
+        df = spark.createDataFrame(
+            [(day, i) for i in range(200)], "day int, n int"
+        ).coalesce(1)
+        if first:
+            df.writeTo(table).using("iceberg").create()
+            first = False
+        else:
+            df.writeTo(table).append()
+    spark.sql(f"ALTER TABLE {table} WRITE ORDERED BY day")
+    # Tiny files, so the sorted rewrite produces several, each on its days.
+    spark.sql(
+        f"ALTER TABLE {table} SET TBLPROPERTIES ('write.target-file-size-bytes' = '2000')"
+    )
+    assert upkeep.sorted_table(spark, table)
+
+    upkeep.compact(spark, table)
+
+    ranges = sorted(
+        (r.lower_bounds[1], r.upper_bounds[1])
+        for r in spark.sql(
+            f"SELECT lower_bounds, upper_bounds FROM {table}.data_files"
+        ).collect()
+    )
+    assert len(ranges) > 1
+    # Sorted output: no file's range overlaps the next one's.
+    lows = [int.from_bytes(lo, "little") for lo, _ in ranges]
+    highs = [int.from_bytes(hi, "little") for _, hi in ranges]
+    assert all(highs[i] <= lows[i + 1] for i in range(len(ranges) - 1))
+    assert spark.table(table).count() == 2000

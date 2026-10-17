@@ -361,6 +361,31 @@ def fact_watermark(spark: SparkSession, table: str) -> datetime.datetime | None:
     )
 
 
+# Fact tables kept clustered by day (P9): sorted on the date key when written
+# and compacted, in files of ~32 MB with 8 MB Parquet row groups, so each file
+# and each row group covers a narrow range of days. A query on a few days
+# then skips the others through Iceberg's per-file statistics and Parquet's
+# per-row-group statistics, without partitioning 15 days of data.
+DAY_ORDER = {"fct_orders": "order_date_key", "fct_order_items": "order_date_key"}
+DAY_ORDER_PROPERTIES = {
+    "write.target-file-size-bytes": str(32 * 1024 * 1024),
+    "write.parquet.row-group-size-bytes": str(8 * 1024 * 1024),
+}
+
+
+def apply_day_order(spark: SparkSession, table: str) -> bool:
+    """Give a DAY_ORDER fact its sort order and file sizes; returns False for
+    other tables. Idempotent. Existing files keep their layout until a
+    compaction (jobs/sort_gold.py once, then the daily maintenance)."""
+    column = DAY_ORDER.get(table.rsplit(".", 1)[1])
+    if column is None:
+        return False
+    spark.sql(f"ALTER TABLE {table} WRITE ORDERED BY {column}")
+    props = ", ".join(f"'{k}' = '{v}'" for k, v in DAY_ORDER_PROPERTIES.items())
+    spark.sql(f"ALTER TABLE {table} SET TBLPROPERTIES ({props})")
+    return True
+
+
 def _ensure_table(spark: SparkSession, table: str, rows: DataFrame) -> None:
     """Create a fact or mart table with the rows' schema if it is missing:
     merge-on-read, since every write to it is a MERGE."""
@@ -375,6 +400,7 @@ def _ensure_table(spark: SparkSession, table: str, rows: DataFrame) -> None:
             .tableProperty("write.delete.mode", "merge-on-read")
             .create()
         )
+        apply_day_order(spark, table)
 
 
 def merge_facts(spark: SparkSession, table: str, rows: DataFrame, key: str) -> None:
