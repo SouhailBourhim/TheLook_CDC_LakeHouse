@@ -295,7 +295,11 @@ def order_facts(orders: DataFrame, item_facts: DataFrame) -> DataFrame:
     return orders.join(totals, orders["id"] == totals["order_id"], "left").select(
         F.col("id").alias("order_id"),
         "user_id",
-        "user_sk",
+        # An order without items has no user_sk from them: the unknown
+        # member, repaired from the order's own user_id and created_at at the
+        # next run (repair_unknown_users), as for items. NULL failed the
+        # contract (an order committed without its items, 2026-10-17).
+        F.coalesce("user_sk", F.lit(UNKNOWN_USER_SK)).alias("user_sk"),
         F.date_format("created_at", "yyyyMMdd").cast("int").alias("order_date_key"),
         "status",
         "num_of_items",

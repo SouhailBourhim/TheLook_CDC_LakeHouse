@@ -123,6 +123,20 @@ def test_order_amounts_follow_the_fr6_rules(spark):
     assert row.cost_amount == Decimal("4.00")  # kept items only (i1)
 
 
+def test_an_order_without_items_points_to_the_unknown_member(spark):
+    # Seen on 2026-10-17: the generator was stopped between an order's
+    # commit and its items' (separate commits), and fct_orders took user_sk
+    # from its items: NULL, which failed the contract. The unknown member
+    # is then repaired at the next run, as for items.
+    i, o, p, u = frames(spark, [item("i1", "o1")], [order("o1"), order("o2")])
+    rows = {
+        r.order_id: r for r in order_facts(o, order_item_facts(i, o, p, u)).collect()
+    }
+    assert rows["o2"].item_count == 0
+    assert rows["o2"].user_sk == -1
+    assert rows["o1"].user_sk != -1
+
+
 def test_sessions_flag_ghosts_and_sum_cart_values(spark):
     events = spark.createDataFrame(
         [
