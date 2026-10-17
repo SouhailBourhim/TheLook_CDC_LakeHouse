@@ -171,3 +171,44 @@ groups:
         annotations:
           summary: "mongodb_exporter cannot read MongoDB"
           description: "The oplog window is unwatched. Check the mongodb-exporter container and the exporter user (onprem/mongo/setup.js)."
+
+  # Structured Streaming drivers (P9), from their progress listener
+  # (spark/lakehouse/stream_metrics.py). These alerts need the driver to be
+  # scraped, so a profile stopped on purpose raises nothing; a crash is
+  # restarted by Docker (restart: on-failure), and repeated restarts alert.
+  - name: streams
+    rules:
+      # No batch finished and no idle trigger for 10 minutes while the
+      # driver answers: a batch is stuck (retries on a dead link, a lock).
+      # Bronze batches take ~30-90 s; an erasure may wait minutes for the
+      # upkeep thread, hence 10 minutes.
+      - alert: StreamStalled
+        expr: time() - thelook_stream_last_progress_timestamp_seconds > 600
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Stream {{ $labels.query }}: no progress for {{ $value | humanizeDuration }}"
+          description: "The driver is up but no micro-batch has finished. Read its log (Caused by: network or code). See the runbook, Streams."
+
+      # 3 restarts in 30 minutes: crashing in a loop (each restart resets the
+      # progress time, so StreamStalled would never fire).
+      - alert: StreamRestarting
+        expr: changes(thelook_stream_start_timestamp_seconds[30m]) >= 3
+        labels:
+          severity: critical
+        annotations:
+          summary: "Stream {{ $labels.query }} restarted {{ $value }} times in 30 minutes"
+          description: "A crash loop: read the driver's log for the first error after a start. See the runbook, Streams."
+
+      # Bronze batches longer than the 60 s trigger on average for 30
+      # minutes: batches run back to back and the lag grows towards O8's
+      # 2 minutes. A catch-up after downtime also does this, for a while.
+      - alert: BronzeBatchesOverTrigger
+        expr: avg_over_time(thelook_stream_batch_duration_seconds{query="bronze"}[15m]) > 60
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Bronze batches average {{ $value | humanizeDuration }}, over the 60 s trigger"
+          description: "Bronze is falling behind (or catching up). Check the link to AWS (scripts/link_probe.py) and the load. See the runbook, Streams."

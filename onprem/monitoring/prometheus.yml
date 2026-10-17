@@ -30,3 +30,15 @@ scrape_configs:
   - job_name: mongodb
     static_configs:
       - targets: ["mongodb-exporter:9216"]
+
+  # The streaming drivers' progress (spark/lakehouse/stream_metrics.py),
+  # served by a listener in each driver. Only up with the stream and serving
+  # profiles: while they are stopped (on purpose, to save S3 transfer) the
+  # scrape fails, so no alert is based on `up` for these jobs.
+  - job_name: bronze-stream
+    static_configs:
+      - targets: ["bronze-stream:9108"]
+
+  - job_name: features-stream
+    static_configs:
+      - targets: ["features-stream:9108"]

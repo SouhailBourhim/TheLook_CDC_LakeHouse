@@ -261,3 +261,65 @@ tests:
             exp_annotations:
               summary: "mongodb_exporter cannot read MongoDB"
               description: "The oplog window is unwatched. Check the mongodb-exporter container and the exporter user (onprem/mongo/setup.js)."
+
+  # Streams: a healthy bronze (progress every minute, 40 s batches, one
+  # start) raises nothing.
+  - interval: 1m
+    input_series:
+      - series: 'thelook_stream_last_progress_timestamp_seconds{query="bronze"}'
+        values: '0+60x60'
+      - series: 'thelook_stream_start_timestamp_seconds{query="bronze"}'
+        values: '0x60'
+      - series: 'thelook_stream_batch_duration_seconds{query="bronze"}'
+        values: '40x60'
+    alert_rule_test:
+      - {eval_time: 60m, alertname: StreamStalled, exp_alerts: []}
+      - {eval_time: 60m, alertname: StreamRestarting, exp_alerts: []}
+      - {eval_time: 60m, alertname: BronzeBatchesOverTrigger, exp_alerts: []}
+
+  # Stuck: progress stops at minute 5 (time 300 s). Over 600 s without
+  # progress from minute 15, firing after 1 more minute.
+  - interval: 1m
+    input_series:
+      - series: 'thelook_stream_last_progress_timestamp_seconds{query="bronze"}'
+        values: '0+60x5 300x30'
+    alert_rule_test:
+      - {eval_time: 15m, alertname: StreamStalled, exp_alerts: []}
+      - eval_time: 17m
+        alertname: StreamStalled
+        exp_alerts:
+          - exp_labels: {severity: critical, query: bronze}
+            exp_annotations:
+              summary: "Stream bronze: no progress for 12m 0s"
+              description: "The driver is up but no micro-batch has finished. Read its log (Caused by: network or code). See the runbook, Streams."
+
+  # Crash loop: a new start time every 5 minutes from minute 10.
+  - interval: 1m
+    input_series:
+      - series: 'thelook_stream_start_timestamp_seconds{query="features"}'
+        values: '0x9 600x4 900x4 1200x4 1500x10'
+    alert_rule_test:
+      - {eval_time: 14m, alertname: StreamRestarting, exp_alerts: []}
+      - eval_time: 21m
+        alertname: StreamRestarting
+        exp_alerts:
+          - exp_labels: {severity: critical, query: features}
+            exp_annotations:
+              summary: "Stream features restarted 3 times in 30 minutes"
+              description: "A crash loop: read the driver's log for the first error after a start. See the runbook, Streams."
+
+  # Bronze slower than its trigger: 90 s batches from minute 0. The 15 min
+  # average passes 60 s at once; firing after 15 more minutes.
+  - interval: 1m
+    input_series:
+      - series: 'thelook_stream_batch_duration_seconds{query="bronze"}'
+        values: '90x40'
+    alert_rule_test:
+      - {eval_time: 14m, alertname: BronzeBatchesOverTrigger, exp_alerts: []}
+      - eval_time: 16m
+        alertname: BronzeBatchesOverTrigger
+        exp_alerts:
+          - exp_labels: {severity: warning, query: bronze}
+            exp_annotations:
+              summary: "Bronze batches average 1m 30s, over the 60 s trigger"
+              description: "Bronze is falling behind (or catching up). Check the link to AWS (scripts/link_probe.py) and the load. See the runbook, Streams."

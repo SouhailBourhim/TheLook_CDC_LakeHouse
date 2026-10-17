@@ -49,6 +49,7 @@ from lakehouse.erasure import (
     parse_request,
 )
 from lakehouse.session import lake_session
+from lakehouse.stream_metrics import serve as serve_metrics
 from lakehouse.upkeep import compact
 
 logging.basicConfig(
@@ -67,6 +68,9 @@ spark = lake_session(
     "bronze-stream", cores_max=2, conf={"spark.scheduler.mode": "FAIR"}
 )
 registry = SchemaRegistry("http://schema-registry:8081")
+# Progress for Prometheus (monitoring profile): batch durations, time since
+# the last batch, restarts (lakehouse.stream_metrics).
+serve_metrics(spark, port=9108)
 
 
 # Bronze upkeep (ADR 017): at the first batch after a start, then hourly,

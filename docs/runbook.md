@@ -228,6 +228,36 @@ SELECT committed_at, summary['thelook.batch-id'], summary['added-records']
 FROM thelook_bronze."shop_orders$snapshots" ORDER BY committed_at DESC LIMIT 5
 ```
 
+### Streams: StreamStalled / StreamRestarting / BronzeBatchesOverTrigger
+
+Both streaming drivers (`bronze-stream`, `features-stream`) serve their
+progress on port 9108 (`spark/lakehouse/stream_metrics.py`), scraped by the
+`monitoring` profile. In Prometheus: `thelook_stream_batch_duration_seconds`,
+`time() - thelook_stream_last_progress_timestamp_seconds`,
+`changes(thelook_stream_start_timestamp_seconds[1h])`.
+
+- **StreamStalled** (no batch finished for 10 minutes, driver up): read the
+  log's last lines. `transient error (attempt n/5)` lines = the link to AWS
+  (`python3 scripts/link_probe.py`, check DNS first); it recovers by itself
+  or the batch fails and Docker restarts the stream. An erasure waiting for
+  the upkeep thread logs nothing for minutes: check for a `maintenance:`
+  line before restarting. A stack dump shows where it waits:
+  `docker exec thelook-bronze-stream-1 jcmd` lists the JVMs (PID 1 is
+  tini), then `docker exec thelook-bronze-stream-1 jstack <pid>`; a task
+  stuck in an executor: the same on `spark-worker`, picking the executor
+  by application id (P6: `S3InputStream.readFully` = slow link, not a
+  hang). Restarting is safe (replay guard, see above).
+- **StreamRestarting** (3 starts in 30 minutes): a crash loop. Find the
+  first `Traceback` or `Caused by` after a `stream started` line; network
+  errors (`UnknownHostException`, `Unable to execute HTTP request`) mean the
+  link, anything else the code or a schema.
+- **BronzeBatchesOverTrigger** (batches average over 60 s for 30 minutes):
+  bronze is slower than its trigger, so the lag grows towards O8's
+  2 minutes. Expected for a while after downtime (catch-up); otherwise
+  check the link (P5 measured the same batches at 34-45 s on a good link,
+  84-95 s on a degraded one) and the generator rate (the load test in
+  `docs/results.md` gives the limit).
+
 ### Bronze maintenance (inside the stream, ADR 017)
 
 At the first batch after a start, then hourly, a background thread of the

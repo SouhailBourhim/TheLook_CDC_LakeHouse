@@ -31,6 +31,7 @@ from pyspark.sql import functions as F
 from lakehouse.bronze import SchemaRegistry, bronze_rows
 from lakehouse.features import feature_events, redis_rows
 from lakehouse.redis_writer import partition_writer
+from lakehouse.stream_metrics import serve as serve_metrics
 
 logging.basicConfig(
     level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s"
@@ -50,6 +51,8 @@ spark = (
     .getOrCreate()
 )
 registry = SchemaRegistry("http://schema-registry:8081")
+# Progress for Prometheus (monitoring profile; lakehouse.stream_metrics).
+serve_metrics(spark, port=9108)
 
 
 def process_batch(batch: DataFrame, batch_id: int) -> None:
