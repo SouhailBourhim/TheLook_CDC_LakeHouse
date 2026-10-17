@@ -48,7 +48,17 @@
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
         "overrides": []
       }
     },
@@ -75,7 +85,7 @@
             "uid": "athena"
           },
           "format": 1,
-          "rawSQL": "SELECT net_revenue FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 1",
+          "rawSQL": "SELECT CAST(net_revenue AS double) AS net_revenue FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 1",
           "connectionArgs": {
             "region": "__default",
             "catalog": "__default",
@@ -87,7 +97,16 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD"
+          "unit": "currencyUSD",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       }
@@ -127,7 +146,16 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       }
@@ -167,7 +195,16 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       }
@@ -195,7 +232,7 @@
             "uid": "athena"
           },
           "format": 0,
-          "rawSQL": "SELECT CAST(date AS timestamp) AS time, gross_revenue, returns, net_revenue FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 30",
+          "rawSQL": "SELECT CAST(date AS timestamp) AS time, CAST(gross_revenue AS double) AS gross_revenue, CAST(returns AS double) AS returns, CAST(net_revenue AS double) AS net_revenue FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 30",
           "connectionArgs": {
             "region": "__default",
             "catalog": "__default",
@@ -235,7 +272,7 @@
             "uid": "athena"
           },
           "format": 1,
-          "rawSQL": "SELECT date, net_revenue, provisional_until FROM mart_daily_revenue WHERE provisional_until >= current_date ORDER BY date DESC",
+          "rawSQL": "SELECT date, CAST(net_revenue AS double) AS net_revenue, provisional_until FROM mart_daily_revenue WHERE provisional_until >= current_date ORDER BY date DESC",
           "connectionArgs": {
             "region": "__default",
             "catalog": "__default",

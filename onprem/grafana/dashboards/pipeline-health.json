@@ -557,7 +557,17 @@
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
         "overrides": []
       }
     },
@@ -782,7 +792,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "airflow"
           },
-          "rawSql": "SELECT end_date AS time, EXTRACT(EPOCH FROM end_date - start_date) / 60 AS run FROM dag_run WHERE dag_id = 'transform' AND state IN ('success', 'failed') AND $__timeFilter(end_date) ORDER BY 1",
+          "rawSql": "SELECT end_date AS time, EXTRACT(EPOCH FROM end_date - start_date) / 60 AS run FROM dag_run WHERE dag_id = 'transform' AND state IN ('success', 'failed') AND $__timeFilter(start_date) ORDER BY 1",
           "format": "time_series",
           "rawQuery": true,
           "editorMode": "code"
@@ -936,7 +946,16 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes"
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       }
@@ -1096,7 +1115,8 @@
           "expr": "ALERTS{alertstate=\"firing\"}",
           "legendFormat": "",
           "instant": true,
-          "range": false
+          "range": false,
+          "format": "table"
         }
       ],
       "fieldConfig": {
@@ -1105,7 +1125,21 @@
       },
       "options": {
         "showHeader": true
-      }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "alertstate": true,
+              "job": true
+            }
+          }
+        }
+      ]
     }
   ]
 }
