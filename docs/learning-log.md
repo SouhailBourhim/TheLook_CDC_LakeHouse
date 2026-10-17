@@ -3176,6 +3176,17 @@ row, the sorted layout reads 1.36 MB for that third; the ~2,700 and
 natural outage most of the wait was Iceberg's own commit retries (55),
 the job layer guaranteeing the total span.
 
+**Step 13 check answers (Souhail, 2026-10-17): right.** The token flow
+(only drift.yml has id-token: write; JWT with aud sts.amazonaws.com and a
+sub naming repo, branch and event; AssumeRoleWithWebIdentity; 1-hour
+credentials), the immutable sub that refused the first run; bucket vs
+object ARNs; what a printed plan would expose (account id, email, a map
+of the account). Added: the IAM OIDC provider names the issuer and
+audiences to trust, AWS fetches GitHub's signing keys (JWKS) to verify;
+`sensitive` redacts the plan output, not the state (the email is in the
+state, which the role reads); no AWS key is in the state because they
+were created with the CLI, never Terraform (P3).
+
 ### Where we stopped (2026-10-17, 19:00 UTC) — LATEST, start here
 
 - **P9 and P9b built; acceptance measured** (throughput limit, scan cost
@@ -3187,6 +3198,15 @@ the job layer guaranteeing the total span.
   run that carried it, and the Grafana dashboards. O6 measured: $0.99 for
   October 1-17. **Decision (Souhail): P10 (Kinesis, Managed Flink)
   removed from scope** (spec v2.6; out of scope in 3.2; ADR 001 noted).
-  The project is complete at P9b. Left: O7 from a fresh clone (next).
+  The project is complete at P9b.
+- **O7 from a fresh clone (`drills/fresh_clone.sh`):** first attempt
+  failed (connector 400: role `debezium` missing): deployment was not one
+  command (make up + 3 listed and 2 unlisted role scripts + a topic + the
+  connectors). Fixed with `make bootstrap`; rerun: 36 s to a working stack
+  on empty volumes, terraform plan from the clone: no changes, one command
+  down leaves nothing. Lesson: steps added phase by phase and run once by
+  hand pile up unseen; only a fresh clone shows them.
+- **Project complete**: every phase accepted, every objective measured
+  (O6 $0.99 for October 1-17, O7 shown), every deliverable in place.
 - Open: step 13's two check questions (not answered yet); the MongoDB
   oplog window recovering from the load test (alerts until ~24 h).

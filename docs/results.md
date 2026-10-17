@@ -1411,3 +1411,21 @@ change events/s), the silver catch-up, every drill. AWS Data Transfer: $0 (the l
 (< $15/month at demo volume): **met with a wide margin**. What would
 break it is egress, not storage: ~1.6 GB per hour of the full stack up
 (see the scan-cost section), billed at $0.09/GB beyond 100 GB a month.
+
+## O7: deployed and destroyed with one command, from a fresh clone — 2026-10-17
+
+`drills/fresh_clone.sh`: clone of the public repository (commit
+`d1c9255`) into an empty folder, the two git-ignored inputs copied
+(`onprem/.env`, `terraform.tfvars`, documented by their `.example` files),
+run under another Compose project name so every volume starts empty.
+
+| Step | Result |
+|---|---|
+| first attempt, before `make bootstrap` | **failed**: `make up` then `make register-connectors` gave HTTP 400, `password authentication failed for user "debezium"`: the role did not exist. The README listed three manual role scripts (and missed two added in P7 and P8) plus a topic target |
+| **one command up: `make bootstrap`** | **36 s** on empty volumes: core and monitoring healthy, the five role scripts (cdc-setup retried until the generator's tables existed), the erasure and signal topics, both connectors RUNNING |
+| works from zero | within a minute: 641 change events on `thelook.shop.orders`, 3,027 on `thelook_mongo.web.events` in the new Kafka; Prometheus scraping postgres, connect, mongodb (the stream targets down: those profiles were not started, on purpose: a fresh bronze stream would append a second dataset to the real lake) |
+| AWS, from the clone | `terraform plan`: **No changes** (the code reproduces the account); `plan -destroy`: 44 resources, what one `terraform destroy` removes (not run: the lake stays deployed, spec v1.9) |
+| **one command down** | `down -v`, 5 s: 0 containers, 0 volumes left for the test project; the usual project's 11 volumes untouched |
+
+O7: **met**. The finding is the point: four phases had each added a
+manual step that nobody had to repeat, and only a fresh clone showed it.
