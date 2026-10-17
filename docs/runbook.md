@@ -770,6 +770,31 @@ Create, rotate and revoke exactly as above, with
 `--user-name thelook-spark-batch`. Only this key (never the stream key) goes
 into Airflow's environment (ADR 013).
 
+## Drift check (GitHub Actions `drift`, ADR 022)
+
+Weekly (Mondays 06:17 UTC) and on pushes touching `infra/terraform/`:
+`terraform plan` on the lake, read-only, through the OIDC role
+`thelook-ci-drift`. Red = AWS differs from the code; the log lists only
+the resources (`::error::drift: aws_sns_topic.alerts would be update`).
+
+1. Locally, `make tf-plan` shows the full diff.
+2. A change made by hand (console, CLI): revert it, or write it into the
+   code; a merged change to `infra/` not applied yet: review and `make
+   tf-apply`. Then re-run: `gh workflow run drift.yml`.
+3. Red at the credentials step (`Not authorized to perform
+   sts:AssumeRoleWithWebIdentity`): the token does not match the trust
+   policy. The repository uses GitHub's immutable subject (`gh api
+   repos/SouhailBourhim/TheLook_CDC_LakeHouse/actions/oidc/customization/sub`);
+   the OIDC provider belongs to another project in this account (`signal`)
+   and may have been deleted.
+4. Red with `AccessDenied` in the plan: a new resource type needs its read
+   actions in `infra/terraform/lake/ci.tf` (the error names the action).
+
+Tested on 2026-10-17: a tag added by hand to the alerts topic turned it
+red, removing it green; IAM's policy simulator allows the state read and
+bucket settings, denies lake objects, state writes, IAM, Glue, SNS and
+budget writes.
+
 ## Analyst access (DBeaver or any Athena client)
 
 IAM user `thelook-analyst` (`infra/terraform/lake/iam.tf`): read-only SQL on
