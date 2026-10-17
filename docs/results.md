@@ -1400,3 +1400,14 @@ return in bronze **63 s** later; transform triggered (queued behind the
 scheduled 18:30 run), gold `is_returned = true` and the day's returns in
 `mart_daily_revenue` 3,149.43, **997 s** after the return (most of it the
 queue). Exit 0.
+
+## O6: monthly AWS cost (Cost Explorer), 2026-10-17
+
+October 1-17, tag `project = thelook-cdc-lakehouse`, unblended, before
+credits: **$0.99** (S3 $0.73, Athena $0.26; Glue, KMS, SNS, Config under a
+cent). These 17 days include P7-P9's heaviest work: the load test (two hours up to 2,230
+change events/s), the silver catch-up, every drill. AWS Data Transfer: $0 (the laptop's S3 egress stayed inside the
+100 GB free allowance). Last 7 days: $0.70 (S3 $0.46, Athena $0.24). O6
+(< $15/month at demo volume): **met with a wide margin**. What would
+break it is egress, not storage: ~1.6 GB per hour of the full stack up
+(see the scan-cost section), billed at $0.09/GB beyond 100 GB a month.
