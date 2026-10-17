@@ -1160,6 +1160,60 @@ bronze runs back to back, with no slack left. The model predicted 60 s.
   rate ~5x for a minute and the slot retains up to ~127 MB (level 4,
   04:48). Inside the 3-minute warm-up, never in a window.
 
+## P9: scan cost — method and baseline (steps 7-8)
+
+**Question:** where does reading the lake cost money, how much did the
+design save, and what does compaction add? Two different costs:
+
+- **Athena** bills bytes scanned ($5/TB, 10 MB minimum per query), for
+  analysts and dashboards.
+- **S3 egress** from the laptop: the Spark jobs download what they read
+  (P4: ~0.8 GB per hour of the full stack; free up to 100 GB a month, then
+  $0.09/GB). This is the cost that grows.
+
+**Method.** Athena: a fixed set of 5 analyst queries (`scripts/
+scan_benchmark.py`: last 7 days of revenue, revenue by country over a
+month, one day of items, the mart's last 30 days, revenue by category all
+time), dates as literals relative to the newest order day, bytes from
+Athena's own statistics. S3: received bytes on the containers that read
+the lake during one transform run, minus an idle baseline measured just
+before (`scripts/transform_bytes.py`, P4's method; Spark's own "bytes
+read" counts its cache too). The counterfactual "full reload" is computed
+from table sizes in Iceberg's metadata, labelled computed, not run.
+Order: baseline, then compaction (the maintenance DAG), then the same
+measurements again. The Athena baseline (03:21) was taken with the fixed
+query set before this text was written, and before any change.
+
+**Athena baseline, 2026-10-17 03:21 UTC** (gold: 15 order days, no
+maintenance since 10-15):
+
+| Query | Bytes scanned | Engine ms |
+|---|---|---|
+| q1 revenue, last 7 days (fct_orders) | 3,004,661 | 1,988 |
+| q2 revenue by country, last month (fct_order_items + dim_user) | 15,853,498 | 2,543 |
+| q3 one day of items | 20,143 | 1,101 |
+| q4 revenue mart, last 30 days | 1,812 | 1,466 |
+| q5 revenue by category, all time (fct_order_items + dim_product) | 14,696,053 | 2,268 |
+
+| Table | Data files | Size | Rows in data files | Live rows |
+|---|---|---|---|---|
+| fct_orders | 31 | 159 MB | 2,697,334 | 1,083,483 |
+| fct_order_items | 31 | 291 MB | 3,909,187 | - |
+| dim_user | 4 | 12 MB | 179,244 | - |
+
+- **What already saves:** columnar reads (q1 read 3 MB of fct_orders'
+  159 MB: 1.9 %; q5 15 MB of 291 MB: 5 %) and Iceberg's per-file min/max
+  statistics (q3 read 20 KB for one day without any partitioning: each
+  transform run writes its orders into new files, so files are already
+  grouped by day). Every query is billed the 10 MB minimum or a little
+  more: ~$0.00005 each.
+- **Step 9 (partition gold by order day) dropped on this evidence:** file
+  statistics already prune by day; partitioning 15 days of data would
+  save KBs. Recorded rather than built.
+- **Compaction is the visible gap:** 60 % of fct_orders' stored rows are
+  old versions masked by merge-on-read delete files (no maintenance since
+  10-15); every read of the table still opens them.
+
 ## P9b: Grafana dashboards — 2026-10-17
 
 Grafana 13.2.3 with the Athena plugin 3.3.6 (`bi` profile, ADR 023),
