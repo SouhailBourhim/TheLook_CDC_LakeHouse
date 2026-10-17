@@ -57,10 +57,11 @@ def airflow_login(page: Page) -> None:
     page.wait_for_url(lambda url: "/auth/login" not in url, timeout=30_000)
 
 
-def airflow_graph(page: Page, dag: str) -> None:
+def airflow_graph(page: Page, dag: str, run: str | None = None, name: str = "") -> None:
     """The DAG's graph, top to bottom, nodes coloured by one successful run,
     beside that run's details (state, dates, duration)."""
-    page.goto(f"{AIRFLOW}/dags/{dag}/runs/{RUNS[dag]}", wait_until="networkidle")
+    run = run or RUNS[dag]
+    page.goto(f"{AIRFLOW}/dags/{dag}/runs/{run}", wait_until="networkidle")
     page.locator("button[aria-label*='raph'], [title*='raph']").first.click()
     page.wait_for_timeout(1500)
     page.locator("button[aria-label='Options']").first.click()
@@ -70,7 +71,7 @@ def airflow_graph(page: Page, dag: str) -> None:
     page.wait_for_timeout(1500)
     page.locator(".react-flow__controls-fitview").click()
     page.wait_for_timeout(1500)
-    page.screenshot(path=RAW / f"airflow-{dag}.png")
+    page.screenshot(path=RAW / f"{name or 'airflow-' + dag}.png")
 
 
 def prometheus_drill(page: Page) -> None:
@@ -216,6 +217,17 @@ SHOTS = {
     "prometheus-rules": ("localhost:9090 · rules", prometheus_rules),
     "neo4j-recommendations": ("localhost:7474 · browser", neo4j_graph),
     "api-docs": ("localhost:8000 · docs", api_docs),
+    # The demo walkthrough (docs/demo.md): the transform run that carried
+    # drills/demo_order.py's returned order to gold, 2026-10-17.
+    "demo-transform-run": (
+        "localhost:8088 · dags / transform / the demo order's run",
+        lambda p: airflow_graph(
+            p,
+            "transform",
+            "manual__2026-10-17T18:41:21.585024+00:00",
+            "demo-transform-run",
+        ),
+    ),
     "grafana-pipeline": (
         "localhost:3000 · theLook: pipeline health",
         lambda p: grafana(p, "thelook-pipeline", "now-2h"),
@@ -241,7 +253,7 @@ def main() -> int:
             locale="en-US",
             timezone_id="UTC",
         )
-        if any(name.startswith("airflow") for name in wanted):
+        if any(name.startswith(("airflow", "demo-")) for name in wanted):
             airflow_login(page)
         for name in wanted:
             url, capture = SHOTS[name]

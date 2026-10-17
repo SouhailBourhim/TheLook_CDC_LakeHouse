@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = ["boto3==1.40.40"]
 # ///
-"""The demo video's story (spec section 10), timed: an order the generator
+"""The demo's story (spec section 10, docs/demo.md), timed: an order the generator
 just created is returned, and the change reaches bronze, then gold and the
 revenue mart that a dashboard reads.
 

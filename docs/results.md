@@ -1393,7 +1393,7 @@ Interviewers will ask; the answer is in this file.
 
 ## Demo helper, tested live (P9 wrap-up), 2026-10-17 18:41 UTC
 
-`drills/demo_order.py`, the demo video's story: order
+`drills/demo_order.py`, the demo's story (`docs/demo.md`): order
 `de66aba8-...` picked as the generator's newest, in bronze **29 s** later;
 returned in PostgreSQL (the order and its item, one transaction), the
 return in bronze **63 s** later; transform triggered (queued behind the

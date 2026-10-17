@@ -10,7 +10,7 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 2.4                                           |
+| Version      | 2.5                                           |
 | Date         | 17 October 2026                               |
 | Status       | P1 to P9b built; P10 optional                 |
 
@@ -33,6 +33,7 @@ governed, cost-controlled analytics lakehouse
 | 2.2         | 10/10/2026 | Co-purchase graph (FR16, ADR 019), decision E2: basket affinity now picks among 5 fixed companion products per product, and the first item of an order follows a popularity skew, so co-purchase weights repeat and can rank (4.3). FR16: pairs counted over all orders, one relationship per pair, full idempotent rebuild without an empty graph. FR17: `limit` parameter and 503. P6 acceptance made exact (companions in the top 5). Neo4j and its Python driver pinned (5.3). |
 | 2.3         | 11/10/2026 | Contracts, quality and alerting (ADR 020): Alertmanager is the single alert hub (Prometheus rules and Airflow failures and quality results), delivered by SNS email, replacing the planned CloudWatch alarms (NFR observability). O8 rewritten (option B): source-to-bronze lag below 2 minutes (p95) at 200 change events/s, measured in P9. FR6: provisional days in the revenue mart. FR7: Kafka topics guarded by Schema Registry, not by datacontract-cli's experimental Kafka test; a drift check compares each contract with the table's columns. datacontract-cli and mongodb_exporter pinned (5.3). |
 | 2.4         | 17/10/2026 | Dashboards (Souhail's decision, P9): new phase P9b, Grafana in a `bi` profile, with a pipeline-health dashboard on the existing Prometheus and a business dashboard on the gold marts through Athena; dashboards as code. The demo video's "dashboard" (section 10) is this one. Scope 3.1, architecture, versions, milestones and checkpoints updated; the stale "CloudWatch for AWS" monitoring line corrected (Alertmanager since 2.3). |
+| 2.5         | 17/10/2026 | Demo (Souhail's decision, P9 wrap-up): the demo video of section 10 is replaced by a screenshot walkthrough of the same story (`docs/demo.md`): a real order created and returned, its two versions in bronze, the Airflow run that carried it, the Grafana dashboards. |
 
 ## 1. Context and problem
 
@@ -758,8 +759,9 @@ and P6 add the serving layer; P10 only makes sense once P9 is done.
 - A README with the architecture diagram (Mermaid), design decisions,
   cost breakdown, and how to run and demo each phase.
 
-- A demo video under 3 minutes: the generator creates and returns an
-  order, and the change reaches the dashboard.
+- A demo walkthrough with screenshots of a real run (v2.5, instead of a
+  video): the generator creates and returns an order, and the change
+  reaches the dashboard (`docs/demo.md`).
 
 - A results page with the real measurements: freshness, throughput
   limit, scan savings, number of tests, drill results, cost per month.
