@@ -3,7 +3,7 @@
 CONNECT_URL ?= http://localhost:8083
 CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 
-.PHONY: up down ps spark-run test-spark test-graph signal-topic erasure-topic snapshot-postgres register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
+.PHONY: bootstrap up down ps spark-run test-spark test-graph signal-topic erasure-topic snapshot-postgres register-connectors connector-status tf-bootstrap tf-init tf-plan tf-apply cost-report
 
 # --- On-prem stack (Docker Compose) ------------------------------------------
 # Profiles group services so a laptop runs only what a task needs (RAM per
@@ -13,6 +13,24 @@ CONNECTORS  := $(wildcard onprem/connect/connectors/*.json)
 #   make down                            # stops every profile, keeps volumes
 PROFILES ?= core
 COMPOSE  := docker compose -f onprem/compose.yaml
+
+# First deployment from a fresh clone, one command (O7, P9): the core and
+# monitoring profiles, the database roles (all five scripts, idempotent),
+# the erasure topic, the connectors. cdc-setup.sql fails until the
+# generator has created its tables (its publication names them): retrying
+# it is the wait, bounded, and its last error is shown if it never passes.
+# Then `make up PROFILES=...` adds stream, airflow, serving, bi as needed.
+SETUP_SQL := cdc-setup monitoring-setup reviewer-setup quality-setup eraser-setup
+bootstrap:
+	$(MAKE) --no-print-directory up PROFILES="core monitoring"
+	@echo "==> database roles (waiting for the generator's tables)"
+	@for i in $$(seq 40); do \
+	  onprem/postgres/apply-sql.sh onprem/postgres/cdc-setup.sql > /tmp/thelook-bootstrap.log 2>&1 && break; \
+	  [ $$i -eq 40 ] && { cat /tmp/thelook-bootstrap.log; exit 1; }; sleep 3; \
+	done
+	@for f in $(SETUP_SQL); do echo "    $$f"; onprem/postgres/apply-sql.sh onprem/postgres/$$f.sql > /dev/null; done
+	@$(MAKE) --no-print-directory erasure-topic
+	@$(MAKE) --no-print-directory register-connectors
 
 # --wait returns once every started service is healthy (or, for one-shot
 # setup containers, has exited successfully), so the next command can rely

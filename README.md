@@ -225,11 +225,9 @@ counts page cache for Kafka and MongoDB, so it is an upper bound):
 
 ```bash
 cp onprem/.env.example onprem/.env     # then set every password
-make up PROFILES="core monitoring"     # starts and waits until healthy
-onprem/postgres/apply-sql.sh onprem/postgres/cdc-setup.sql         # Debezium role + publication
-onprem/postgres/apply-sql.sh onprem/postgres/monitoring-setup.sql  # exporter role
-onprem/postgres/apply-sql.sh onprem/postgres/reviewer-setup.sql    # review simulator role
-make register-connectors               # Debezium Postgres + MongoDB, then status
+make bootstrap                         # first time: core + monitoring, database roles,
+                                       # topics, connectors (one command, idempotent)
+make up PROFILES="core monitoring"     # later starts: waits until healthy
 make up PROFILES="core stream"         # adds the Spark cluster (UI http://localhost:8080)
 make spark-run JOB=jobs/smoke_test.py  # Kafka, Avro and Glue catalog checks on the cluster
 make up PROFILES="core stream airflow" # adds Airflow: UI http://localhost:8088 (user admin, AIRFLOW_ADMIN_PASSWORD)
@@ -247,9 +245,10 @@ reads S3 over the internet, ~0.8 GB per hour with `stream` and `airflow` up
 working or demoing, `make down` otherwise. Always stop with `make down`: a
 killed Kafka (sleep, crash) triggers the verify drill (runbook).
 
-The SQL scripts need the generator's tables, which it creates on its first
-start; if one reports a missing table, run it again a few seconds later
-(all are idempotent). MongoDB needs no manual step: the one-shot
+`make bootstrap` waits for the generator's tables (it creates them on its
+first start) before applying the role scripts; each script can also be
+rerun alone (`onprem/postgres/apply-sql.sh onprem/postgres/<script>.sql`,
+all idempotent). MongoDB needs no manual step: the one-shot
 `mongo-init` service initiates the replica set and creates the users on
 every `up`. The review simulator logs errors and retries until its Postgres
 role exists. After a reboot, rerun `make up` (no restart policy on purpose).
