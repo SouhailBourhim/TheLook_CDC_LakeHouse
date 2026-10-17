@@ -4,6 +4,7 @@ on a local Iceberg catalog."""
 import datetime
 
 from lakehouse import upkeep
+from lakehouse.bronze import with_retries
 
 MERGE_ON_READ = {
     "format-version": "2",
@@ -83,3 +84,58 @@ def test_apply_deletes_rewrites_a_file_that_compaction_leaves(spark, lake):
     assert upkeep.apply_deletes(spark, table) == 1
     assert spark.table(f"{table}.delete_files").count() == 0
     assert spark.table(table).count() == 9
+
+
+def no_wait_retries(step):
+    return with_retries(step, sleep=lambda _: None)
+
+
+def test_a_blip_repeats_one_operation_and_the_report_keeps_the_others(
+    spark, lake, monkeypatch
+):
+    # Seen in P6: one DNS blip re-ran a whole database, and the report showed
+    # 0 files rewritten for the tables compacted by the failed attempt.
+    silver, _ = lake
+    table = f"{silver}.orders"
+    silver_like(spark, table)
+    real_expire, calls = upkeep.expire, []
+
+    def flaky_expire(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("SdkClientException: Unable to execute HTTP request")
+        return real_expire(*args, **kwargs)
+
+    monkeypatch.setattr(upkeep, "expire", flaky_expire)
+    later = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=2)
+
+    report = upkeep.maintain_tables(spark, [table], later, retry=no_wait_retries)
+
+    assert report["orders"]["files_rewritten"] == 6  # not redone, not lost
+    assert report["orders"]["snapshots_expired"] > 0
+    assert report["orders"]["retries"] == 1
+    assert "error" not in report["orders"]
+
+
+def test_a_table_that_keeps_failing_does_not_stop_the_others(spark, lake, monkeypatch):
+    silver, _ = lake
+    broken, fine = f"{silver}.users", f"{silver}.orders"
+    for table in (broken, fine):
+        silver_like(spark, table)
+    real_compact = upkeep.compact
+
+    def compact(spark, table, where=None):
+        if table == broken:
+            raise RuntimeError("AccessDenied: not retried")
+        return real_compact(spark, table, where)
+
+    monkeypatch.setattr(upkeep, "compact", compact)
+    later = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=2)
+
+    report = upkeep.maintain_tables(spark, [broken, fine], later, retry=no_wait_retries)
+
+    assert report["users"]["error"].startswith("AccessDenied")
+    assert report["users"]["retries"] == 0  # not transient: not retried
+    assert "orphans_deleted" not in report["users"]  # skipped after a failure
+    assert report["orders"]["files_rewritten"] == 6
+    assert "error" not in report["orders"]

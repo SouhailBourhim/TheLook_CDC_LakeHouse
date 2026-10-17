@@ -8,8 +8,11 @@ Iceberg first tries "db" as a catalog and logs a warning with a stack trace.
 """
 
 import datetime
+import logging
 
 from pyspark.sql import SparkSession
+
+log = logging.getLogger("upkeep")
 
 # Every commit writes a new metadata.json; Iceberg deletes the oldest ones at
 # commit time instead of letting them pile up.
@@ -191,30 +194,79 @@ def maintain_tables(
     keep_last: int = 5,
     orphans_every: datetime.timedelta = datetime.timedelta(days=7),
     orphan_tables: int = 3,
+    retry=lambda step: step(),
 ) -> dict:
     """Daily upkeep of silver and gold (ADR 017), table by table: compact
     delete files, then data files (applying the deletes), expire snapshots
     older than `keep_for` (keeping `keep_last`); then remove the
     orphan files of at most `orphan_tables` tables due (each costs minutes:
     the run holds the Airflow pool that transform needs, and O2 is 1 hour).
-    Returns what was done per table."""
+    Returns what was done per table.
+
+    `retry` wraps each operation (the job passes with_retries): each one
+    commits atomically, so a network blip repeats that operation only, and
+    the report keeps what the earlier ones did. A table whose operation
+    still fails gets an "error" in the report and the others go on; the
+    caller decides the exit status. "retries" counts the repeated calls."""
     report = {}
     for table in tables:
+        name = table.rsplit(".", 1)[1]
         # Delete files first: in an unpartitioned table every delete file
         # applies to every data file, so a data compaction reads all of them
         # once per data file (measured: one fact table's compaction, one
         # Spark task, took 20 minutes after a day of MERGEs).
-        deletes = compact_deletes(spark, table)
-        report[table.rsplit(".", 1)[1]] = {
-            "delete_files_rewritten": deletes,
-            "files_rewritten": compact(spark, table),
-            "snapshots_expired": expire(spark, table, now - keep_for, keep_last),
+        steps = {
+            "delete_files_rewritten": lambda table=table: compact_deletes(spark, table),
+            "files_rewritten": lambda table=table: compact(spark, table),
+            "snapshots_expired": lambda table=table: expire(
+                spark, table, now - keep_for, keep_last
+            ),
         }
-    for table in due(
-        spark, tables, ORPHANS_REMOVED_AT, orphans_every, now, orphan_tables
-    ):
-        report[table.rsplit(".", 1)[1]]["orphans_deleted"] = remove_orphans(
-            spark, table, now
+        report[name] = _run_steps(table, steps, retry)
+    # Choosing the tables reads their properties: retried, but if it still
+    # fails the run fails (what is above has committed and is idempotent).
+    for table in retry(
+        lambda: due(
+            spark, tables, ORPHANS_REMOVED_AT, orphans_every, now, orphan_tables
         )
-        mark_run(spark, table, ORPHANS_REMOVED_AT, now)
+    ):
+        name = table.rsplit(".", 1)[1]
+        if "error" in report[name]:
+            continue
+
+        def remove_and_mark(table=table) -> int:
+            removed = remove_orphans(spark, table, now)
+            mark_run(spark, table, ORPHANS_REMOVED_AT, now)
+            return removed
+
+        done = _run_steps(table, {"orphans_deleted": remove_and_mark}, retry)
+        done["retries"] += report[name].pop("retries")
+        report[name].update(done)
     return report
+
+
+def _run_steps(table: str, steps: dict, retry) -> dict:
+    """Run each step through `retry`, in order; stop at the first that still
+    fails and record its error. Returns {step: result, "retries": n}."""
+    calls = 0
+
+    def counted(step):
+        def call():
+            nonlocal calls
+            calls += 1
+            return step()
+
+        return call
+
+    done = {}
+    try:
+        for key, step in steps.items():
+            done[key] = retry(counted(step))
+    except Exception as error:
+        log.exception("upkeep of %s failed", table)
+        done["error"] = str(error).splitlines()[0][:200]
+    # One first call per step that ran (succeeded, or failed for good, its
+    # key then being "error"): every other call was a retry.
+    done["retries"] = calls - len(done)
+    log.info("%s: %s", table, done)
+    return done

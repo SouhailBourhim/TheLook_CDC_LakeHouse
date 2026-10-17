@@ -32,16 +32,24 @@ spark = lake_session(
 
 failed = []
 for database in DATABASES:
-    tables = [f"{database}.{t.name}" for t in spark.catalog.listTables(database)]
     start = time.monotonic()
     try:
-        # Safe to retry: compaction and expiry are idempotent.
-        report = with_retries(
-            lambda tables=tables: maintain_tables(
-                spark, tables, datetime.datetime.now(datetime.timezone.utc)
-            )
+        tables = with_retries(
+            lambda database=database: [
+                f"{database}.{t.name}" for t in spark.catalog.listTables(database)
+            ]
+        )
+        # Each operation is retried on its own (compaction and expiry are
+        # idempotent and commit atomically); a table that still fails is
+        # reported and the others go on.
+        report = maintain_tables(
+            spark,
+            tables,
+            datetime.datetime.now(datetime.timezone.utc),
+            retry=with_retries,
         )
         log.info("%s: %s in %.1f s", database, report, time.monotonic() - start)
+        failed += [f"{database}.{t}" for t, done in report.items() if "error" in done]
     except Exception:
         log.exception("maintenance of %s failed", database)
         failed.append(database)
