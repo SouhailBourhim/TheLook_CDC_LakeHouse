@@ -1,0 +1,75 @@
+# Drift check (P9, ADR 022): `terraform plan` on the lake configuration,
+# read-only, through OIDC (no AWS key stored in GitHub). Fails when AWS no
+# longer matches the code: someone changed a resource by hand, or a commit
+# changed infra/ without an apply. Applying stays manual (make tf-apply).
+#
+# Separate from ci.yml so that only this workflow can request an OIDC token
+# (id-token: write). The role trusts tokens for this repository's main
+# branch only (infra/terraform/lake/ci.tf).
+name: drift
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  push:
+    branches: [main]
+    paths: ["infra/terraform/**", ".github/workflows/drift.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: drift
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    env:
+      TF_IN_AUTOMATION: "1"
+      # Personal: from a secret, redacted in the plan (sensitive variable).
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+      # Exchanges GitHub's OIDC token for 1-hour credentials of the role.
+      # The role ARN holds the account id: a secret, so it is masked.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Mask the account id
+        run: |
+          account=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::$account"
+          echo "ACCOUNT=$account" >> "$GITHUB_ENV"
+      - run: >
+          terraform -chdir=infra/terraform/lake init -input=false
+          -lockfile=readonly -backend-config="bucket=thelook-tfstate-$ACCOUNT"
+      # -lock=false: the role cannot write the lock file (read-only), and a
+      # plan changes nothing. Exit code 0 = no changes, 2 = drift, 1 = error.
+      # The plan itself is not printed (public logs): only which resources
+      # differ and how; details come from `make tf-plan` locally.
+      - name: Plan
+        run: |
+          set +e
+          terraform -chdir=infra/terraform/lake plan -input=false -lock=false \
+            -detailed-exitcode -out=drift.tfplan > plan.log 2>&1
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "No drift: AWS matches infra/terraform/lake."
+          elif [ "$code" -eq 2 ]; then
+            terraform -chdir=infra/terraform/lake show -json drift.tfplan | jq -r '
+              .resource_changes[] | select(.change.actions != ["no-op"])
+              | "::error::drift: \(.address) would be \(.change.actions | join("+"))"'
+            exit 1
+          else
+            grep -E "^(Error|│ Error)" -A3 plan.log || tail -20 plan.log
+            exit 1
+          fi
