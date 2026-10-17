@@ -1,6 +1,6 @@
 # Continuous integration (spec FR18). Runs on every push and pull request:
 # lint, unit tests (components and PySpark), alert-rule tests, contract
-# lint. Grows with each phase (terraform fmt/validate and OIDC in P9).
+# lint, Terraform format and validation.
 name: ci
 
 on:
@@ -116,18 +116,21 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The Prometheus image the stack uses, so promtool matches the server.
+      # The Prometheus image the stack uses, so promtool matches the server:
+      # same digest, pulled from quay.io, where Prometheus publishes too.
+      # Docker Hub limits anonymous pulls per IP, and GitHub's runners share
+      # IPs (a run failed on it in P5); the digest makes the source irrelevant.
       - run: >
           docker run --rm -v "$PWD/onprem/monitoring:/m:ro" -w /m
           --entrypoint promtool
-          prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+          quay.io/prometheus/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
           test rules alerts_test.yml
       # Alertmanager's config parses (receivers, routes, inhibitions); the
       # placeholder ARN is replaced at start (start-alertmanager.sh).
       - run: >
           docker run --rm -v "$PWD/onprem/monitoring:/m:ro" -w /m
           --entrypoint amtool
-          prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+          quay.io/prometheus/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
           check-config alertmanager.yml
 
   contracts:
@@ -147,3 +150,31 @@ jobs:
               || { echo "::error file=$f::invalid contract"; cat /tmp/lint.out; status=1; }
           done
           exit $status
+
+  terraform:
+    runs-on: ubuntu-24.04
+    env:
+      # Both configurations use the same AWS provider: downloaded once.
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugins
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The version used locally (versions.tf allows ~> 1.16). No wrapper:
+      # it rewrites exit codes and output, which the drift check relies on.
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+      - run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.terraform-plugins
+          key: terraform-plugins-${{ hashFiles('infra/terraform/**/.terraform.lock.hcl') }}
+      - run: terraform fmt -check -recursive -diff infra/terraform
+      # -backend=false: no state, so no AWS credentials. validate checks
+      # syntax, references and types against the provider's schema; the
+      # committed lock files pin the provider and its checksums.
+      - run: |
+          for dir in infra/terraform/bootstrap infra/terraform/lake; do
+            terraform -chdir="$dir" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="$dir" validate
+          done
