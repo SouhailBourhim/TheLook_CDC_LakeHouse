@@ -129,6 +129,14 @@ def get_additional_ddls(schema: str):
                 ts TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW()
             );
         """),
+        # Added in thelook-cdc-lakehouse (P9): an order's status update reads
+        # its items by order_id; without an index each one scanned the whole
+        # table (1.6 M rows, Postgres at 6 cores near 120 iterations/s).
+        # Indexes are not replicated: the change stream is unchanged.
+        "order_items_order_id_idx": inspect.cleandoc(f"""
+            CREATE INDEX IF NOT EXISTS order_items_order_id_idx
+                ON {schema}.order_items (order_id);
+        """),
     }
 
 

@@ -1056,3 +1056,43 @@ trigger, batches run back to back and the lag grows. The capture side
 (Postgres, Debezium, Kafka) is not expected to limit: the ramp below
 already shows Debezium within milliseconds near 950 events/s.
 
+### The generator in load mode, against Kafka alone (step 5), 2026-10-17 ~02:30-03:10 UTC
+
+2.5 minutes per level, `core monitoring` only (no Spark, no AWS). Achieved
+= the generator's `pace:` lines, summed over workers; events/s = Connect's
+record write rate, both connectors.
+
+**Before the index** on `order_items (order_id)` (deadline pacing and
+key-range picks already in):
+
+| target it/s | workers | events/s | Debezium lag max | Postgres CPU | generator CPU |
+|---|---|---|---|---|---|
+| 30 | 1 | 262 | 14 ms | 113 % | 19 % |
+| 60 | 4 | 608 | 29 ms | 311 % | 43 % |
+| 120 | 8 | 945 | 12 ms | **611 %** | 112 % |
+
+Postgres was the limit: an order's status update (40 % of iterations)
+reads its items by `order_id`, and `order_items` (1.6 M rows) had no index
+on it, so each one scanned the whole table (57 billion rows read over the
+stack's life, `pg_stat_user_tables.seq_tup_read`). The GDPR erasure's
+`DELETE ... WHERE order_id IN (...)` did the same.
+
+**After the index:**
+
+| target it/s | workers | achieved it/s | backlog dropped | events/s | Debezium lag max | Postgres CPU | generator CPU |
+|---|---|---|---|---|---|---|---|
+| 30 | 1 | 30.1 | 0 s | 316 | 109 ms | 5 % | 25 % |
+| 60 | 4 | 60.7 | 0 s | 655 | 9 ms | 10 % | 42 % |
+| 120 | 8 | 118.7 | 5 s | 1,260 | 6 ms | 25 % | 97 % |
+| 200 | 8 | 131.2 | 164 s | 1,354 | 11 ms | 24 % | 121 % |
+| 200 | 16 | 130.6 | 335 s | 1,316 | 30 ms | 27 % | 122 % |
+
+- **A9 closed:** the generator follows its target up to ~120 iterations/s
+  (~1,260 change events/s), 6 times O8's load, then caps itself: one
+  Python process near a full core (the GIL: 16 workers give the same
+  ~131/s as 8), and the dropped backlog says so in its own log.
+- **The capture side did not break:** Debezium stayed within milliseconds
+  at 1,354 events/s, Connect at 16 % CPU, Kafka at 5 %. Its limit is above
+  what one generator process can produce; the load test's question is
+  therefore bronze.
+- ~10.4 change events per iteration, as in P1.

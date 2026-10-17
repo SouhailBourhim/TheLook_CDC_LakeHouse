@@ -186,3 +186,56 @@ def test_skew_zero_and_affinity_zero_give_the_upstream_behaviour():
     # Second item uniform: a companion by chance in ~0.03 % of orders
     # (companions are computed per product, so only 2,000 are checked).
     assert sum(o[1] in companion_products(o[0], 5) for o in orders[:2_000]) < 3
+
+
+# Load mode (P9): pacing on a schedule, random rows through the primary key.
+import generator  # noqa: E402
+
+
+def test_pacing_does_not_slow_down_with_the_work():
+    # Due every 0.1 s; the work took 0.08 s, so the next sleep is only what
+    # is left. Upstream would sleep the full 0.1 s after the work.
+    due, sleep, dropped = generator.next_deadline(10.0, 10.08, 0.1)
+    assert (due, round(sleep, 6), dropped) == (10.1, 0.02, 0.0)
+
+
+def test_pacing_catches_up_a_short_backlog_without_sleeping():
+    due, sleep, dropped = generator.next_deadline(10.0, 10.5, 0.1)
+    assert (due, sleep, dropped) == (10.1, 0.0, 0.0)
+
+
+def test_pacing_drops_a_long_backlog_instead_of_bursting():
+    due, sleep, dropped = generator.next_deadline(10.0, 13.1, 0.1)
+    assert (due, sleep, round(dropped, 6)) == (13.1, 0.0, 3.0)
+
+
+class FakeWriter:
+    def __init__(self, rows):
+        self.rows, self.calls = rows, []
+
+    def select(self, **kwargs):
+        self.calls.append(kwargs)
+        return [
+            r
+            for r in self.rows
+            if "where_clause" not in kwargs or r["id"] >= kwargs["where_params"]["k"]
+        ][:1]
+
+
+def random_row(rows):
+    simulator = generator.TheLookECommSimulator.__new__(generator.TheLookECommSimulator)
+    simulator.writer = FakeWriter(sorted(rows, key=lambda r: r["id"]))
+    return simulator._random_row("users"), simulator.writer.calls
+
+
+def test_random_row_uses_the_primary_key_not_a_table_scan():
+    rows, calls = random_row([{"id": "ffffffff-ffff-4fff-bfff-ffffffffffff"}])
+    assert rows == [{"id": "ffffffff-ffff-4fff-bfff-ffffffffffff"}]
+    assert calls[0]["order_by"] == "id" and calls[0]["where_clause"] == "id >= :k"
+
+
+def test_random_row_wraps_round_past_the_largest_id():
+    # No id at or after the random key: take the smallest.
+    rows, calls = random_row([{"id": "00000000-0000-4000-8000-000000000000"}])
+    assert rows == [{"id": "00000000-0000-4000-8000-000000000000"}]
+    assert len(calls) == 2 and "where_clause" not in calls[1]

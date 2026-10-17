@@ -2,12 +2,16 @@
 # the DB_PASSWORD environment variable; the password is redacted in the logs.
 # Clickstream events go to MongoDB (src/mongo_writer.py) instead of
 # PostgreSQL; synthetic basket affinity and popularity (--basket-affinity-prob,
-# --companions, --popularity-skew; spec 4.3, ADR 019).
+# --companions, --popularity-skew; spec 4.3, ADR 019). Load mode (P9):
+# deadline pacing, --workers, random rows through the primary key instead of
+# ORDER BY RANDOM().
 import argparse
 import asyncio
+import copy
 import os
 import random
 import logging
+import uuid
 
 from faker import Faker
 from pymongo.errors import PyMongoError
@@ -29,6 +33,27 @@ from src.utils import generate_from_csv
 logging.basicConfig(
     level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s"
 )
+
+
+# More than this behind schedule, the backlog is dropped instead of being
+# caught up in a burst (and counted, so an overloaded generator shows).
+MAX_BEHIND_S = 1.0
+
+
+def next_deadline(
+    next_at: float, now: float, interval: float
+) -> tuple[float, float, float]:
+    """Pacing on a schedule (open loop): the next iteration is due
+    `interval` after the previous due time, not after the previous work
+    ended, so the rate does not fall as the work slows down. Returns
+    (due time, seconds to sleep, seconds of backlog dropped).
+
+    Upstream slept before the work, so its rate was 1 / (1/target + work
+    time): ~39 ms of work capped it near 25 iterations/s (P1 baseline)."""
+    due = next_at + interval
+    if now - due > MAX_BEHIND_S:
+        return now, 0.0, now - due
+    return due, max(0.0, due - now), 0.0
 
 
 class TheLookECommSimulator:
@@ -102,12 +127,26 @@ class TheLookECommSimulator:
             )
             return False
 
+    def _random_row(self, table: str) -> list:
+        """One row picked at random through the primary key's index: the
+        first id at or after a random UUID, else the smallest id (wrap
+        round). Ids are random UUIDs, so this is close to uniform (a row
+        after a wider gap is a little more likely). Upstream's ORDER BY
+        RANDOM() reads the whole table on every call, a cost that grows
+        with the table (P1 baseline)."""
+        rows = self.writer.select(
+            table=table,
+            where_clause="id >= :k",
+            where_params={"k": str(uuid.uuid4())},
+            order_by="id",
+            limit=1,
+        )
+        return rows or self.writer.select(table=table, order_by="id", limit=1)
+
     async def _simulate_purchases(self):
         """Generates and writes a new purchase transaction, the primary simulation event."""
         # Select a random user
-        user_list = await asyncio.to_thread(
-            self.writer.select, table="users", order_by="RANDOM()", limit=1
-        )
+        user_list = await asyncio.to_thread(self._random_row, "users")
         if not user_list:
             logging.warning(
                 "A random user is not retrieved. Skipping a purchase event generation."
@@ -175,9 +214,7 @@ class TheLookECommSimulator:
 
     def _simulate_order_update(self):
         """Synchronous helper containing the logic for updating an order. To be run in a thread."""
-        random_order_list = self.writer.select(
-            table="orders", order_by="RANDOM()", limit=1
-        )
+        random_order_list = self._random_row("orders")
         if not random_order_list:
             logging.warning(
                 "A random order is not retrieved. Skipping random order event upate."
@@ -281,6 +318,11 @@ class TheLookECommSimulator:
     async def run(self):
         """The main simulation loop, which orchestrates primary and side tasks."""
         current_iteration = 0
+        loop = asyncio.get_running_loop()
+        next_at = loop.time()
+        # Once a minute: iterations done and backlog dropped, so a load test
+        # can tell whether the generator kept up.
+        window_start, window_done, window_dropped = loop.time(), 0, 0.0
         while True:
             if 0 < self.args.max_iter <= current_iteration:
                 logging.info(
@@ -288,8 +330,18 @@ class TheLookECommSimulator:
                 )
                 break
 
+            now = loop.time()
+            if now - window_start >= 60:
+                logging.info(
+                    f"pace: {window_done / (now - window_start):.1f} iterations/s "
+                    f"(target {self.args.avg_qps:g}), {window_dropped:.1f} s behind dropped"
+                )
+                window_start, window_done, window_dropped = now, 0, 0.0
             try:
-                wait_time = random.expovariate(self.args.avg_qps)
+                next_at, wait_time, dropped = next_deadline(
+                    next_at, now, random.expovariate(self.args.avg_qps)
+                )
+                window_dropped += dropped
                 await asyncio.sleep(wait_time)
 
                 await self._simulate_purchases()
@@ -314,6 +366,7 @@ class TheLookECommSimulator:
                     )
                 self.consecutive_db_errors = 0
                 current_iteration += 1
+                window_done += 1
         logging.info("Simulation loop has finished.")
 
     async def close(self):
@@ -326,15 +379,24 @@ class TheLookECommSimulator:
 
 
 async def run_simulation(args: argparse.Namespace):
-    """Orchestrates the creation, initialization, and execution of the simulator."""
-    simulator = TheLookECommSimulator(args, Faker())
+    """Orchestrates the creation, initialization, and execution of the simulator.
+
+    --workers N runs N simulators, each with its own connections and 1/N of
+    the rate (SQLAlchemy connections are not shared between them); the first
+    one does the one-time setup."""
+    share = copy.copy(args)
+    share.avg_qps = args.avg_qps / args.workers
+    simulators = [
+        TheLookECommSimulator(share, Faker()) for _ in range(args.workers)
+    ]
     try:
-        if await simulator.initialize():
-            await simulator.run()
+        if await simulators[0].initialize():
+            await asyncio.gather(*(s.run() for s in simulators))
     except asyncio.CancelledError:
         logging.warning("Data generation task was cancelled.")
     finally:
-        await simulator.close()
+        for simulator in simulators:
+            await simulator.close()
 
 
 def main():
@@ -345,7 +407,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate theLook eCommerce data")
     ## --- General Arguments ---
     parser.add_argument("--avg-qps", type=float, default=20.0, help="Average events per second.")
-    parser.add_argument("--max-iter", type=int, default=-1, help="Max number of successful iterations. Default -1 for infinite.")
+    parser.add_argument("--max-iter", type=int, default=-1, help="Max number of successful iterations (per worker). Default -1 for infinite.")
+    parser.add_argument("--workers", type=int, default=1, help="Concurrent simulators sharing --avg-qps, each with its own connections (load tests).")
     ## --- User Arguments ---
     parser.add_argument("--init-num-users", type=int, default=1000, help="Initial number of users to create.")
     parser.add_argument("--country", default="*", help="User country.")

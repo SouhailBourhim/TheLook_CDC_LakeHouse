@@ -46,4 +46,13 @@ Changes made in this repository (Apache 2.0, section 4(b)):
   category); a popularity skew on each order's first item
   (--popularity-skew, Zipf exponent, default 0.8). Setting the probability
   and the skew to 0 restores the upstream behaviour.
+- Load mode (P9): the main loop paces iterations on a schedule instead of
+  sleeping before each one, so the work's duration no longer lowers the
+  rate (more than 1 s behind, the backlog is dropped and logged); random
+  users and orders are picked through the primary key (the first id at or
+  after a random UUID) instead of ORDER BY RANDOM(), a full table scan;
+  --workers runs several simulators sharing the rate, each with its own
+  connections; a once-a-minute log line gives the achieved rate.
+- src/models.py: an index on order_items (order_id), created at start
+  with the tables (an order update scanned the whole table).
 - Every change is visible in the Git history of this directory.
