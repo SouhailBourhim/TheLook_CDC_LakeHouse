@@ -199,6 +199,9 @@ def run_level(level: str) -> dict:
     stop.set()
     sampler.join()
     link_after = link()
+    # Before the rate changes back: Compose recreates the containers for a
+    # new environment, and their logs (the pace lines) go with them.
+    achieved, dropped_per_min = pace(start, end, int(workers) * containers)
     set_generator(BASE_RATE, "1")
     w, t_end = f"{WINDOW}s", end.timestamp()
     result = {
@@ -227,9 +230,7 @@ def run_level(level: str) -> dict:
         "cpu": {k: round(statistics.mean(v)) for k, v in samples.items()},
         "link_after": link_after,
     }
-    result["achieved"], result["dropped_per_min"] = pace(
-        start, end, int(workers) * containers
-    )
+    result["achieved"], result["dropped_per_min"] = achieved, dropped_per_min
     log(f"window {result['window']} done; waiting for bronze to drain")
     wait_for_drain(t_end)
     lag = bronze_lag(start.replace(tzinfo=None), end.replace(tzinfo=None))
