@@ -10,9 +10,9 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 2.2                                           |
-| Date         | 10 October 2026                               |
-| Status       | In progress: P1 to P5 built, P6 in progress   |
+| Version      | 2.3                                           |
+| Date         | 11 October 2026                               |
+| Status       | In progress: P1 to P8 built, P9 next          |
 
 ### Revision history
 
