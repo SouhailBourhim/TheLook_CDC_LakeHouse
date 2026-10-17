@@ -12,6 +12,8 @@ headless Chromium: `uv run --with playwright==1.55.0 python -m playwright
 install chromium-headless-shell` (on WSL it may also need libnss3, libnspr4
 and libasound2 on LD_LIBRARY_PATH).
 
+Grafana (bi profile, P9b) for the two dashboard captures.
+
 Usage: uv run scripts/readme_screenshots.py [name ...]   (default: all)
 """
 
@@ -151,6 +153,23 @@ def api_docs(page: Page) -> None:
     page.screenshot(path=RAW / "api-docs.png")
 
 
+def grafana(page: Page, uid: str, since: str) -> None:
+    """A Grafana dashboard (bi profile, P9b), its first screen in kiosk mode,
+    over `since` (a window without a laptop sleep: one batch spanning hours
+    would set a chart's scale). Grafana draws a panel once it is in view: scroll through, back up, then
+    wait for the queries (Athena takes seconds)."""
+    page.goto(
+        f"http://localhost:3000/d/{uid}?orgId=1&kiosk&theme=dark&from={since}&to=now",
+        wait_until="networkidle",
+    )
+    for _ in range(6):
+        page.mouse.wheel(0, 400)
+        page.wait_for_timeout(300)
+    page.mouse.wheel(0, -4000)
+    page.wait_for_timeout(12000)
+    page.screenshot(path=RAW / f"grafana-{uid.removeprefix('thelook-')}.png")
+
+
 FRAME = """<!doctype html><html><head><meta charset="utf-8"><style>
 body {{ margin: 0; background: transparent; font-family: system-ui, sans-serif; }}
 .pad {{ padding: 28px 32px 40px; display: inline-block; }}
@@ -197,6 +216,14 @@ SHOTS = {
     "prometheus-rules": ("localhost:9090 · rules", prometheus_rules),
     "neo4j-recommendations": ("localhost:7474 · browser", neo4j_graph),
     "api-docs": ("localhost:8000 · docs", api_docs),
+    "grafana-pipeline": (
+        "localhost:3000 · theLook: pipeline health",
+        lambda p: grafana(p, "thelook-pipeline", "now-2h"),
+    ),
+    "grafana-business": (
+        "localhost:3000 · theLook: business (gold marts)",
+        lambda p: grafana(p, "thelook-business", "now-30d"),
+    ),
 }
 
 

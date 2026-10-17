@@ -3109,9 +3109,79 @@ the offline steps first.
   at 2.6 h: the 2 GiB oplog filled by the load test (alerts firing since
   05:37); it recovers at the normal rate.
 
-### Where we stopped (2026-10-17, 02:30 UTC) — LATEST, start here
+### Step 2 drill passed; a laptop sleep, 08:22-15:57
 
-- Steps 0 (except the daytime link baseline) and 1 done.
-- **Next: step 2** (DNS blips: find the throwing layer, then SDK retries,
-  drill with the worker's network cut). Needs the stack and AWS in
-  daytime, with the link baseline from step 0 first.
+- `drills/aws_outage.py 180`: AWS cut 07:29:58-07:32:59 from the drivers
+  and the worker, mid-silver; one Spark task timed out and was retried;
+  **every transform task succeeded on try 1** (`1d5dc1c`). CI now fails an
+  alert without a runbook entry (`bf9f192`).
+- The machine slept ~7.5 h during the "before compaction" bytes run. On
+  waking: Spark lost its executor (no heartbeat), its shuffle output went
+  with it, and the Airflow task's API token had expired (`403 Invalid auth
+  token`): `up_for_retry`, rerun safely (idempotent MERGE). Bronze: 0
+  restarts, next batch committed at once. A measurement spanning a sleep
+  is discarded, not corrected.
+
+### Scan cost measured, P9 wrap-up (17:00-19:00)
+
+- Without maintenance (paused since 10-15), transform slowed run after run
+  (delete files every read must apply): task time 896 -> ~1,690 s, longer
+  than the 30-min schedule. The first maintenance: 511 s (-70 %). Lesson:
+  a run longer than its schedule leaves no idle gap, so the planned
+  "before" bytes baseline was impossible; pausing the DAG mid-queue
+  stalled a run (a paused DAG schedules no new tasks of a running run):
+  durations stand for "before".
+- **Compaction has a hidden cost:** bin-packing merged gold's day-grouped
+  files into one, and a one-day query went from 20 KB to 4.2 MB. Fixed by
+  day ordering (sort order, 32 MB files, 8 MB row groups; compaction uses
+  the sort strategy): -68 % on one day, -42 % on 7 days, +16-22 % on full
+  scans. Step 9 (partition by day) stays dropped: ordering does the job.
+- One transform run downloads 723 MB (-80 % vs a computed full reload of
+  ~3.6 GB); it grows with the tables (P4: 290-340 MB at 2.5x less data).
+- Two more laptop sleeps (08:22-15:57, 18:03-18:13): runs retried on
+  their own (expired task tokens), bronze never restarted; measurements
+  spanning a sleep discarded.
+- Not built, recorded: step 10 (incremental dim_user: the measured run
+  fits the schedule), step 14 (OpenLineage, optional). Commit-in-parallel
+  in bronze recorded as the lever for throughput (changes ADR 012).
+- The "LATEST" marker of 2026-10-15 above is history; this one is current.
+
+### P9 / P9b checkpoint (rule 8) — for Souhail, without the code
+
+1. Where did the scan-cost savings come from? Name the three mechanisms
+   and what each one saves, and the one that cost something.
+2. Where is the throughput limit, and which component hits it first? Why
+   is that component limited by the network and not its CPU, and what
+   would you change to raise the limit?
+3. CI reaches AWS without a stored key. Walk through how, and explain why
+   the role can read the Terraform state but not the lake's data, and why
+   the first drift run was refused.
+4. A DNS outage lasts 6 minutes. Before P9, where did it fail, and where
+   is it absorbed now? Why put the long retries in that layer and not in
+   the SDK or in Airflow?
+5. (P9b) Why are the dashboards files in the repository rather than built
+   in the UI? What does each panel cost in Athena, and what keeps that
+   bounded? What can Grafana's Airflow identity never read, and why?
+
+**P9 / P9b checkpoint (2026-10-17): passed.** All five right, each by its
+mechanism: columnar reads, file statistics, compaction and the day-order
+trade-off, Athena's 10 MB minimum, S3 egress -80 %; bronze's sequential
+commits (36 s fixed + 0.18 ms per record), commit-in-parallel as the lever;
+OIDC with aud and the immutable sub, object vs bucket ARNs; the retry
+layers and why the job layer; provisioning, result reuse, the marts-only
+identity, column grants without `dag_run.conf`. Added: the q3 jump mixes
+layout and data growth (10-17 holds a third of the orders): compare per
+row, the sorted layout reads 1.36 MB for that third; the ~2,700 and
+~5,500 events/s are projected from two fitted lines, not measured; in the
+natural outage most of the wait was Iceberg's own commit retries (55),
+the job layer guaranteeing the total span.
+
+### Where we stopped (2026-10-17, 19:00 UTC) — LATEST, start here
+
+- **P9 and P9b built; acceptance measured** (throughput limit, scan cost
+  reduction; README, ADRs 022-023 accepted, runbook complete and checked
+  in CI). README: P9/P9b rows, demos, Grafana screenshots, roadmap.
+- **Checkpoint passed** (above). Next: record the demo video (`docs/demo-video.md`, Grafana as the
+  dashboard), and P10 only if wanted (optional, spec section 9).
+- Open: step 13's two check questions (not answered yet); the MongoDB
+  oplog window recovering from the load test (alerts until ~24 h).

@@ -1352,3 +1352,51 @@ started from the repository with no volume.
   "Provisional days" scans each time (`current_date` prevents reuse).
 - The container refuses to start with an empty key: `set
   GRAFANA_AWS_ACCESS_KEY_ID in onprem/.env`, exit 1.
+
+## CV bullets with measured values (spec 10.1, P9 wrap-up)
+
+Every number below is measured, and the section it comes from says how.
+Interviewers will ask; the answer is in this file.
+
+- Built a CDC pipeline from PostgreSQL and MongoDB (Debezium, Kafka
+  Connect, Schema Registry, PySpark Structured Streaming, Iceberg on S3)
+  that replaced full reloads with incremental runs downloading 80 % less
+  per run (723 MB against a computed ~3.6 GB full rebuild), with changes
+  queryable in bronze in 75 s median (P3) and a lag p95 of 105 s at the
+  O8 load (P9). *(P3 acceptance 1; P9 load test; P9 scan cost)*
+- Modelled a star schema with SCD Type 2 user history in PySpark (MERGE
+  on Iceberg), validated by 266 automated tests (pytest, chispa) across
+  the jobs, the API, the generator and the DAGs. *(test functions counted
+  2026-10-17)*
+- Served real-time user features from Redis and co-purchase
+  recommendations from Neo4j through a FastAPI service, with features
+  9.6 s median (10.6 s max) behind the source. *(P5 freshness)*
+- Implemented data contracts that caught 2 of 2 injected schema-breaking
+  changes (an incompatible type, blocked at the registry and alerted in
+  96 s; a malformed schemaless document, caught by the silver contract)
+  and detected a compatible column through a drift check. *(P7 acceptance)*
+- Implemented right-to-erasure across transactional and clickstream data
+  in Iceberg, Redis and time travel (snapshot expiry), verified in every
+  store: 1 h 45 min against a 24-hour objective. *(P8 erasure)*
+- Cut transform run time by 70 % through compaction (1,690 to 511 task
+  seconds) and one-day queries by 68 % by clustering gold facts by day
+  instead of partitioning; incremental MERGE models read 80 % less than a
+  full reload. *(P9 scan cost)*
+- Validated fault tolerance with scripted failure drills (connector
+  crash, broker restart, an hour of Debezium downtime, stream killed
+  mid-batch, offset replay, AWS unreachable mid-run): 160,884 records
+  reconciled with 0 lost and 0 duplicated, and every transform task on
+  its first try through a 3-minute outage. *(P8 drills; P9 step 2)*
+- Sustained 2,230 change events/s (10.6x the 200/s objective) with a
+  source-to-bronze lag p95 of 102 s, and located the limit: bronze's
+  sequential commits over the network, not CPU. *(P9 load test)*
+
+## Demo helper, tested live (P9 wrap-up), 2026-10-17 18:41 UTC
+
+`drills/demo_order.py`, the demo video's story: order
+`de66aba8-...` picked as the generator's newest, in bronze **29 s** later;
+returned in PostgreSQL (the order and its item, one transaction), the
+return in bronze **63 s** later; transform triggered (queued behind the
+scheduled 18:30 run), gold `is_returned = true` and the day's returns in
+`mart_daily_revenue` 3,149.43, **997 s** after the return (most of it the
+queue). Exit 0.

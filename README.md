@@ -34,7 +34,7 @@
 </p>
 
 <p align="center"><sub>
-P1 to P8 built, accepted and drilled; P9 (hardening) next. A learning project: the
+P1 to P9b built, accepted and drilled; P10 (Kinesis, Flink) optional. A learning project: the
 <a href="docs/cahier-des-charges.md">cahier des charges</a> is the specification, the
 <a href="docs/adr/">ADRs</a> hold the reasoning, <a href="docs/results.md">results</a> every measurement.
 </sub></p>
@@ -56,15 +56,21 @@ P1 to P8 built, accepted and drilled; P9 (hardening) next. A learning project: t
 
 <p align="center">
 <img src="docs/images/screens/prometheus-slot-drill.png" alt="Prometheus: retained WAL climbing to 212 MB over an hour then dropping to zero, and ReplicationSlotInactive pending then firing" width="49%">
-<img src="docs/images/screens/prometheus-rules.png" alt="Prometheus rule health page: 14 alert rules in four groups" width="49%">
+<img src="docs/images/screens/prometheus-rules.png" alt="Prometheus rule health page: alert rules in their groups" width="49%">
 </p>
-<p align="center"><sub><b>Prometheus</b>: the slot drill as recorded, WAL piling up while Debezium is stopped and the alert firing after 30 minutes &nbsp;·&nbsp; <b>Prometheus</b>: the 14 alert rules</sub></p>
+<p align="center"><sub><b>Prometheus</b>: the slot drill as recorded, WAL piling up while Debezium is stopped and the alert firing after 30 minutes &nbsp;·&nbsp; <b>Prometheus</b>: the alert rules (17 since P9)</sub></p>
 
 <p align="center">
 <img src="docs/images/screens/neo4j-recommendations.png" alt="Neo4j Browser: a board short and its five most co-purchased products" width="49%">
 <img src="docs/images/screens/api-docs.png" alt="FastAPI docs: GET /products/27809/recommendations answering 200 with five products and their weights" width="49%">
 </p>
 <p align="center"><sub><b>Neo4j</b>: a product and the five products most often bought with it &nbsp;·&nbsp; <b>FastAPI</b>: the same recommendations served live</sub></p>
+
+<p align="center">
+<img src="docs/images/screens/grafana-pipeline.png" alt="Grafana pipeline health: capture lag 28 ms, time since the last bronze batch, change events per second by connector, bronze batch durations under the 60 s trigger, slot WAL retained" width="49%">
+<img src="docs/images/screens/grafana-business.png" alt="Grafana business dashboard: orders and net revenue of the newest day, return rate, conversion, daily revenue over 30 days, provisional days, session funnel, best-rated products" width="49%">
+</p>
+<p align="center"><sub><b>Grafana</b>: the pipeline live (the 11-minute batch at 18:13 is the laptop sleeping, absorbed with no restart) &nbsp;·&nbsp; <b>Grafana</b>: the gold marts through Athena, a marts-only identity</sub></p>
 
 ## Architecture
 
@@ -148,7 +154,7 @@ of every table, and leaves an audit that never holds the identifier.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/roadmap-dark.svg">
-  <img alt="Roadmap: P1 to P8 done, P9 hardening next, P10 optional" src="docs/images/roadmap-light.svg" width="100%">
+  <img alt="Roadmap: P1 to P9b done; P10 optional" src="docs/images/roadmap-light.svg" width="100%">
 </picture>
 
 ## What is built
@@ -176,6 +182,11 @@ of every table, and leaves an audit that never holds the identifier.
 | GDPR erasure: one request removes a user from both sources, bronze (by the stream), silver, gold, the daily marts, Redis and time travel, with an audit that never holds the id; 1 h 45 min measured (O5: 24 h) | P8 | `airflow/dags/gdpr_erasure.py`, `drills/request_erasure.py`, `drills/verify_erasure.py` |
 | Backfill: recompute gold for a day range from silver, a day replaced whole, contracts checked after each day | P8 | `airflow/dags/backfill.py`, `drills/backfill_drill.py` |
 | Failure drills (FR14): Connect killed, Kafka restarted, Debezium stopped an hour, stream killed mid-batch, offsets replayed, Neo4j frozen; each ends with an exact check | P8 | `drills/`, runbook "Failure drills" |
+| Network outages absorbed inside the jobs (retries spanning ~6.6 min, the one layer where every step is idempotent); drill: AWS cut 3 min mid-transform, every task on its first try | P9 | `spark/lakehouse/bronze.py` `with_retries`, `drills/aws_outage.py` |
+| Load test: generator not bound by its own latency (open-loop pacing, workers, containers); per-row source-to-bronze lag from Iceberg metadata; O8 passed, 2,230 events/s carried | P9 | `drills/throughput_run.py`, `spark/lakehouse/lag.py` |
+| Streaming progress in Prometheus (a listener in each driver) and stream alerts (stalled, crash loop, batches over the trigger); every alert has a runbook entry, checked in CI | P9 | `spark/lakehouse/stream_metrics.py`, `onprem/monitoring/alerts.yml` |
+| CI: terraform fmt and validate; a weekly read-only drift check through OIDC (no AWS key in GitHub) | P9 | `.github/workflows/ci.yml`, `drift.yml`, `infra/terraform/lake/ci.tf` |
+| Dashboards: pipeline health (capture, bronze, Airflow runs, sources, alerts) and the gold marts, provisioned from the repository | P9b | `onprem/grafana/`, `http://localhost:3000` |
 
 ## Repository layout
 
@@ -440,6 +451,56 @@ case that must fail.
 
 </details>
 
+<details>
+<summary><b>How to demo P9 (about 3 minutes)</b></summary>
+
+With `core monitoring stream airflow bi` up:
+
+```bash
+# 1. The link to AWS, the condition behind every duration:
+python3 scripts/link_probe.py
+# 2. AWS unreachable for 3 minutes in the middle of a transform run:
+#    every task still succeeds on its first try (retries inside the jobs)
+uv run drills/aws_outage.py 180
+# 3. The load test (about 2 hours): O8 and what saturates first
+uv run drills/throughput_run.py 10/1 20/2 40/4
+# 4. Where reading the lake costs: Athena per query, S3 per transform run
+python3 scripts/scan_benchmark.py
+uv run --with boto3==1.40.40 python scripts/transform_bytes.py
+# 5. CI: Actions tab, workflows "ci" (terraform fmt and validate, runbook
+#    coverage) and "drift" (read-only terraform plan through OIDC)
+```
+
+Talking points: why the retries live in the jobs and not in the SDK or
+Airflow; why bronze's limit is the link and not its CPU (36 s of sequential
+commits per batch); how a missing index made the load generator the
+bottleneck before the pipeline; why a drift check needs no write access
+and no stored key; what a laptop sleep does to Spark and Airflow.
+
+</details>
+
+<details>
+<summary><b>How to demo P9b, the dashboards (about 2 minutes)</b></summary>
+
+`make up PROFILES="core monitoring stream airflow bi"`, then
+http://localhost:3000 (no login to view):
+
+1. *Pipeline health*: capture lag, time since the last bronze batch,
+   batches against the 60 s trigger; the Airflow row shows the transform
+   run in progress, its try and duration; gold age against O2.
+2. Change a row in PostgreSQL (or run `drills/demo_order.py`): events
+   captured rise, a bronze batch picks it up, the next transform run moves
+   gold age back near zero.
+3. *Business*: the revenue mart with its provisional days, the funnel,
+   ratings, read through Athena with a marts-only identity.
+
+Talking points: dashboards as code (nothing to back up, nothing edited in
+the UI); three data sources, three least-privilege identities (Athena on
+`mart_*` only, Airflow's database by column, never `dag_run.conf`); Athena
+result reuse bounds the cost; why every panel was checked in a browser.
+
+</details>
+
 ## Design decisions
 
 Each has an ADR with the alternatives and consequences.
@@ -466,6 +527,8 @@ Each has an ADR with the alternatives and consequences.
 | Graph: companion products in the generator, full rebuild stamped with a run id, one writer, liveness `/health` + readiness `/ready` | Exact acceptance; idempotent and erasure-proof; never an empty graph; a store outage never restarts the API | [019](docs/adr/019-co-purchase-graph.md) |
 | Contracts per table, checks in Athena as a read-only user, own drift check, dead letters, one alert hub (Alertmanager -> SNS email) | A drift or a broken rule fails a check instead of passing silently; no laptop transfer; every alert reaches one inbox | [020](docs/adr/020-contracts-quality-alerting.md) |
 | Erasure through every layer (bronze purged by the stream), day-range backfill as an Airflow DAG, failure drills with exact checks | Erased everywhere within O5 with an audit that holds no identifier; a backfill can never duplicate; each FR14 claim is evidence | [021](docs/adr/021-erasure-and-backfill.md) |
+| CI reaches AWS only through OIDC, for a read-only drift check; applying stays manual | No stored key, nothing in CI can change AWS, drift found within a week | [022](docs/adr/022-ci-oidc-drift-check.md) |
+| Grafana with dashboards as code: Prometheus, the gold marts through Athena (marts-only identity, result reuse), Airflow's own database (column grants) | One place for the pipeline and what analysts see; reproducible; each identity reads only what its panels need | [023](docs/adr/023-grafana-dashboards.md) |
 
 ## After cloning
 

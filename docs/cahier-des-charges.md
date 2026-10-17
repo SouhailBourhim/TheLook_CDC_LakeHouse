@@ -12,7 +12,7 @@ governed, cost-controlled analytics lakehouse
 | Project type | Personal portfolio project (data engineering) |
 | Version      | 2.4                                           |
 | Date         | 17 October 2026                               |
-| Status       | In progress: P1 to P8 built, P9 in progress   |
+| Status       | P1 to P9b built; P10 optional                 |
 
 ### Revision history
 
