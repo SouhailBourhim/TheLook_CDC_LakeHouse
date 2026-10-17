@@ -496,7 +496,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
-        test -n "$$READER_PASSWORD" || { echo "set GRAFANA_AIRFLOW_DB_PASSWORD in onprem/.env"; exit 1; };
+        test -n "$$READER_PASSWORD" || { echo "GRAFANA_AIRFLOW_DB_PASSWORD not set: no Grafana role (the bi profile's Airflow panels need it)"; exit 0; };
         exec psql -h airflow-db -U airflow -d airflow -q -v pw="$$READER_PASSWORD" -f /airflow-reader.sql
 
   airflow-apiserver:
@@ -504,6 +504,10 @@ services:
     profiles: [airflow]
     depends_on:
       airflow-init:
+        condition: service_completed_successfully
+      # Also tells `up --wait` that this one-shot's exit is expected: without
+      # a service waiting on it, --wait reports it as a failure.
+      airflow-grafana-reader:
         condition: service_completed_successfully
     environment:
       <<: *airflow-common
