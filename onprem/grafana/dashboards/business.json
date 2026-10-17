@@ -1,0 +1,334 @@
+{
+  "uid": "thelook-business",
+  "title": "theLook: business (gold marts)",
+  "description": "What an analyst sees: the gold marts through Athena, refreshed every 30 minutes like the transform DAG. Synthetic data (spec 4.3).",
+  "editable": false,
+  "tags": [
+    "thelook"
+  ],
+  "timezone": "utc",
+  "refresh": "30m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "schemaVersion": 41,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Orders, newest day",
+      "description": "From mart_daily_revenue; days stay provisional until their return window closes.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 1,
+          "rawSQL": "SELECT orders FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 1",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Net revenue, newest day",
+      "description": "Gross revenue minus returns.",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 1,
+          "rawSQL": "SELECT net_revenue FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 1",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Return rate, last 7 days",
+      "description": "Returned value over gross revenue. As doubles: a decimal division keeps 2 decimals and shows 0.06 % as 0.00.",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 1,
+          "rawSQL": "SELECT CAST(sum(returns) AS double) / CAST(sum(gross_revenue) AS double) FROM (SELECT * FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 7)",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Conversion, last 7 days",
+      "description": "Sessions that purchased, over sessions (the mart already leaves ghost sessions out). About 98 %: the generator creates sessions around purchases (synthetic data, spec 4.3).",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 1,
+          "rawSQL": "SELECT CAST(sum(purchased) AS double) / sum(sessions) FROM (SELECT * FROM mart_session_funnel ORDER BY date_key DESC LIMIT 7)",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Daily revenue (last 30 days)",
+      "description": "One row per order day. The newest days are provisional: returns still arrive (provisional_until).",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 16,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 0,
+          "rawSQL": "SELECT CAST(date AS timestamp) AS time, gross_revenue, returns, net_revenue FROM mart_daily_revenue ORDER BY date_key DESC LIMIT 30",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Provisional days",
+      "description": "Days whose figures can still change (FR6): their return window has not closed.",
+      "gridPos": {
+        "x": 16,
+        "y": 4,
+        "w": 8,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 1,
+          "rawSQL": "SELECT date, net_revenue, provisional_until FROM mart_daily_revenue WHERE provisional_until >= current_date ORDER BY date DESC",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Session funnel (last 7 days)",
+      "description": "From mart_session_funnel; ghost sessions (no user) excluded.",
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 1,
+          "rawSQL": "SELECT 'sessions' AS step, sum(sessions) AS n FROM (SELECT * FROM mart_session_funnel ORDER BY date_key DESC LIMIT 7) UNION ALL SELECT 'viewed a product', sum(viewed_product) FROM (SELECT * FROM mart_session_funnel ORDER BY date_key DESC LIMIT 7) UNION ALL SELECT 'added to cart', sum(added_to_cart) FROM (SELECT * FROM mart_session_funnel ORDER BY date_key DESC LIMIT 7) UNION ALL SELECT 'purchased', sum(purchased) FROM (SELECT * FROM mart_session_funnel ORDER BY date_key DESC LIMIT 7)",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "step"
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Best-rated products (at least 5 reviews)",
+      "description": "From mart_product_ratings (synthetic reviews, spec 4.3). Few reviews per product: 7 at most, 4 at the 99th percentile.",
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 12,
+        "h": 9
+      },
+      "datasource": {
+        "type": "grafana-athena-datasource",
+        "uid": "athena"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-athena-datasource",
+            "uid": "athena"
+          },
+          "format": 1,
+          "rawSQL": "SELECT name, brand, category, review_count, round(average_rating, 2) AS average_rating FROM mart_product_ratings WHERE review_count >= 5 ORDER BY average_rating DESC, review_count DESC LIMIT 15",
+          "connectionArgs": {
+            "region": "__default",
+            "catalog": "__default",
+            "database": "__default",
+            "resultReuseEnabled": true,
+            "resultReuseMaxAgeInMinutes": 30
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ]
+}

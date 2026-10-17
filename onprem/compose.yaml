@@ -837,6 +837,57 @@ services:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - ./monitoring/start-alertmanager.sh:/etc/alertmanager/start-alertmanager.sh:ro
 
+  # --- bi profile (P9b, ADR 023): Grafana dashboards ----------------------------
+  # Pipeline health from Prometheus (needs the monitoring profile up: no
+  # depends_on across profiles) and the gold marts through Athena.
+  #   make up PROFILES="core monitoring stream bi"   -> http://localhost:3000
+  # No volume: data sources and dashboards are provisioned from the image at
+  # each start (onprem/grafana), so nothing in Grafana is worth keeping.
+  grafana:
+    build: ./grafana
+    image: thelook-grafana:local
+    profiles: [bi]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      # Anyone who can reach localhost:3000 views the dashboards; editing
+      # needs the admin login (and provisioned dashboards cannot be saved).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/pipeline-health.json
+      # Grafana 13 downloads and updates ~17 plugins from grafana.com at each
+      # start (Loki, Tempo, MySQL... and Prometheus itself): unchecked code,
+      # and a start that depends on the network. Off: the image holds the
+      # plugins we use, pinned (onprem/grafana/Dockerfile).
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      # No calls home.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # The thelook-grafana IAM user (grafana.tf): Athena on the gold marts
+      # only. Read by provisioning/datasources/datasources.yaml.
+      GRAFANA_AWS_ACCESS_KEY_ID: ${GRAFANA_AWS_ACCESS_KEY_ID:-}
+      GRAFANA_AWS_SECRET_ACCESS_KEY: ${GRAFANA_AWS_SECRET_ACCESS_KEY:-}
+    # The variables above are optional for Compose (":?" would fail every
+    # `docker compose` command, any profile, until .env has them): the
+    # container refuses to start without them instead.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        for v in GF_SECURITY_ADMIN_PASSWORD GRAFANA_AWS_ACCESS_KEY_ID GRAFANA_AWS_SECRET_ACCESS_KEY;
+        do eval "test -n \"\$$$$v\"" || { echo "set $$v in onprem/.env"; exit 1; }; done;
+        exec /run.sh
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
 volumes:
   pgdata:
   airflow-db:

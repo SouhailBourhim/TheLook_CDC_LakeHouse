@@ -1096,3 +1096,35 @@ stack's life, `pg_stat_user_tables.seq_tup_read`). The GDPR erasure's
   what one generator process can produce; the load test's question is
   therefore bronze.
 - ~10.4 change events per iteration, as in P1.
+
+## P9b: Grafana dashboards — 2026-10-17
+
+Grafana 13.2.3 with the Athena plugin 3.3.6 (`bi` profile, ADR 023),
+started from the repository with no volume.
+
+- **Provisioned on a fresh start:** both data sources pass Grafana's health
+  check (Athena with the marts-only `thelook-grafana` key), both dashboards
+  appear in the *theLook* folder without a login; every panel's query run
+  through Grafana's API: 11 of 11 pipeline panels, 8 of 8 business panels
+  return data.
+- **Found by running the panels, not by reading them:** a conversion of
+  1.13 (the mart's `sessions` already excludes ghost sessions; subtracted
+  twice), a return rate of 0.00 (Athena keeps 2 decimals when dividing two
+  `decimal(38,2)`: 0.06 % rounds to 0), an empty ratings table (at most 7
+  reviews per product, a threshold of 20).
+- **Grafana 13 downloads ~17 plugins at each start** (Prometheus, Loki,
+  Tempo, MySQL...), which also briefly unregistered Prometheus (every
+  pipeline panel answered "Plugin not registered" while it updated itself
+  from 13.2.1 to 13.2.3). With `GF_PLUGINS_PREINSTALL_DISABLED`, nothing is
+  downloaded; Prometheus is the 13.2.1 bundled in the pinned image.
+- **Athena per refresh** (from Athena's own query statistics):
+
+| Refresh | Bytes scanned | Billed (10 MB minimum per scanning query) |
+|---|---|---|
+| cold (new query text) | ~440 KB (ratings 403 KB) | 8 x 10 MB = 80 MB, ~$0.0004 |
+| warm (within 30 min) | 303 bytes; 7 of 8 answered from result reuse | 1 x 10 MB, ~$0.00005 |
+
+  An open dashboard (30-min refresh, 30-min reuse): at most ~$0.02/day.
+  "Provisional days" scans each time (`current_date` prevents reuse).
+- The container refuses to start with an empty key: `set
+  GRAFANA_AWS_ACCESS_KEY_ID in onprem/.env`, exit 1.

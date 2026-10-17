@@ -770,6 +770,39 @@ Create, rotate and revoke exactly as above, with
 `--user-name thelook-spark-batch`. Only this key (never the stream key) goes
 into Airflow's environment (ADR 013).
 
+## Grafana (profile `bi`, P9b, ADR 023)
+
+`make up PROFILES="core monitoring stream bi"`, then http://localhost:3000:
+the *theLook* folder holds *pipeline health* (home page, Prometheus) and
+*business (gold marts)* (Athena). Viewing needs no login; editing needs
+user `admin` and `GRAFANA_ADMIN_PASSWORD`. Everything comes from
+`onprem/grafana` at each start: no volume, nothing to back up.
+
+**First time:** set `GRAFANA_ADMIN_PASSWORD` in `onprem/.env`, then create
+the Athena key of IAM user `thelook-grafana` (gold marts only, `grafana.tf`):
+
+```bash
+aws --profile thelook iam create-access-key --user-name thelook-grafana
+# copy AccessKeyId and SecretAccessKey into onprem/.env
+# (GRAFANA_AWS_ACCESS_KEY_ID, GRAFANA_AWS_SECRET_ACCESS_KEY)
+```
+
+Rotate and revoke as in "Spark AWS credentials" (user `thelook-grafana`).
+
+- **The container exits with "set ... in onprem/.env"**: one of the three
+  variables is empty (Compose does not require them, so other profiles
+  start without them; the container checks).
+- **Pipeline panels say "No data"**: the `monitoring` profile is not up
+  (Grafana reads its Prometheus), or the stream profile is stopped (the
+  bronze panels come from the stream's own metrics).
+- **Business panels fail with AccessDenied**: the query reads something
+  other than a `mart_*` table; Grafana's identity is limited to the marts
+  on purpose (`dim_user` holds addresses).
+- **Change a dashboard**: edit it in the UI (admin), export the JSON
+  (Share > Export), replace the file in `onprem/grafana/dashboards/`,
+  commit, `make up` (rebuilds the image). Saving in the UI is refused:
+  provisioned dashboards cannot be overwritten.
+
 ## Drift check (GitHub Actions `drift`, ADR 022)
 
 Weekly (Mondays 06:17 UTC) and on pushes touching `infra/terraform/`:

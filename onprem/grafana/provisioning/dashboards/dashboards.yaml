@@ -1,0 +1,12 @@
+# Dashboards (P9b, ADR 023): the JSON files in /etc/grafana/dashboards,
+# loaded at start. allowUiUpdates: false, so a change made in the UI cannot
+# be saved over them: change the JSON in the repository instead.
+apiVersion: 1
+
+providers:
+  - name: thelook
+    folder: theLook
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

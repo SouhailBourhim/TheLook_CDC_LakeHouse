@@ -1,0 +1,30 @@
+# Data sources (P9b, ADR 023), created at each start from this file;
+# editable: false, so the UI cannot drift from the repository.
+apiVersion: 1
+
+datasources:
+  # The monitoring profile's Prometheus (same Compose network).
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  # Athena with the thelook-grafana user (grafana.tf): the gold marts only.
+  # The key comes from onprem/.env through the container's environment,
+  # never from this file. The workgroup enforces the 1 GiB scan cutoff.
+  - name: Athena
+    uid: athena
+    type: grafana-athena-datasource
+    editable: false
+    jsonData:
+      authType: keys
+      defaultRegion: us-east-1
+      catalog: AwsDataCatalog
+      database: thelook_gold
+      workgroup: thelook
+    secureJsonData:
+      accessKey: $GRAFANA_AWS_ACCESS_KEY_ID
+      secretKey: $GRAFANA_AWS_SECRET_ACCESS_KEY
