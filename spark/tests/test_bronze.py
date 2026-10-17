@@ -152,6 +152,20 @@ def test_with_retries_gives_up_after_the_last_attempt():
     assert waits == [5.0, 10.0]
 
 
+def test_with_retries_outlasts_a_six_minute_dns_outage():
+    # P8 measured DNS outages of ~6 minutes; the layers below (SDK, Spark
+    # task retries) give up within seconds.
+    waits = []
+
+    def step():
+        raise GLUE_BLIP
+
+    with pytest.raises(Exception, match="Connection refused"):
+        bronze.with_retries(step, sleep=waits.append)
+    assert waits == [5.0, 10.0, 20.0, 40.0, 80.0, 120.0, 120.0]  # capped
+    assert sum(waits) > 6 * 60
+
+
 def test_with_retries_does_not_retry_permanent_errors():
     waits = []
 

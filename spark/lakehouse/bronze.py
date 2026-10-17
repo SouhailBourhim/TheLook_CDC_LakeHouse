@@ -179,13 +179,22 @@ def is_transient(error: Exception) -> bool:
 
 def with_retries(
     step: Callable[[], object],
-    attempts: int = 5,
+    attempts: int = 8,
     first_delay: float = 5.0,
+    max_delay: float = 120.0,
     sleep: Callable[[float], None] = time.sleep,
 ) -> object:
-    """Run step(), retrying transient errors with doubling delays
-    (5, 10, 20, 40 s by default). Other errors, and the last attempt's
-    error, are raised: the micro-batch fails and Spark stops the query."""
+    """Run step(), retrying transient errors with doubling delays capped
+    at max_delay: 5, 10, 20, 40, 80, 120, 120 s by default, ~6.6 minutes
+    in all. Other errors, and the last attempt's error, are raised: the
+    micro-batch fails and Spark stops the query.
+
+    Why this long (P9 step 2): the host's DNS drops for minutes (~6 min
+    measured in P8). Below this layer, the AWS SDK retries 5 times and
+    Spark retries a task 4 times, all within ~10 s; the old 75 s here made
+    ~1.5 min in all, so a job failed and Airflow re-ran it whole. Every
+    step given here is idempotent and commits atomically, so waiting
+    inside the job costs nothing but time."""
     delay = first_delay
     for attempt in range(1, attempts + 1):
         try:
@@ -201,7 +210,7 @@ def with_retries(
                 str(error).splitlines()[0][:200],
             )
             sleep(delay)
-            delay *= 2
+            delay = min(delay * 2, max_delay)
     raise AssertionError("unreachable")
 
 
