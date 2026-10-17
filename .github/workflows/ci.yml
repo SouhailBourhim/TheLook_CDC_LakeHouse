@@ -125,6 +125,14 @@ jobs:
           --entrypoint promtool
           quay.io/prometheus/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
           test rules alerts_test.yml
+      # Every alert has a runbook entry (P9): an alert nobody can act on is
+      # noise. The name must appear in docs/runbook.md.
+      - run: |
+          status=0
+          for alert in $(grep -oE 'alert: [A-Za-z]+' onprem/monitoring/alerts.yml | cut -d' ' -f2); do
+            grep -q "$alert" docs/runbook.md || { echo "::error::$alert has no runbook entry"; status=1; }
+          done
+          exit $status
       # Alertmanager's config parses (receivers, routes, inhibitions); the
       # placeholder ARN is replaced at start (start-alertmanager.sh).
       - run: >

@@ -9,7 +9,7 @@ Network counters are the ground truth (P4): Spark's "bytes read" also
 counts reads from its own cache.
 
 Usage: uv run --with boto3==1.40.40 python scripts/transform_bytes.py [idle s]
-  (default 600). Triggers one transform run after the baseline; transform
+  (default 240), measured in a gap between transform runs. Triggers one transform run after the baseline; transform
   must not be running. Prints MB received per container, net of baseline.
 """
 
@@ -38,13 +38,28 @@ def rx() -> dict[str, int]:
     return out
 
 
+def transform_busy(airflow) -> bool:
+    runs = airflow.call(
+        "GET", "/api/v2/dags/transform/dagRuns?state=running&state=queued&limit=5"
+    )["dag_runs"]
+    return bool(runs)
+
+
 def main() -> int:
-    idle = int(sys.argv[1]) if len(sys.argv) > 1 else 600
-    a0, t0 = rx(), time.time()
-    time.sleep(idle)
+    idle = int(sys.argv[1]) if len(sys.argv) > 1 else 240
+    airflow = bd.Airflow()
+    # The baseline must be idle: wait for a gap between transform runs (one
+    # every 30 min), and start again if a run begins during it.
+    while True:
+        while transform_busy(airflow):
+            time.sleep(30)
+        a0, t0 = rx(), time.time()
+        while time.time() - t0 < idle and not transform_busy(airflow):
+            time.sleep(15)
+        if time.time() - t0 >= idle:
+            break
     a1, t1 = rx(), time.time()
     rate = {c: (a1[c] - a0[c]) / (t1 - t0) for c in CONTAINERS}
-    airflow = bd.Airflow()
     run = airflow.call("POST", "/api/v2/dags/transform/dagRuns", {"logical_date": None})
     b0, s0 = rx(), time.time()
     while (
