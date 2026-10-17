@@ -3181,7 +3181,11 @@ the job layer guaranteeing the total span.
 - **P9 and P9b built; acceptance measured** (throughput limit, scan cost
   reduction; README, ADRs 022-023 accepted, runbook complete and checked
   in CI). README: P9/P9b rows, demos, Grafana screenshots, roadmap.
-- **Checkpoint passed** (above). Next: record the demo video (`docs/demo-video.md`, Grafana as the
-  dashboard), and P10 only if wanted (optional, spec section 9).
+- **Checkpoint passed** (above). **Decision (Souhail): no demo video;
+  screenshots instead** (spec v2.5): `docs/demo.md` walks one real order
+  (18:39, `de66aba8`) through bronze (both versions, queried), the Airflow
+  run that carried it, and the Grafana dashboards. O6 measured: $0.99 for
+  October 1-17. Left: P10 only if wanted (optional); O7 from a fresh
+  clone never shown (works in daily use).
 - Open: step 13's two check questions (not answered yet); the MongoDB
   oplog window recovering from the load test (alerts until ~24 h).
