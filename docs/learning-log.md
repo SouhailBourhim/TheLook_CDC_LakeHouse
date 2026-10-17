@@ -2975,6 +2975,75 @@ the wrap-up (Claude writes the script, Souhail records it).
    right (a silently skipped table degrades unseen); the red task reaches
    a person through Alertmanager and SNS (ADR 020).
 
+### Session 19 continued (02:30-03:30 UTC, Souhail away: "/loop continue")
+
+Steps taken out of order where the night link made AWS work unreliable:
+the offline steps first.
+
+- **Step 12 (`ea9f481`)**: CI `terraform` job (fmt, `init -backend=false`,
+  validate, both configurations; lock files read-only). Checked failing
+  first: fmt exits 3 on a misformatted file, validate 1 on an undeclared
+  variable. promtool/amtool from quay.io (same digests as Docker Hub,
+  checked; no anonymous pull limit).
+- **Step 4 (`a2b9e21`, docs)**: the load test method, before the run.
+- **Step 5 (`59f71c9`)**: generator load mode (deadline pacing, key-range
+  picks, `--workers`). The first ramp found **the next limit: Postgres at
+  611 % CPU**, `order_items` had no index on `order_id` (each order update
+  scanned 1.6 M rows; 57 billion rows read over the stack's life). Index
+  added: Postgres 25 %, ~120 iterations/s (1,260 events/s) followed, then
+  one Python process caps (GIL: 16 workers = 8 workers). **A9 closed**; the
+  capture side (Debezium within ms at 1,354 events/s) never broke.
+- **Step 3 (`a625dbf`)**: streaming progress in Prometheus. Decision
+  changed from the plan (explained): a Python `StreamingQueryListener`
+  serving its own metrics instead of Spark's PrometheusServlet (no time
+  since the last batch, no backlog, names with the application id). Found
+  live: PySpark passes `str()` of each offset, so JSON null arrives as the
+  string "None" (my unit test had used Python's None). Spark's
+  "offsets behind latest" is 0 unless a batch hits `maxOffsetsPerTrigger`:
+  Spark reads up to the latest offset it sees at planning, so a slow
+  bronze shows as batch duration over the trigger, not as a backlog.
+- Bronze had been down since 2026-10-15 05:00 (Kafka keeps 3 days): caught
+  up at 03:20 (full 200,000-record batches in 68-85 s at night, ~2,500
+  records/s; normal batches 43 s).
+- **Step 13 prepared, not applied**: `ci.tf` (read-only role, trust on
+  this repo's main), `drift.yml`, ADR 022 (proposed). The account already
+  has GitHub's OIDC provider, owned by another project (`project=signal`):
+  referenced with a data source, not managed. The plan (2 to add, 3
+  in-place = only the new `sensitive` marking) is saved as
+  `infra/terraform/lake/tfplan`; **`terraform apply` was blocked by the
+  auto-mode safeguard: Souhail applies it** (`make tf-apply`), then sets
+  two repository secrets (below). Not committed until then: a push of
+  `infra/` would start a drift run without its secrets.
+- **Scan baseline (Athena half of step 8)**: every analyst query reads
+  under 16 MB; `q3` (one day) 20 KB without partitioning, because Iceberg's
+  per-file min/max on `order_date_key` already skips other days' files
+  (each transform run writes its orders into new files). Columnar reads
+  skip 95-99 % of each table. fct_orders holds 2.70 M rows in its data
+  files for 1.08 M live: 60 % dead versions awaiting compaction (no
+  maintenance since 10-15). **Consequence: step 9 (partition gold by day)
+  is not justified by the measurement**; compaction and the transform's
+  S3 bytes are where the cost is.
+
+### Decision: a dashboards phase, P9b (Souhail, 2026-10-17, spec v2.4)
+
+- Asked by Souhail ("something to visualize our project"). Options given:
+  Grafana (pipeline health on the existing Prometheus + gold marts through
+  AWS's Athena plugin, one container), Metabase/Superset (marts only,
+  heavier), QuickSight (~$24/author/month: breaks O6), nothing (Athena
+  console). **Chosen: Grafana as P9b**, after P9's acceptance and before
+  the wrap-up, so the README, the demo video ("the change reaches the
+  dashboard", section 10) and the checkpoint include it. ADR 023 at its
+  start. The spec's monitoring line still said "CloudWatch for AWS",
+  stale since v2.3: corrected in the same revision.
+- Step 13 done after Souhail's two applies: first drift run refused (the
+  repository uses GitHub's immutable OIDC subject, with owner and repo ids;
+  the trust policy expected the name-only form), fixed; green; a tag added
+  by hand turned it red, removed: green; the public log holds neither the
+  account id nor the email; IAM's simulator denies every write tried.
+- The first load test run stopped after level 1 on a drill bug: resetting
+  the generator's rate recreated its container and its logs (the pace
+  lines) went with it. Fixed (`c3dc806`), rerun from 03:51.
+
 ### Where we stopped (2026-10-17, 02:30 UTC) — LATEST, start here
 
 - Steps 0 (except the daytime link baseline) and 1 done.

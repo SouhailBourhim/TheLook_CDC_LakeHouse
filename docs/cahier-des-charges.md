@@ -10,9 +10,9 @@ governed, cost-controlled analytics lakehouse
 | Author       | Souhail Bourhim                               |
 | Programme    | INE3, Smart-ICT, INPT Rabat                   |
 | Project type | Personal portfolio project (data engineering) |
-| Version      | 2.3                                           |
-| Date         | 11 October 2026                               |
-| Status       | In progress: P1 to P8 built, P9 next          |
+| Version      | 2.4                                           |
+| Date         | 17 October 2026                               |
+| Status       | In progress: P1 to P8 built, P9 in progress   |
 
 ### Revision history
 
@@ -32,6 +32,7 @@ governed, cost-controlled analytics lakehouse
 | 2.1         | 09/10/2026 | Online features (FR15, ADR 018): the Redis writer is a separate Spark streaming application in local mode, in its own container, instead of a second query in the bronze streaming job. It needs no AWS identity, cannot slow bronze, and does not compete with the batch jobs for the cluster's cores. FR15: the recently viewed products are those of the last 72 hours (a key's TTL alone did not bound the views inside it). Redis, redis-py and FastAPI versions pinned (5.3). |
 | 2.2         | 10/10/2026 | Co-purchase graph (FR16, ADR 019), decision E2: basket affinity now picks among 5 fixed companion products per product, and the first item of an order follows a popularity skew, so co-purchase weights repeat and can rank (4.3). FR16: pairs counted over all orders, one relationship per pair, full idempotent rebuild without an empty graph. FR17: `limit` parameter and 503. P6 acceptance made exact (companions in the top 5). Neo4j and its Python driver pinned (5.3). |
 | 2.3         | 11/10/2026 | Contracts, quality and alerting (ADR 020): Alertmanager is the single alert hub (Prometheus rules and Airflow failures and quality results), delivered by SNS email, replacing the planned CloudWatch alarms (NFR observability). O8 rewritten (option B): source-to-bronze lag below 2 minutes (p95) at 200 change events/s, measured in P9. FR6: provisional days in the revenue mart. FR7: Kafka topics guarded by Schema Registry, not by datacontract-cli's experimental Kafka test; a drift check compares each contract with the table's columns. datacontract-cli and mongodb_exporter pinned (5.3). |
+| 2.4         | 17/10/2026 | Dashboards (Souhail's decision, P9): new phase P9b, Grafana in a `bi` profile, with a pipeline-health dashboard on the existing Prometheus and a business dashboard on the gold marts through Athena; dashboards as code. The demo video's "dashboard" (section 10) is this one. Scope 3.1, architecture, versions, milestones and checkpoints updated; the stale "CloudWatch for AWS" monitoring line corrected (Alertmanager since 2.3). |
 
 ## 1. Context and problem
 
@@ -106,6 +107,9 @@ become the figures used on the CV.
 - Backfills and reprocessing.
 
 - Monitoring, infrastructure as code (Terraform) and CI/CD.
+
+- Dashboards (P9b): Grafana showing the pipeline's health (Prometheus)
+  and the gold marts (Athena), defined as code in the repository.
 
 - Stream and batch processing with Apache Spark (PySpark): streaming
   ingestion to bronze, batch silver and gold.
@@ -237,13 +241,13 @@ theLook generator --> PostgreSQL (orders, users, products...) --WAL-----------+
 --- AWS side ---
    --> Iceberg bronze tables (S3 + Glue Catalog, one table per source table/collection)
    --> PySpark batch: silver (current state, SCD2) --> gold (star schema, marts)
-   --> Athena (SQL, dashboards)
+   --> Athena (SQL) --> Grafana dashboards (on-prem, P9b)
 --- Serving (on-prem) ---
    gold order items --> Neo4j co-purchase graph
    FastAPI: /users/{id}/features (Redis), /products/{id}/recommendations (Neo4j)
 
 Orchestration : Apache Airflow (self-hosted, Docker, on-prem side), spark-submit
-Monitoring    : Prometheus/Alertmanager on-prem; CloudWatch for AWS
+Monitoring    : Prometheus/Alertmanager on-prem (alerts by SNS email); Grafana dashboards (P9b)
 IaC / CI      : Terraform, GitHub Actions (ruff, pytest, terraform validate; OIDC to AWS)
 Development   : everything heavy runs locally in Docker; AWS holds only S3, Glue, Athena
 ```
@@ -298,6 +302,7 @@ recorded in the phase's ADR or commit.
 | Redis                | 8.10 (8.10.2)                      | Pinned in P5 by digest; core data structures only (bundled modules not loaded); ACL users, AOF (ADR 018) |
 | redis-py, FastAPI    | redis-py 8.1, FastAPI 0.142, pydantic 2.13, uvicorn 0.54 | Pinned in P5 from hashed lock files; the newest release at least a week old |
 | Neo4j                | 2026.08 (2026.08.1) Community      | Pinned in P6 by digest; calendar-versioned line (5.26 is the LTS); Python driver `neo4j` 6.3 (ADR 019) |
+| Grafana              | OSS, chosen at the start of P9b    | Pinned by digest; Prometheus data source built in, Amazon Athena data source plugin (maintained by AWS) |
 | datacontract-cli     | 1.2 (1.2.2)                        | Pinned in P7; own virtualenv in the Airflow image; tests through Athena (ADR 020) |
 | mongodb_exporter     | 0.53 (0.53.0, Percona)             | Pinned in P7 by digest; `--compatible-mode` for the oplog window (ADR 020) |
 
@@ -737,6 +742,7 @@ and a "how to demo" note.
 | P7             | ODCS contracts with datacontract-cli, quality checks, alerting, schema evolution drills                                                                                                           | An injected schema break is caught and an alert is raised; a compatible column addition flows end to end                                 |
 | P8             | GDPR erasure and backfill, both as Airflow DAGs; failure drills (FR14)                                                                                                                            | Erasure verified in every layer and store, including clickstream, Redis and time travel; backfill leaves no duplicates; every drill passes reconciliation |
 | P9             | Hardening: optimisation, load test, CI/CD completed (terraform validate, OIDC), ADRs, documentation; optional OpenLineage lineage                                                                 | Scan cost reduction and throughput limit measured; README, ADRs and runbook complete                                                     |
+| P9b            | Dashboards: Grafana (`bi` profile) with a pipeline-health dashboard (Prometheus: slot WAL, capture lag, bronze batches and lag, alerts) and a business dashboard (gold marts through Athena, read-only analyst identity); provisioned as code                     | Both dashboards provisioned from the repository on a fresh start; a change made in the source is visible on them; Athena reads per refresh measured |
 | P10 (optional) | AWS-managed streaming: clickstream events forwarded to a Kinesis stream and processed by Managed Flink (sessions, live funnel, late events), for the AWS Data Engineer exam                      | Live conversion funnel updated in \< 1 minute; late events handled with watermarks                                                       |
 
 **Rule:** finish P1 to P4 before starting anything else. They already form
@@ -928,6 +934,7 @@ answers without looking at the code.
 | P7        | What is the difference between a Schema Registry compatibility rule and a data contract? Which change is blocked where?                                    |
 | P8        | Where can a deleted user's data still exist after the DELETE statements, and how is each place cleaned? How do you prove a backfill created no duplicates? |
 | P9        | Where did the scan-cost savings come from? Where is the throughput limit, and which component hits it first?                                               |
+| P9b       | Why are the dashboards files in the repository rather than built in the UI? What does each panel cost in Athena, and what keeps that bounded?            |
 
 ### 13.5 CLAUDE.md
 
