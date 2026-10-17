@@ -65,8 +65,12 @@ def airflow_graph(page: Page, dag: str, run: str | None = None, name: str = "") 
     page.locator("button[aria-label*='raph'], [title*='raph']").first.click()
     page.wait_for_timeout(1500)
     page.locator("button[aria-label='Options']").first.click()
-    page.locator("button", has_text="Left to Right").click()
-    page.get_by_text("Top to Bottom", exact=True).last.click()
+    # Airflow remembers the layout per DAG in the browser: a second graph of
+    # the same DAG in one session opens already top to bottom.
+    left_to_right = page.locator("button", has_text="Left to Right")
+    if left_to_right.count():
+        left_to_right.click()
+        page.get_by_text("Top to Bottom", exact=True).last.click()
     page.keyboard.press("Escape")
     page.wait_for_timeout(1500)
     page.locator(".react-flow__controls-fitview").click()
@@ -104,6 +108,58 @@ def prometheus_rules(page: Page) -> None:
     page.wait_for_timeout(2500)
     zoom(page, 0.72)  # the four groups in one frame
     page.screenshot(path=RAW / "prometheus-rules.png")
+
+
+def prometheus_page(page: Page, path: str, name: str, factor: float) -> None:
+    """A Prometheus page as it is (alerts, targets)."""
+    page.goto(f"{PROMETHEUS}/{path}", wait_until="load")
+    page.wait_for_timeout(2500)
+    zoom(page, factor)
+    page.screenshot(path=RAW / f"{name}.png")
+
+
+def airflow_page(page: Page, path: str, name: str, factor: float = 1.0) -> None:
+    """An Airflow page as it is (the DAG list, a DAG's runs)."""
+    page.goto(f"{AIRFLOW}/{path}", wait_until="networkidle")
+    page.wait_for_timeout(2000)
+    zoom(page, factor)
+    page.screenshot(path=RAW / f"{name}.png")
+
+
+def spark_page(page: Page, url: str, name: str, factor: float = 1.0) -> None:
+    """A Spark UI page: the standalone cluster, or the bronze driver."""
+    page.goto(url, wait_until="load")
+    page.wait_for_timeout(2500)
+    zoom(page, factor)
+    page.screenshot(path=RAW / f"{name}.png")
+
+
+def spark_streaming(page: Page) -> None:
+    """The bronze query's statistics: input and processing rates, batch
+    durations, over the driver's recent batches."""
+    page.goto("http://localhost:4040/StreamingQuery/", wait_until="load")
+    page.locator("a[href*='StreamingQuery/statistics']").first.click()
+    page.wait_for_load_state("load")
+    page.wait_for_timeout(3000)
+    zoom(page, 0.7)
+    page.screenshot(path=RAW / "spark-bronze-streaming.png")
+
+
+def grafana_row(page: Page, uid: str, row: str, since: str, name: str) -> None:
+    """One row of a Grafana dashboard, scrolled to its title."""
+    page.goto(
+        f"http://localhost:3000/d/{uid}?orgId=1&kiosk&theme=dark&from={since}&to=now",
+        wait_until="networkidle",
+    )
+    for _ in range(8):  # Grafana draws panels once they are in view
+        page.mouse.wheel(0, 400)
+        page.wait_for_timeout(300)
+    # The row title at the top of the frame (Grafana scrolls an inner div).
+    page.get_by_text(row, exact=True).first.evaluate(
+        "e => e.scrollIntoView({block: 'start'})"
+    )
+    page.wait_for_timeout(10000)
+    page.screenshot(path=RAW / f"{name}.png")
 
 
 def neo4j_graph(page: Page) -> None:
@@ -226,6 +282,50 @@ SHOTS = {
             "transform",
             "manual__2026-10-17T18:41:21.585024+00:00",
             "demo-transform-run",
+        ),
+    ),
+    "airflow-dags": (
+        "localhost:8088 · dags",
+        lambda p: airflow_page(p, "dags", "airflow-dags"),
+    ),
+    "airflow-transform-runs": (
+        "localhost:8088 · dags / transform / runs",
+        lambda p: airflow_page(p, "dags/transform/runs", "airflow-transform-runs"),
+    ),
+    "prometheus-alerts": (
+        "localhost:9090 · alerts",
+        lambda p: prometheus_page(p, "alerts", "prometheus-alerts", 0.8),
+    ),
+    "prometheus-targets": (
+        "localhost:9090 · targets",
+        lambda p: prometheus_page(p, "targets", "prometheus-targets", 0.8),
+    ),
+    "spark-cluster": (
+        "localhost:8080 · Spark master",
+        lambda p: spark_page(p, "http://localhost:8080", "spark-cluster", 0.8),
+    ),
+    "spark-bronze-streaming": (
+        "localhost:4040 · bronze-stream · Structured Streaming",
+        spark_streaming,
+    ),
+    "grafana-orchestration": (
+        "localhost:3000 · theLook: pipeline health · Orchestration",
+        lambda p: grafana_row(
+            p,
+            "thelook-pipeline",
+            "Orchestration (Airflow)",
+            "now-2h",
+            "grafana-orchestration",
+        ),
+    ),
+    "grafana-sources": (
+        "localhost:3000 · theLook: pipeline health · Sources",
+        lambda p: grafana_row(
+            p,
+            "thelook-pipeline",
+            "Sources and Connect internals",
+            "now-2h",
+            "grafana-sources",
         ),
     ),
     "grafana-pipeline": (

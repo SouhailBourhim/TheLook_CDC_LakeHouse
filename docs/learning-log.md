@@ -3208,5 +3208,15 @@ were created with the CLI, never Terraform (P3).
   hand pile up unseen; only a fresh clone shows them.
 - **Project complete**: every phase accepted, every objective measured
   (O6 $0.99 for October 1-17, O7 shown), every deliverable in place.
+- **Decision (Souhail): AWS stays deployed, the stack stops.** Measured
+  idle cost with the stack down: storage only, $0.015 per week (~$0.07 a
+  month); requests and Athena only while the stack runs. Destroying would
+  save cents and lose the lake. Before stopping: every UI captured
+  (`docs/gallery.md`, 17 screenshots) and the lake inventoried from
+  Iceberg's metadata (`docs/lake-inventory.md`: 45.1 M rows, 4.1 GB in the
+  current snapshots, 6.9 GB in the bucket). Found while capturing: `make up`
+  with airflow ended in an error (the Grafana reader one-shot; fixed), and
+  `SHOW TABLES` in Athena returns no header row (the inventory missed the
+  first table of each database; fixed).
 - Open: step 13's two check questions (not answered yet); the MongoDB
   oplog window recovering from the load test (alerts until ~24 h).

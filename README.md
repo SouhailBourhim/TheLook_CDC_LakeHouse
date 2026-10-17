@@ -31,6 +31,7 @@
 <a href="#gdpr-erasure"><b>GDPR erasure</b></a> &nbsp;·&nbsp;
 <a href="#run-it"><b>Run it</b></a> &nbsp;·&nbsp;
 <a href="docs/demo.md"><b>Demo</b></a> &nbsp;·&nbsp;
+<a href="docs/gallery.md"><b>Gallery</b></a> &nbsp;·&nbsp;
 <a href="docs/results.md"><b>Results</b></a>
 </p>
 
@@ -547,6 +548,7 @@ git config core.hooksPath .githooks
 - [Learning log](docs/learning-log.md)
 - [Source schema](docs/source-schema.md)
 - [Demo: one order from the shop to the dashboard](docs/demo.md)
+- [Gallery: every interface of the running stack](docs/gallery.md) and the [lake inventory](docs/lake-inventory.md)
 - [Results](docs/results.md) and [runbook](docs/runbook.md)
 - [Architecture in diagrams](docs/architecture.md) and [command reference](docs/commands.md)
 
