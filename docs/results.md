@@ -993,3 +993,66 @@ position.
 `graph` DAG triggered by hand: `rebuild_graph` succeeded on its first try
 (1 min 55 s); recommendations served in 0.1 s afterwards. The server's NOOP
 every second keeps a long write alive under the 2 s limit.
+
+## P9: load test — method (written before measuring, B5)
+
+**Question:** does the pipeline hold O8 (source-to-bronze lag below
+2 minutes, p95, at 200 change events/s), where does it break, and which
+component reaches its limit first? The P1 baseline never found the
+capture side's breaking point: the generator capped itself near
+25 iterations/s (A9).
+
+**Path measured:** generator → PostgreSQL and MongoDB → Debezium → Kafka →
+bronze stream (Spark, 2 cores, on the laptop) → S3 and Glue (one Iceberg
+commit per table per batch). Silver and gold are batch jobs on a 30-minute
+schedule (O2): not part of this path. Profiles `core monitoring stream`;
+`serving` and `airflow` stopped, so that nothing else competes for the
+laptop's CPU or the link.
+
+**Load.** The generator in load mode (P9): pacing on a schedule (open
+loop), random rows through the primary key, `GENERATOR_WORKERS` simulators
+sharing the rate, and the index on `order_items (order_id)`. Before the
+run, a ramp against Kafka alone shows it follows its target at every level
+used. Levels, in iterations/s (about 10 change events each, measured, not
+assumed): **10, 20, 40, 80, 160**, i.e. about 100, 200, 400, 800 and 1,600
+change events/s. Each level: **3 minutes of warm-up, then a 10-minute
+window**. Then the generator goes back to 5/s and bronze drains (the rows
+of the window all committed) before the lag is computed and the next level
+starts. Bronze has no backlog when the first level starts. The run stays
+within one UTC day: bronze compacts the days before today, which would
+rewrite the files the lag is read from. The run stops at the first level
+that is not sustained, or when the lag passes 10 minutes (to bound cost).
+
+**Metrics per level (window only)**
+
+| Metric | Source | Why |
+|---|---|---|
+| Achieved iterations/s | the generator's `pace:` lines, summed over workers | The level counts only if the generator kept up: ≥ 95 % of target, under 1 s of backlog dropped per minute |
+| Change events/s captured | `rate(kafka_connect_source_task_metrics_source_record_write)`, both connectors | The real load, in the unit of O8 |
+| Capture lag | `max_over_time(debezium_streaming_millisecondsbehindsource)` | Source commit → Debezium (P1: under 1 s) |
+| **Source-to-bronze lag, per row** | each bronze row with `source_ts` in the window: commit time of the Iceberg snapshot that added its data file − `source_ts`. Row → `_file` → `entries.snapshot_id` → `snapshots.committed_at`, in Spark right after the level (bronze keeps 1 to 2 hours of snapshots) | O8 itself: p50, p95 and max over every row of all 7 tables |
+| Bronze batch duration | the stream's `batch N: ... in X s` log lines | Batches longer than the 60 s trigger run back to back: the backlog grows |
+| CPU per container | `docker stats` every 30 s, mean over the window | Names the component at its limit |
+| Link to AWS | `scripts/link_probe.py` before and after each level | The commits go over this link; the same batch took 34 s or 95 s depending on it (P4, P5) |
+
+`ingested_at` is not used for the lag: it is set when a table's rows are
+built, before the write and the commit, and the 7 tables commit one after
+the other, so it would hide up to ~30 s.
+
+**A level is sustained when both hold:** (a) source-to-bronze lag p95 under
+120 s; (b) the lag is not growing: the p95 of the rows from the window's
+last 3 minutes is at most one trigger (60 s) above that of its first 3
+minutes. (b) catches a backlog that grows but has not yet pushed a
+10-minute window's p95 past 120 s. The **throughput limit** is the
+highest sustained level, in change events/s; the **breaking point** is the
+next one. O8 passes if the level near 200 events/s is sustained.
+
+**Hypothesis (to confirm or reject):** the bronze stream saturates first,
+and the link more than its CPU. Each batch makes 8 commits one after the
+other (7 tables and the ledger), each a few S3 and Glue round trips, about
+4 s each from here (P3), so ~30 s of every batch is fixed; decoding and
+writing grow with the batch. Once a batch takes longer than the 60 s
+trigger, batches run back to back and the lag grows. The capture side
+(Postgres, Debezium, Kafka) is not expected to limit: the ramp below
+already shows Debezium within milliseconds near 950 events/s.
+
