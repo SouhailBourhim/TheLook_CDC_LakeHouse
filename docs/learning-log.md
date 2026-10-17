@@ -2876,3 +2876,57 @@ days were bad: a 3 would appear even if 10-07 itself were right.
 | 14 | `feat(monitoring): connect and debezium metrics` | JMX exporter: `MilliSecondsBehindSource`, events seen | JMX, source-side lag |
 | 15 | `docs: baseline throughput run` | Method first (B5), then raise the generator rate step by step and find what saturates first; sets O8's target | Measure before optimising, find the real bottleneck |
 | 16 | `docs: P1 wrap-up` | README "run P1", learning log, ADRs for P1 decisions (Postgres 17, Connect image, publication mode, alerting stack) | Then the P1 checkpoint: 3–5 interview questions |
+
+## Session 19 — 2026-10-17 — P9 planned
+
+P9 plan approved (hardening; 17 steps, 0 to 16). Decided with Souhail:
+OpenLineage last, dropped if time runs short; the demo video is part of
+the wrap-up (Claude writes the script, Souhail records it).
+
+### Decisions taken inside the spec (explained, rule 2)
+
+- **Spark streaming metrics through Spark's own PrometheusServlet**
+  (`spark.sql.streaming.metricsEnabled`), not a Pushgateway or a Kafka
+  consumer-group exporter. Bronze keeps its offsets in its Spark
+  checkpoint and never commits a consumer group, so an exporter would show
+  no lag at all; the servlet adds no component.
+- **CI's AWS role is read-only** (OIDC, trust limited to this repository's
+  `main`): a weekly `terraform plan -detailed-exitcode` finds drift; apply
+  stays manual, so CI holds no credentials that can change AWS.
+- **The "full nightly reload" counterfactual is computed** from table
+  metadata sizes and labelled as such, not run (CV bullets use measured
+  values only).
+- Not proposed: moving to eu-west-3 (spec change, budget priced in
+  us-east-1); applying Terraform or pushing images from CI.
+
+### P9 plan (agreed)
+
+| # | Commit | Content / how we verify |
+|---|---|---|
+| 0 | `docs(spec): header at 2.3` | Close the P8 leftovers (marts-change answers, merge-on-read follow-up, session 16 questions); daytime link baseline (TCP connect + HTTPS to S3 us-east-1) |
+| 1 | `fix(maintenance): retry each table` | Retry per table, attempts per table in the report; a test that fails on the old code |
+| 2 | `fix(spark): ride out DNS blips` | Find the throwing layer first, then SDK / S3FileIO retries (and Docker DNS if it helps); drill: worker network cut ~20 s mid-transform, run finishes without an Airflow retry |
+| 3 | `feat(monitoring): spark streaming metrics` | Bronze and features drivers scraped; alerts (stalled, batch > trigger, offsets behind growing, features down) with promtool tests and runbook entries |
+| 4 | `docs: load test method` | Written before measuring: levels, durations, per-row source-to-bronze lag p50/p95, breaking-point rule, O8 verdict at 200/s |
+| 5 | `feat(generator): load mode not bound by latency` | Closes A9: parallel workers, key-range picks instead of `ORDER BY RANDOM()`; achieved follows target past 400/s on Kafka alone |
+| 6 | `test(drills): throughput run` | O8 verdict, breaking point, first component to saturate. **Acceptance 1** |
+| 7 | `docs: scan benchmark method` | Fixed Athena query set (`DataScannedInBytes`), transform S3 bytes (network counters), computed full-reload counterfactual |
+| 8 | `test: scan benchmark baseline` | Before any change |
+| 9 | `perf(gold): facts partitioned by order day` | Rebuild from silver; marts identical on the same snapshot; ADR 015 amendment |
+| 10 | `perf(gold): incremental dim_user, skip idle stages` | Only if step 8 shows a cost |
+| 11 | `test: scan benchmark after` | Reduction in % per query and per run. **Acceptance 2** |
+| 12 | `ci: terraform fmt and validate` | Pinned setup-terraform, `init -backend=false`; CI images off Docker Hub; a misformatted file fails the job |
+| 13 | `feat(infra): github oidc role, drift check` | Read-only role, drift job, shown red once on purpose; ADR 022 |
+| 14 | `feat(lineage): openlineage to marquez` | Optional, last |
+| 15 | `docs: P9 wrap-up` | README, runbook (every alert has an entry), results, CV bullets, ADR index, demo video script. **Acceptance 3** |
+| 16 | none | P9 checkpoint |
+
+- Spec header fixed: it said 2.2 and "P6 in progress"; now 2.3, P1 to P8
+  built.
+
+### Where we stopped (2026-10-17, 02:10 UTC) — LATEST, start here
+
+- Step 0 in progress: Souhail answers the P8 leftovers (in chat). The link
+  baseline waits for daytime (it is 02:10 UTC; a night measurement would
+  not be the reference the later steps compare against).
+- Then step 1.
