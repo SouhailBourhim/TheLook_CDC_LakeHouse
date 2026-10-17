@@ -198,16 +198,15 @@ class TheLookECommSimulator:
             )
             order_items.append(order_item)
 
-        # Write all purchase-related data concurrently
+        # The order and its items in one transaction (thelook-cdc-lakehouse,
+        # P9: separate commits left an order without items when the
+        # generator was stopped between them); the events, in MongoDB,
+        # concurrently. One thread per connection: the two upserts used to
+        # share this simulator's connection from two threads.
         await asyncio.gather(
             asyncio.to_thread(
-                self.writer.upsert, table="orders", data=[order], conflict_keys=["id"]
-            ),
-            asyncio.to_thread(
-                self.writer.upsert,
-                table="order_items",
-                data=order_items,
-                conflict_keys=["id"],
+                self.writer.upsert_together,
+                [("orders", [order], ["id"]), ("order_items", order_items, ["id"])],
             ),
             asyncio.to_thread(self.events.upsert, purchase_events),
         )
@@ -261,9 +260,9 @@ class TheLookECommSimulator:
                     )
                 )
 
-        self.writer.upsert(table="orders", data=[random_order], conflict_keys=["id"])
-        self.writer.upsert(
-            table="order_items", data=updated_items, conflict_keys=["id"]
+        # One transaction, as for a new order (thelook-cdc-lakehouse, P9).
+        self.writer.upsert_together(
+            [("orders", [random_order], ["id"]), ("order_items", updated_items, ["id"])]
         )
         if random_events:
             self.events.upsert(random_events)

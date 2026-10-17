@@ -239,3 +239,64 @@ def test_random_row_wraps_round_past_the_largest_id():
     rows, calls = random_row([{"id": "00000000-0000-4000-8000-000000000000"}])
     assert rows == [{"id": "00000000-0000-4000-8000-000000000000"}]
     assert len(calls) == 2 and "where_clause" not in calls[1]
+
+
+# An order and its items in one transaction (P9).
+from src.db_writer import DataWriter  # noqa: E402
+
+
+class FakeConnection:
+    def __init__(self, fail_on: str | None = None):
+        self.fail_on, self.log = fail_on, []
+        self.connection = self
+
+    def cursor(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def commit(self):
+        self.log.append("commit")
+
+    def rollback(self):
+        self.log.append("rollback")
+
+
+def writer_with(connection, monkeypatch):
+    def fake_execute_values(cur, sql, values):
+        table = sql.split("INSERT INTO ")[1].split()[0]
+        if connection.fail_on and table.endswith(connection.fail_on):
+            raise RuntimeError("connection lost")
+        connection.log.append(table)
+
+    monkeypatch.setattr("src.db_writer.execute_values", fake_execute_values)
+    w = DataWriter.__new__(DataWriter)
+    w.schema, w.batch_size, w.conn = "shop", 1000, connection
+    w._ensure_connection = lambda: None
+    return w
+
+
+def test_an_order_and_its_items_commit_once(monkeypatch):
+    conn = FakeConnection()
+    w = writer_with(conn, monkeypatch)
+    w.upsert_together(
+        [("orders", [{"id": "o1"}], ["id"]), ("order_items", [{"id": "i1"}], ["id"])]
+    )
+    assert conn.log == ["shop.orders", "shop.order_items", "commit"]
+
+
+def test_a_failure_on_the_items_rolls_the_order_back(monkeypatch):
+    conn = FakeConnection(fail_on="order_items")
+    w = writer_with(conn, monkeypatch)
+    with pytest.raises(RuntimeError):
+        w.upsert_together(
+            [
+                ("orders", [{"id": "o1"}], ["id"]),
+                ("order_items", [{"id": "i1"}], ["id"]),
+            ]
+        )
+    assert "commit" not in conn.log and conn.log[-1] == "rollback"

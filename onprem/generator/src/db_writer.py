@@ -64,7 +64,10 @@ class DataWriter:
         data: List[Union[dict, object]],
         conflict_keys: List[str],
         update_fields: Optional[List[str]] = None,
+        commit: bool = True,
     ):
+        """commit=False leaves the transaction open for the caller, so that
+        several tables are written atomically (upsert_together)."""
         if not data:
             logging.info(f"[{table}] No rows to insert.")
             return
@@ -94,13 +97,27 @@ class DataWriter:
                 with self.conn.connection.cursor() as cur:
                     execute_values(cur, sql, values)
 
-            self.conn.connection.commit()
+            if commit:
+                self.conn.connection.commit()
             logging.info(
                 f"[{table}] Inserted {len(rows)} rows in batches of {self.batch_size}."
             )
 
         except Exception as e:
             logging.error(f"Upsert failed for {table}: {e}")
+            self.conn.connection.rollback()
+            raise
+
+    def upsert_together(self, writes: List[tuple]):
+        """Several upserts in one transaction: (table, data, conflict_keys)
+        each. Added in thelook-cdc-lakehouse (P9): an order and its items
+        were separate commits, so a stop between them left an order without
+        items in the source (2026-10-17, during a load test)."""
+        try:
+            for table, data, conflict_keys in writes:
+                self.upsert(table, data, conflict_keys, commit=False)
+            self.conn.connection.commit()
+        except Exception:
             self.conn.connection.rollback()
             raise
 
