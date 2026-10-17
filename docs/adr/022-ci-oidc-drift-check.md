@@ -1,6 +1,6 @@
 # 022. CI on AWS through OIDC: a read-only drift check
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-17 (P9; spec FR18, NFR security)
 - Deciders: Souhail Bourhim (approves), Claude Code (drafts)
 
