@@ -3044,6 +3044,47 @@ the offline steps first.
   the generator's rate recreated its container and its logs (the pace
   lines) went with it. Fixed (`c3dc806`), rerun from 03:51.
 
+### P9b built (Grafana), 04:00-04:20 UTC
+
+- ADR 023 accepted by Souhail. Grafana 13.2.3 by digest; Athena plugin
+  3.3.6 checked against grafana.com's SHA-256 at build (3.3.7 exists on
+  GitHub, not in the catalog). No volume: data sources and dashboards
+  provisioned, not editable. `thelook-grafana`: Athena on the gold marts
+  only (S3 `gold/mart_*`, Glue `mart_*`), applied by Souhail.
+- **Testing found what reading did not**: Grafana 13 downloads ~17 plugins
+  at every start (and briefly unregistered Prometheus while updating it):
+  `GF_PLUGINS_PREINSTALL_DISABLED`. Conversion 1.13 (ghost sessions
+  subtracted twice), a return rate of 0.00 (Athena keeps 2 decimals when
+  dividing `decimal(38,2)`), an empty ratings table (7 reviews at most).
+- Athena per refresh: cold ~440 KB (8 x 10 MB billed minimum), warm 303
+  bytes with 7 of 8 queries from **result reuse** (30 min).
+- Compose interpolates every service, even of a stopped profile: a `:?`
+  variable for Grafana broke every compose command until `.env` had it.
+  Optional for Compose, required by the container's own entrypoint.
+
+### Step 2: retries outlast a DNS outage (`49b380f`, drill `e30945c`)
+
+- Method: read the 46 failed task logs instead of guessing. Every layer
+  retried (SDK 5 attempts, Spark 4 task attempts, ~10 s together;
+  `with_retries` 75 s): ~1.5 min against ~6-min outages. One layer made
+  long (`with_retries`: 5..120 s capped, ~6.6 min), the one where every
+  step is idempotent and commits atomically. The drill drops traffic to
+  non-private addresses from a helper container sharing the targets'
+  network namespace (checked on Grafana first); run after the load test.
+
+### Souhail's question: the "slot WAL retained" peak at 04:48 (127 MB)
+
+- Not Debezium (lag 0 s; unconfirmed WAL at most 10 MB). The split
+  current - confirmed_flush (unconfirmed) vs confirmed - restart (kept)
+  showed Postgres kept it. Chain: level 4 started (generator recreated:
+  29,120 products re-upserted, 80 it/s) -> WAL toward `max_wal_size` (1 GB)
+  -> the timed checkpoint hurried (121 s instead of ~270 s), then
+  `checkpoint starting: wal` -> full-page images (first change to each
+  page after a checkpoint writes the whole page; random orders = new pages)
+  -> WAL 2 -> 9-11 MB/s -> a logical slot's restart_lsn moves only at the
+  next running-xacts snapshot (~15 s): ~10 MB/s x ~12 s = ~120 MB. Fine:
+  1/8 of the alert, ~1 % of the cap; inside the level's warm-up.
+
 ### Where we stopped (2026-10-17, 02:30 UTC) — LATEST, start here
 
 - Steps 0 (except the daytime link baseline) and 1 done.

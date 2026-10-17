@@ -1097,6 +1097,69 @@ stack's life, `pg_stat_user_tables.seq_tup_read`). The GDPR erasure's
   therefore bronze.
 - ~10.4 change events per iteration, as in P1.
 
+### Load test results (step 6, acceptance part 1), 2026-10-17 03:51-05:51 UTC
+
+`drills/throughput_run.py`, method above unchanged; profiles `core
+monitoring stream` (serving and airflow stopped; Grafana up from 04:09, a
+few Prometheus queries every 30 s). Night link to S3 us-east-1: TCP connect
+median 129-145 ms (one level started at 298 ms), HTTPS request 628-721 ms.
+Levels 6 and 7 were added after level 5 (more generator containers, so
+that the generator could keep up); level 7 did not run, since the run stops
+at the first level not sustained. Logs: `drills/logs/throughput_run-
+20261017T035111Z.log`, `-20261017T053127Z.log`.
+
+| level (it/s / workers / containers) | window (UTC) | achieved it/s | backlog dropped (s/min, all workers) | change events/s | Debezium lag max (s) | bronze batch mean / max (s) | source-to-bronze lag p50 / p95 / max (s) | growth (s) | rows | CPU % bronze driver / executors / postgres / connect / generator | sustained |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 10/1 | 03:54:25-04:04:25 | 9.9 | 0.0 | 106 | 0.32 | 37 / 39 | 48 / 79 / 100 | +7 | 63,301 | 7 / 3 / 3 / 4 / 8 | yes |
+| 20/2 | 04:12:36-04:22:36 | 20.0 | 0.0 | 210 | 0.13 | 48 / 113 | 53 / 105 / 138 | -42 | 126,220 | 4 / 3 / 6 / 4 / 17 | yes |
+| 40/4 | 04:30:23-04:40:23 | 39.9 | 0.0 | 423 | 0.07 | 41 / 43 | 50 / 82 / 97 | +3 | 253,551 | 4 / 5 / 10 / 6 / 32 | yes |
+| 80/8 | 04:49:12-04:59:12 | 80.0 | 0.7 | 843 | 0.49 | 45 / 66 | 52 / 84 / 104 | +5 | 505,334 | 4 / 2 / 17 / 11 / 70 | yes |
+| 160/8/2 | 05:08:35-05:18:35 | 158.8 | 10.7 | 1,673 | 0.02 | 54 / 63 | 59 / 93 / 112 | -3 | 1,000,017 | 7 / 5 / 36 / 20 / 86 | NO |
+| 240/8/3 | 05:34:42-05:44:42 | 213.6 | 160.4 | 2,230 | 0.63 | 62 / 71 | 65 / 102 / 121 | -11 | 1,341,755 | 5 / 10 / 66 / 40 / 102 | NO |
+
+**O8 passes:** 210 change events/s with a source-to-bronze lag p95 of
+105 s (limit 120 s), not growing. That window includes bronze's hourly
+maintenance (04:12-04:16, in the stream's own background thread on the
+same 2 cores): two batches took 96 s and 113 s, every other one 37-41 s.
+Without it the p95 sits at 79-84 s, as at the levels on either side.
+
+**Throughput.** The pipeline carried every load the generator could make:
+up to **2,230 change events/s** (10.6 x O8) with a lag p95 of 102 s and no
+growth. Levels 5 and 6 do not count by the method's rule: the generator
+dropped backlog (10.7 and 160 s/min); at level 6 it reached 214 of 240
+iterations/s with Postgres at 66 % CPU and Connect at 40 %. **So the
+pipeline's breaking point, as the method defines it, was not reached; the
+load generator stopped first, at ~2,200 events/s.**
+
+**What saturates first, though, is measured: bronze.** Its batch time
+fits **~36 s fixed + ~0.18 ms per record** at every level (37 s at 6,400
+records, 54 s at 100,000; the catch-up's 200,000-record batches took
+68-85 s, the same line). The fixed part is the 8 commits made one after
+the other (7 tables and the ledger), each a few S3 and Glue round trips at
+~130 ms; bronze's CPU stayed under 10 % (driver 4-7 %, executors 2-10 %).
+At 2,230 events/s the batches averaged 62 s, just over the 60 s trigger:
+bronze runs back to back, with no slack left. The model predicted 60 s.
+
+- **Projected limits** (from the same line, not measured): a steady batch
+  time T = 36 s / (1 - 0.18 ms x rate) once batches run back to back. The
+  p95 lag fits **0.7 x max(60 s, T) + T** at every level (a row waits for
+  the next batch to start, then for its table's commit): 79, 84, 96, 105 s
+  predicted for 79, 84, 93, 102 s measured at levels 1, 4, 5, 6. It
+  crosses O8's 120 s at T = 71 s, i.e. **~2,700 events/s**; beyond ~5,500
+  records/s no batch length keeps up (T unbounded).
+- **The capture side never limited:** Debezium's lag stayed under 0.7 s at
+  every level, Kafka under 35 % CPU.
+- **Hypothesis confirmed:** bronze first, on the link rather than CPU.
+  The lever, not taken in P9: commit the 7 tables in parallel (the fixed
+  36 s would become the slowest table's commit), or a shorter trigger for
+  freshness at low load. Both change ADR 012's per-batch protocol (the
+  ledger row is written once every table has committed); recorded as a
+  future option, not a P9 change.
+- Each level's start forces a checkpoint (the generator re-upserts 29,120
+  products at start and the rate jumps): full-page writes raise the WAL
+  rate ~5x for a minute and the slot retains up to ~127 MB (level 4,
+  04:48). Inside the 3-minute warm-up, never in a window.
+
 ## P9b: Grafana dashboards — 2026-10-17
 
 Grafana 13.2.3 with the Athena plugin 3.3.6 (`bi` profile, ADR 023),
