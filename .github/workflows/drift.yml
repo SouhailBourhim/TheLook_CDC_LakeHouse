@@ -66,7 +66,8 @@ jobs:
             echo "No drift: AWS matches infra/terraform/lake."
           elif [ "$code" -eq 2 ]; then
             terraform -chdir=infra/terraform/lake show -json drift.tfplan | jq -r '
-              .resource_changes[] | select(.change.actions != ["no-op"])
+              .resource_changes[] | select(.mode == "managed")
+              | select(.change.actions != ["no-op"])
               | "::error::drift: \(.address) would be \(.change.actions | join("+"))"'
             exit 1
           else
