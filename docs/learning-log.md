@@ -2924,9 +2924,28 @@ the wrap-up (Claude writes the script, Souhail records it).
 - Spec header fixed: it said 2.2 and "P6 in progress"; now 2.3, P1 to P8
   built.
 
+### P8 leftovers answered (Souhail, without the code)
+
+- **Marts after an erasure**: right on correctness vs privacy (aggregates,
+  FR9, but computed from the facts). **Corrected**: no check would flag
+  stale marts. `mart_daily_revenue`'s only rule is internal (`net_revenue
+  = gross_revenue - returns`) and `quality_report` reconciles sources with
+  silver, never gold with gold. The marts would be wrong silently; the
+  recompute is the only guard. A mart-vs-facts rule would close that gap
+  (noted, not planned).
+- **Crash gap**: right (days only in memory; storing them would keep when
+  the user was active). Added: integer ids make `user_sha256` reversible
+  by hashing 1..N.
+- **Merge-on-read, delete then expiry, no compaction**: right (the current
+  snapshot references the data file plus the delete file; expiry removes
+  only unreferenced files; compaction rewrites).
+- **`on-failure:3`**: right (count over the container's life, never reset).
+- **Backfill retries**: right (total span, not count: attempts at 0/2/4
+  min inside a 6-min outage, now 0/5/10; the test guards the delay).
+
 ### Where we stopped (2026-10-17, 02:10 UTC) — LATEST, start here
 
-- Step 0 in progress: Souhail answers the P8 leftovers (in chat). The link
-  baseline waits for daytime (it is 02:10 UTC; a night measurement would
-  not be the reference the later steps compare against).
+- Step 0: P8 leftovers closed. The link baseline waits for daytime (it is
+  02:10 UTC; a night measurement would not be the reference the later
+  steps compare against).
 - Then step 1.
